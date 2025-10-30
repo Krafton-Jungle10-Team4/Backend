@@ -2,7 +2,7 @@ name: Create Branch on Issue
 
 on:
   issues:
-    types: [opened, labeled]
+    types: [opened] 
 
 jobs:
   create-branch:
@@ -23,11 +23,19 @@ jobs:
       - name: Create branch
         run: |
           ISSUE_NUMBER=${{ github.event.issue.number }}
+          ISSUE_TITLE="${{ github.event.issue.title }}"
           
+          # [FEATURE] 또는 [BUG] 제거하고 소문자로 변환
+          CLEAN_TITLE=$(echo "$ISSUE_TITLE" | sed 's/\[FEATURE\]//I' | sed 's/\[BUG\]//I' | sed 's/^ *//' | tr '[:upper:]' '[:lower:]')
+          
+          # 공백을 하이픈으로, 특수문자 제거
+          BRANCH_SUFFIX=$(echo "$CLEAN_TITLE" | sed 's/ /-/g' | sed 's/[^a-z0-9-]//g' | sed 's/--*/-/g' | cut -c1-50)
+          
+          # 브랜치명 결정
           if [[ "${{ contains(github.event.issue.labels.*.name, 'feature') }}" == "true" ]]; then
-            BRANCH_NAME="feature/issue-${ISSUE_NUMBER}"
+            BRANCH_NAME="feature/${BRANCH_SUFFIX}-${ISSUE_NUMBER}"
           elif [[ "${{ contains(github.event.issue.labels.*.name, 'bug') }}" == "true" ]]; then
-            BRANCH_NAME="bugfix/issue-${ISSUE_NUMBER}"
+            BRANCH_NAME="bugfix/${BRANCH_SUFFIX}-${ISSUE_NUMBER}"
           fi
           
           git config user.name "github-actions[bot]"
@@ -48,5 +56,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `✅ 브랜치가 생성되었습니다: \`${branchName}\`\n\n**작업 시작:**\n\`\`\`bash\ngit fetch origin\ngit checkout ${branchName}\n\`\`\`\n\n푸시하면 자동으로 PR 생성`
+              body: `✅ 브랜치가 생성되었습니다: \`${branchName}\`\n\n**작업 시작:**\n\`\`\`bash\ngit fetch origin\ngit checkout ${branchName}\n\`\`\`\n\n푸시하면 자동으로 PR 생성! 🚀`
             })
