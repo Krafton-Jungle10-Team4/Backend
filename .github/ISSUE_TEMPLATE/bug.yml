@@ -1,0 +1,24 @@
+name: "🐛 Bug"
+description: "버그 제보"
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: "버그 설명"
+      description: "무엇이 잘못되었나요?"
+      placeholder: "API 호출 시 500 에러 발생"
+    validations:
+      required: true
+  
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: "재현 방법"
+      placeholder: |
+        1. 어떤 API를 호출
+        2. 어떤 파라미터로
+        3. 어떤 에러 발생
+    validations:
+      required: true

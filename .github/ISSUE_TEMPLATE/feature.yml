@@ -1,0 +1,13 @@
+name: "✨ Feature"
+description: "새로운 기능 제안"
+title: "[FEATURE] "
+labels: ["feature"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: "기능 설명"
+      description: "어떤 기능이 필요한가요?"
+      placeholder: "예: RAG 문서 업로드 API 개발"
+    validations:
+      required: true
