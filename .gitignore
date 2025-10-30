@@ -1,0 +1,70 @@
+# Python 캐시 / 컴파일 파일
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 가상환경
+venv/
+env/
+.venv/
+.env/
+env.bak/
+venv.bak/
+
+# 환경 변수 파일
+.env
+.env.local
+.env.*.local
+
+# 빌드 및 배포 아티팩트
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# 로그 및 데이터베이스 파일
+*.log
+logs/
+*.sqlite3
+*.db
+
+# 테스트 / 커버리지
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+
+# IDE / 에디터 설정
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 운영체제 자동 생성 파일
+.DS_Store
+Thumbs.db
+
+# MyPy / 타입 체크
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Docker 관련
+*.pid
+docker-compose.override.yml
+
+# Claude / AI 관련 메모, 로그, 설정
+claude.md
+claude_notes.md
+claude_prompt.md
+claude.json
+claude_config.json
+claude_logs/
+claude_history/
+.claude/
