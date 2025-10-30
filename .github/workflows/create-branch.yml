@@ -1,0 +1,52 @@
+name: Create Branch on Issue
+
+on:
+  issues:
+    types: [opened, labeled]
+
+jobs:
+  create-branch:
+    if: |
+      contains(github.event.issue.labels.*.name, 'feature') || 
+      contains(github.event.issue.labels.*.name, 'bug')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+      
+      - name: Create branch
+        run: |
+          ISSUE_NUMBER=${{ github.event.issue.number }}
+          
+          if [[ "${{ contains(github.event.issue.labels.*.name, 'feature') }}" == "true" ]]; then
+            BRANCH_NAME="feature/issue-${ISSUE_NUMBER}"
+          elif [[ "${{ contains(github.event.issue.labels.*.name, 'bug') }}" == "true" ]]; then
+            BRANCH_NAME="bugfix/issue-${ISSUE_NUMBER}"
+          fi
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b $BRANCH_NAME
+          git push origin $BRANCH_NAME
+          
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+      
+      - name: Comment on issue
+        uses: actions/github-script@v7
+        env:
+          BRANCH_NAME: ${{ env.BRANCH_NAME }}
+        with:
+          script: |
+            const branchName = process.env.BRANCH_NAME;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `✅ 브랜치가 생성되었습니다: \`${branchName}\`\n\n**작업 시작:**\n\`\`\`bash\ngit fetch origin\ngit checkout ${branchName}\n\`\`\`\n\n푸시하면 자동으로 PR 생성`
+            })
