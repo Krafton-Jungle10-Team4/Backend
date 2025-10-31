@@ -11,6 +11,8 @@ ENV/
 # 환경 변수
 .env
 .env.local
+.env.production
+.env.*.local
 
 #빌드 및 배포 아티펙트
 build/
@@ -41,13 +43,14 @@ coverage.xml
 .env/
 .env.local
 .env.*.local
-
+.env.example
 
 
 
 # 데이터
 data/chroma_data/
 data/uploads/
+data/huggingface_cache/
 
 # IDE
 .vscode/
@@ -97,3 +100,5 @@ claude_history/
 !Makefile
 !README.md
 !LICENSE
+!docs/*.md
+!.env.example
