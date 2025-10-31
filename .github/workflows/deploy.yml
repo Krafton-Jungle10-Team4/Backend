@@ -73,28 +73,30 @@ jobs:
           ENABLE_ASYNC_PROCESSING=true
           EOF
 
-      - name: Copy files to EC2
+      - name: Debug Secrets
+        run: |
+          echo "EC2_HOST length: ${#EC2_HOST}"
+          echo "EC2_USER: $EC2_USER"
+          echo "EC2_HOST first 5 chars: ${EC2_HOST:0:5}"
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
+
+      - name: Copy files to EC2
         run: |
           # 디렉토리 생성
-          ssh $EC2_USER@$EC2_HOST "mkdir -p ~/Backend/data/{uploads,chroma_data,huggingface_cache}"
+          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "mkdir -p ~/Backend/data/{uploads,chroma_data,huggingface_cache}"
 
           # 파일 복사
-          scp .env.production $EC2_USER@$EC2_HOST:~/Backend/.env.local
-          scp docker-compose.yml $EC2_USER@$EC2_HOST:~/Backend/
-          scp nginx.conf $EC2_USER@$EC2_HOST:~/Backend/
+          scp -o StrictHostKeyChecking=no .env.production ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/Backend/.env.local
+          scp -o StrictHostKeyChecking=no docker-compose.yml ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/Backend/
+          scp -o StrictHostKeyChecking=no nginx.conf ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/Backend/
 
       - name: Deploy on EC2
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          ssh $EC2_USER@$EC2_HOST << EOF
+          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << EOF
             cd ~/Backend
-            export DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
+            export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
             docker-compose pull
             docker-compose down
             docker-compose up -d
@@ -103,13 +105,10 @@ jobs:
           EOF
 
       - name: Verify Deployment
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
         run: |
           echo "⏳ 서비스 시작 대기 중..."
           sleep 30
-          ssh $EC2_USER@$EC2_HOST << EOF
+          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << EOF
             cd ~/Backend
             echo "📊 컨테이너 상태:"
             docker-compose ps
