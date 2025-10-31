@@ -47,7 +47,7 @@ jobs:
           AWS_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           S3_BUCKET: ${{ secrets.S3_BUCKET_NAME }}
         run: |
-          ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "AWS_KEY_ID='$AWS_KEY_ID' AWS_SECRET='$AWS_SECRET' S3_BUCKET='$S3_BUCKET' DOCKERHUB_USERNAME='$DOCKERHUB_USERNAME' bash" << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "AWS_ACCESS_KEY_ID='$AWS_ACCESS_KEY_ID' AWS_SECRET_ACCESS_KEY='$AWS_SECRET_ACCESS_KEY' DOCKERHUB_USERNAME='$DOCKERHUB_USERNAME' bash" << 'ENDSSH'
             set -e
             mkdir -p ~/Backend/data/{uploads,chroma_data,huggingface_cache}
             cd ~/Backend
@@ -75,7 +75,7 @@ jobs:
           UPLOAD_TEMP_DIR=./data/uploads
           ENABLE_ASYNC_PROCESSING=true
           ENVEOF
-            echo "AWS_ACCESS_KEY_ID=${AWS_KEY_ID}" >> .env.local
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" >> .env.local
             echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET}" >> .env.local
             echo "S3_BUCKET_NAME=${S3_BUCKET}" >> .env.local
             cat > docker-compose.yml << 'COMPOSEEOF'
