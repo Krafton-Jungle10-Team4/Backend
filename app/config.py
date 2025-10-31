@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     chroma_collection_name: str = "documents"
     
     # 임베딩
-    embedding_model: str = "BAAI/bge-large-en-v1.5"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"  # EC2 무료 티어 대응 (~100MB)
     embedding_device: str = "cpu"
     batch_size: int = 32
     
