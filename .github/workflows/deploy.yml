@@ -38,14 +38,9 @@ jobs:
           docker push ${DOCKERHUB_USERNAME}/krafton_jungle10_team4:latest
           echo "✅ Docker 이미지 빌드 및 푸시 완료"
 
-      - name: Prepare deployment files
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+      - name: Create .env.production
         run: |
-          # .env.production 생성
-          cat > .env.production << EOF
+          cat > .env.production << 'EOF'
           APP_NAME="FastAPI RAG Backend"
           APP_VERSION="1.0.0"
           DEBUG=false
@@ -53,10 +48,6 @@ jobs:
           HOST=0.0.0.0
           PORT=8001
           WORKERS=4
-          AWS_REGION=ap-northeast-2
-          AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-          AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-          S3_BUCKET_NAME=${S3_BUCKET_NAME}
           CHROMA_HOST=chromadb
           CHROMA_PORT=8000
           CHROMA_COLLECTION_NAME=documents
@@ -73,46 +64,65 @@ jobs:
           ENABLE_ASYNC_PROCESSING=true
           EOF
 
-      - name: Debug Secrets
-        run: |
-          echo "EC2_HOST length: ${#EC2_HOST}"
-          echo "EC2_USER: $EC2_USER"
-          echo "EC2_HOST first 5 chars: ${EC2_HOST:0:5}"
+      - name: Prepare EC2 directories
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} \
+            "mkdir -p ~/Backend/data/{uploads,chroma_data,huggingface_cache}"
 
       - name: Copy files to EC2
+        env:
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
-          # 디렉토리 생성
-          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "mkdir -p ~/Backend/data/{uploads,chroma_data,huggingface_cache}"
+          scp -o StrictHostKeyChecking=no .env.production ${EC2_USER}@${EC2_HOST}:~/Backend/.env.local
+          scp -o StrictHostKeyChecking=no docker-compose.yml ${EC2_USER}@${EC2_HOST}:~/Backend/
+          scp -o StrictHostKeyChecking=no nginx.conf ${EC2_USER}@${EC2_HOST}:~/Backend/
 
-          # 파일 복사
-          scp -o StrictHostKeyChecking=no .env.production ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/Backend/.env.local
-          scp -o StrictHostKeyChecking=no docker-compose.yml ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/Backend/
-          scp -o StrictHostKeyChecking=no nginx.conf ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/Backend/
-
-      - name: Deploy on EC2
+      - name: Deploy to EC2
+        env:
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << EOF
+          ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'EOF'
+            set -e
             cd ~/Backend
-            export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
-            docker-compose pull
-            docker-compose down
-            docker-compose up -d
-            echo "✅ 배포 완료"
-            docker-compose ps
-          EOF
-
-      - name: Verify Deployment
-        run: |
-          echo "⏳ 서비스 시작 대기 중..."
-          sleep 30
-          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << EOF
-            cd ~/Backend
-            echo "📊 컨테이너 상태:"
-            docker-compose ps
-            echo ""
-            echo "🏥 Health Check:"
-            curl -f http://localhost/health || echo "❌ Health check failed"
+            
+            echo "🔍 인프라 서비스 확인 중..."
+            if ! docker-compose ps | grep -q "chromadb.*Up"; then
+              echo "📦 인프라 서비스 시작 (ChromaDB, Nginx)..."
+              docker-compose up -d chromadb nginx
+              echo "⏳ ChromaDB 초기화 대기..."
+              sleep 15
+            fi
+            
+            echo "🐳 최신 이미지 다운로드 중..."
+            docker-compose pull backend
+            
+            echo "🔨 백엔드 컨테이너 재시작 중..."
+            docker-compose up -d --no-deps backend
+            
+            echo "⏳ 서비스 헬스 체크 중..."
+            sleep 10
+            
+            for i in {1..12}; do
+              if curl -f http://localhost/health > /dev/null 2>&1; then
+                echo "✅ 배포 완료!"
+                echo ""
+                echo "📊 실행 중인 컨테이너:"
+                docker-compose ps
+                echo ""
+                echo "📝 최근 로그:"
+                docker-compose logs --tail=20 backend
+                exit 0
+              fi
+              echo "   대기 중... ($i/12)"
+              sleep 5
+            done
+            
+            echo "❌ 헬스 체크 실패 - 로그 확인:"
+            docker-compose logs --tail=50 backend
+            exit 1
           EOF
