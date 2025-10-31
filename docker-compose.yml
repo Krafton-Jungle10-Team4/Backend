@@ -4,8 +4,6 @@ services:
   chromadb:
     image: chromadb/chroma:latest
     container_name: chromadb
-    ports:
-      - "8001:8000"
     volumes:
       - ./data/chroma_data:/chroma/chroma
     environment:
@@ -17,7 +15,48 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - rag-network
+
+  backend:
+    # Docker Hub에서 이미지 pull
+    image: lsheon0927/krafton_jungle10_team4:latest
+    container_name: fastapi_backend
+    volumes:
+      - ./data/uploads:/app/data/uploads
+      - ./data/huggingface_cache:/root/.cache/huggingface
+    environment:
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+    env_file:
+      - .env.local
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - rag-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_proxy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - chromadb
+    restart: unless-stopped
+    networks:
+      - rag-network
 
 networks:
-  default:
-    name: rag-network
+  rag-network:
+    driver: bridge
