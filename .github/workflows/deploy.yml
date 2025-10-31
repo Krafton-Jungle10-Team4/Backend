@@ -11,68 +11,41 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Validate and Clean Secrets
+      - name: Debug Secrets
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
-          echo "=== Secrets 검증 ==="
+          echo "=== Secrets 디버깅 ==="
+          echo "EC2_HOST 길이: ${#EC2_HOST}"
+          echo "EC2_USER 길이: ${#EC2_USER}"
+          echo "EC2_HOST 첫 5글자: ${EC2_HOST:0:5}"
+          echo "EC2_HOST 마지막 5글자: ${EC2_HOST: -5}"
           
-          # 공백/줄바꿈 제거
-          export CLEAN_HOST=$(echo "$EC2_HOST" | tr -d '[:space:]')
-          export CLEAN_USER=$(echo "$EC2_USER" | tr -d '[:space:]')
-          
-          echo "원본 HOST 길이: ${#EC2_HOST}"
-          echo "정리 후 HOST 길이: ${#CLEAN_HOST}"
-          echo "HOST 첫 10글자: ${CLEAN_HOST:0:10}"
-          
-          # 검증
-          if [ -z "$CLEAN_HOST" ]; then
+          if [ -z "$EC2_HOST" ]; then
             echo "❌ EC2_HOST가 비어있습니다!"
             exit 1
           fi
           
-          # IP 주소 형식 검증 (간단)
-          if [[ ! "$CLEAN_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ ! "$CLEAN_HOST" =~ \.amazonaws\.com$ ]]; then
-            echo "❌ EC2_HOST 형식이 올바르지 않습니다: $CLEAN_HOST"
+          if [ -z "$EC2_USER" ]; then
+            echo "❌ EC2_USER가 비어있습니다!"
             exit 1
           fi
           
-          # DNS 조회 테스트
-          echo "DNS 조회 테스트..."
-          nslookup "$CLEAN_HOST" || echo "⚠️ DNS 조회 실패 (정상일 수 있음)"
-          
-          # 정리된 값을 파일로 저장 (다음 단계에서 사용)
-          echo "$CLEAN_HOST" > /tmp/ec2_host
-          echo "$CLEAN_USER" > /tmp/ec2_user
-          
-          echo "✅ 검증 완료"
+          echo "✅ Secrets 값 존재함"
+
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Setup SSH
         env:
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
-          # 정리된 값 로드
-          EC2_HOST=$(cat /tmp/ec2_host)
-          
           mkdir -p ~/.ssh
           echo "$EC2_SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          
-          echo "SSH 키 스캔: $EC2_HOST"
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
-          
-          # SSH 연결 테스트
-          echo "SSH 연결 테스트..."
-          EC2_USER=$(cat /tmp/ec2_user)
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-            "${EC2_USER}@${EC2_HOST}" "echo '✅ SSH 연결 성공!'" || {
-              echo "❌ SSH 연결 실패"
-              exit 1
-            }
+          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -80,6 +53,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Docker 빌드 캐싱 추가
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
@@ -102,8 +76,8 @@ jobs:
 
       - name: Move cache
         run: |
-          rm -rf /tmp/.buildx-cache || true
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       - name: Create .env.production
         run: |
@@ -132,35 +106,32 @@ jobs:
           EOF
 
       - name: Deploy to EC2
+        env:
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
-          # 정리된 값 로드
-          EC2_HOST=$(cat /tmp/ec2_host)
-          EC2_USER=$(cat /tmp/ec2_user)
-          
-          echo "배포 대상: ${EC2_USER}@${EC2_HOST}"
-          
           # 디렉토리 생성
-          ssh -o StrictHostKeyChecking=no "${EC2_USER}@${EC2_HOST}" \
-            'mkdir -p ~/Backend/data/{uploads,chroma_data,huggingface_cache}'
+          ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} \
+            "mkdir -p ~/Backend/data/{uploads,chroma_data,huggingface_cache}"
           
           # 파일 전송
-          scp -o StrictHostKeyChecking=no .env.production "${EC2_USER}@${EC2_HOST}:~/Backend/.env.local"
-          scp -o StrictHostKeyChecking=no docker-compose.yml "${EC2_USER}@${EC2_HOST}:~/Backend/"
-          scp -o StrictHostKeyChecking=no nginx.conf "${EC2_USER}@${EC2_HOST}:~/Backend/"
+          scp -o StrictHostKeyChecking=no .env.production ${EC2_USER}@${EC2_HOST}:~/Backend/.env.local
+          scp -o StrictHostKeyChecking=no docker-compose.yml ${EC2_USER}@${EC2_HOST}:~/Backend/
+          scp -o StrictHostKeyChecking=no nginx.conf ${EC2_USER}@${EC2_HOST}:~/Backend/
           
           # 배포 실행
-          ssh -o StrictHostKeyChecking=no "${EC2_USER}@${EC2_HOST}" bash << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'ENDSSH'
             set -e
             cd ~/Backend
             
-            echo "🔍 인프라 확인..."
+            echo "🔍 인프라 서비스 확인 중..."
             if ! docker-compose ps 2>/dev/null | grep -q "chromadb.*Up"; then
-              echo "📦 인프라 시작..."
+              echo "📦 인프라 서비스 시작..."
               docker-compose up -d chromadb nginx
               sleep 15
             fi
             
-            echo "🐳 이미지 다운로드..."
+            echo "🐳 최신 이미지 다운로드..."
             docker-compose pull backend
             
             echo "🔨 백엔드 재시작..."
@@ -170,8 +141,8 @@ jobs:
             sleep 10
             
             for i in {1..10}; do
-              if curl -sf http://localhost/health > /dev/null 2>&1; then
-                echo "✅ 배포 성공!"
+              if curl -sf http://localhost/health > /dev/null; then
+                echo "✅ 배포 성공! (${i}0초)"
                 docker-compose ps
                 exit 0
               fi
