@@ -12,34 +12,47 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: read
     
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
+      - name: Extract Issue Number
+        id: extract
+        run: |
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          echo "Branch name: $BRANCH_NAME"
+          
+          # feature/issue-12 또는 bugfix/issue-12 형태에서 숫자 추출
+          if [[ $BRANCH_NAME =~ (feature|bugfix)/.*-([0-9]+) ]]; then
+            ISSUE_NUM="${BASH_REMATCH[2]}"
+            echo "ISSUE_NUMBER=$ISSUE_NUM" >> $GITHUB_OUTPUT
+            echo "Found issue number: $ISSUE_NUM"
+          else
+            echo "No issue number found in branch name"
+            echo "ISSUE_NUMBER=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Check if PR exists
         id: check-pr
         uses: actions/github-script@v7
         with:
           script: |
-            const { data: pulls } = await github.rest.pulls.list({
+            const branchName = context.ref.replace('refs/heads/', '');
+            const { data: pullRequests } = await github.rest.pulls.list({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              head: `${context.repo.owner}:${context.ref.replace('refs/heads/', '')}`,
+              head: `${context.repo.owner}:${branchName}`,
               state: 'open'
             });
-            return pulls.length > 0;
-      
-      - name: Extract issue number
-        if: steps.check-pr.outputs.result == 'false'
-        id: extract
-        run: |
-          BRANCH_NAME="${{ github.ref_name }}"
-          ISSUE_NUMBER=$(echo $BRANCH_NAME | grep -oP 'issue-\K\d+' || echo "")
-          echo "ISSUE_NUMBER=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
-      
+            
+            const prExists = pullRequests.length > 0;
+            console.log(`PR exists: ${prExists}`);
+            
+            // ✅ 수정: GitHub Output으로 명시적 설정
+            core.setOutput('exists', prExists ? 'true' : 'false');
+            return prExists;
+
       - name: Create Pull Request
-        if: steps.check-pr.outputs.result == 'false'
+        if: steps.check-pr.outputs.exists == 'false'
         uses: actions/github-script@v7
         env:
           ISSUE_NUMBER: ${{ steps.extract.outputs.ISSUE_NUMBER }}
@@ -48,19 +61,50 @@ jobs:
             const issueNumber = process.env.ISSUE_NUMBER;
             const branchName = context.ref.replace('refs/heads/', '');
             
+            // 기본값 (이슈 번호가 없을 때)
             let title = branchName;
-            let body = `## 📝 변경 사항\n\n## ✅ 체크리스트\n- [ ] 테스트 완료`;
+            let body = `## 🔗 Related Issue
+            - (연결된 이슈 없음)
+            
+            ## 📝 변경 사항
+            
+            ## ✅ 체크리스트
+            - [ ] 테스트 완료`;
             
             if (issueNumber) {
-              title = `[#${issueNumber}] ${branchName}`;
-              body = `## 🔗 Related Issue\nCloses #${issueNumber}\n\n` + body;
+              // 이슈 상세 가져오기
+              const { data: issue } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: Number(issueNumber),
+              });
+              
+              const issueTitle = issue.title || '';
+              const issueUrl = issue.html_url;
+              
+              // ✅ PR 제목: [#이슈번호]
+              title = `[#${issueNumber}]`;
+              
+              // ✅ 본문: 이슈 정보 + Closes + 변경사항/체크리스트
+              body = `## 🔗 관련 이슈
+              #${issueNumber}
+            
+            Closes #${issueNumber}
+            
+            ## 📝 변경 사항
+            
+            ## ✅ 체크리스트
+            - [ ] 테스트 완료`;
             }
             
+            // PR 생성
             await github.rest.pulls.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: title,
+              title,
               head: branchName,
               base: 'develop',
-              body: body
+              body,
             });
+            
+            console.log(`PR created successfully: ${title}`);
