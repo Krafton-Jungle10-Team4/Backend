@@ -5,12 +5,8 @@ import logging
 from pathlib import Path
 from typing import List
 
-
-# 자동 감지 - 파일 확장자를 보고 자동으로 적절한 파서 선택 -> 현재는 3개 확장자 지원 
-from unstructured.partition.auto import partition
-from unstructured.partition.pdf import partition_pdf
-from unstructured.partition.text import partition_text
-from unstructured.partition.docx import partition_docx
+from pypdf import PdfReader
+from docx import Document
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +24,22 @@ class DocumentProcessor:
         
         try:
             if file_extension == ".pdf":
-                elements = partition_pdf(filename=file_path)
+                # PDF 처리
+                reader = PdfReader(file_path)
+                text = "\n\n".join([page.extract_text() for page in reader.pages])
+                
             elif file_extension == ".txt":
-                elements = partition_text(filename=file_path)
+                # TXT 처리
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                    
             elif file_extension == ".docx":
-                elements = partition_docx(filename=file_path)
+                # DOCX 처리
+                doc = Document(file_path)
+                text = "\n\n".join([paragraph.text for paragraph in doc.paragraphs])
+                
             else:
-                # 자동 감지
-                elements = partition(filename=file_path)
-            
-            # 텍스트 추출 및 결합
-            text = "\n\n".join([str(element) for element in elements])
+                raise ValueError(f"지원하지 않는 파일 형식: {file_extension}")
             
             logger.info(f"문서 처리 완료: {len(text)} characters")
             return text
