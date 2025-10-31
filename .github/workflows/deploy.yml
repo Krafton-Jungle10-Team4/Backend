@@ -76,8 +76,7 @@ jobs:
           ENABLE_ASYNC_PROCESSING=true
           ENVEOF
             echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" >> .env.local
-            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET}" >> .env.local
-            echo "S3_BUCKET_NAME=${S3_BUCKET}" >> .env.local
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" >> .env.local
             cat > docker-compose.yml << 'COMPOSEEOF'
           version: '3.8'
           services:
