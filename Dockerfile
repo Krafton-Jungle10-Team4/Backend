@@ -21,7 +21,7 @@ COPY . .
 RUN mkdir -p /app/data/uploads /app/data/huggingface_cache
 
 # 포트 노출
-EXPOSE 8000
+EXPOSE 8001
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
