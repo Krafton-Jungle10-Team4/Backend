@@ -47,7 +47,7 @@ jobs:
           AWS_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           S3_BUCKET: ${{ secrets.S3_BUCKET_NAME }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "AWS_KEY_ID='${AWS_KEY_ID}' AWS_SECRET='${AWS_SECRET}' S3_BUCKET='${S3_BUCKET}' DOCKERHUB_USERNAME='${DOCKERHUB_USERNAME}' bash" << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "AWS_KEY_ID='$AWS_KEY_ID' AWS_SECRET='$AWS_SECRET' S3_BUCKET='$S3_BUCKET' DOCKERHUB_USERNAME='$DOCKERHUB_USERNAME' bash" << 'ENDSSH'
             set -e
             mkdir -p ~/Backend/data/{uploads,chroma_data,huggingface_cache}
             cd ~/Backend
@@ -182,7 +182,7 @@ jobs:
         run: |
           echo "⏳ 서비스 시작 대기 중..."
           sleep 30
-          ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} bash << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST bash << 'ENDSSH'
             cd ~/Backend
             echo "📊 컨테이너 상태:"
             docker-compose ps
