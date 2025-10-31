@@ -16,9 +16,8 @@ torch==2.1.2+cpu
 transformers==4.36.2
 sentence-transformers==2.3.1
 
-# Vector DB
-chromadb==0.4.22
-onnxruntime==1.16.3
+# Vector DB (다운그레이드)
+chromadb==0.4.15
 
 # LangChain
 langchain==0.1.0
