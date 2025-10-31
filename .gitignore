@@ -1,54 +1,67 @@
-# Python 캐시 / 컴파일 파일
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# 가상환경
+*.so
+.Python
 venv/
 env/
-.venv/
-.env/
-env.bak/
-venv.bak/
+ENV/
 
-# 환경 변수 파일
+# 환경 변수
 .env
 .env.local
-.env.*.local
 
-# 빌드 및 배포 아티팩트
+#빌드 및 배포 아티펙트
 build/
 dist/
 *.egg-info/
 .eggs/
 
-# 로그 및 데이터베이스 파일
-*.log
 logs/
+*.log
 *.sqlite3
 *.db
 
-# 테스트 / 커버리지
+#테스트 / 커버리지
 .coverage
-coverage.xml
-htmlcov/
 .tox/
 .nox/
 .pytest_cache/
+htmlcov/
+coverage.xml
 
-# IDE / 에디터 설정
+#Mypy / 타입 검사
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+
+.venv/
+.env/
+.env.local
+.env.*.local
+
+
+
+
+# 데이터
+data/chroma_data/
+data/uploads/
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# 운영체제 자동 생성 파일
+# OS
 .DS_Store
 Thumbs.db
 
 # MyPy / 타입 체크
 .mypy_cache/
-.dmypy.json
+dmypy.json
 .pyre/
 .pytype/
 
@@ -69,9 +82,9 @@ claude_logs/
 claude_history/
 .claude/
 
-
 *.txt
 *.md
+# 로그
 *.log
 *.csv
 *.tmp
