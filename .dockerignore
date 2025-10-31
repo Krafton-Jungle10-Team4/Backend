@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 가상 환경
+venv/
+env/
+ENV/
+.venv/
+
+# 환경 변수 파일
+.env
+.env.local
+.env.*.local
+
+# 데이터 (볼륨으로 마운트)
+data/chroma_data/
+data/uploads/
+data/huggingface_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# 테스트 및 커버리지
+.coverage
+.tox/
+.pytest_cache/
+htmlcov/
+coverage.xml
+
+# 문서
+docs/
+*.md
+!README.md
+
+# CI/CD
+.github/
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# 로그
+logs/
+*.log
+
+# 임시 파일
+*.tmp
+*.bak
