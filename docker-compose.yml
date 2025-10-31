@@ -12,7 +12,6 @@ services:
       - rag-network
 
   backend:
-    # Docker Hub에서 이미지 pull
     image: lsheon0927/krafton_jungle10_team4:latest
     container_name: fastapi_backend
     volumes:
@@ -25,8 +24,7 @@ services:
     env_file:
       - .env.local
     depends_on:
-      chromadb:
-        condition: service_healthy
+      - chromadb
     restart: unless-stopped
     networks:
       - rag-network
