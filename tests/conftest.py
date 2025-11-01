@@ -3,7 +3,16 @@ pytest 공통 픽스처 및 설정
 """
 import pytest
 import os
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import Mock, AsyncMock, patch
+
+
+# 통합 테스트를 위한 환경 변수 설정
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_env():
+    """테스트 환경 변수 자동 설정"""
+    os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
+    os.environ.setdefault("LLM_PROVIDER", "openai")
+    os.environ.setdefault("OPENAI_MODEL", "gpt-3.5-turbo")
 
 
 @pytest.fixture
