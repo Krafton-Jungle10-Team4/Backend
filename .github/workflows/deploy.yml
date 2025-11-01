@@ -29,29 +29,25 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
-          # 코드 압축
-          tar -czf deploy.tar.gz \
-            app/ \
-            requirements.txt \
-            Dockerfile \
-            docker-compose.yml \
-            nginx.conf
+          tar -czf deploy.tar.gz app/ requirements.txt Dockerfile docker-compose.yml nginx.conf
           
-          # EC2로 전송
-          scp -o StrictHostKeyChecking=no \
-              -o ServerAliveInterval=60 \
-              deploy.tar.gz ${EC2_USER}@${EC2_HOST}:~/Backend/
+          scp -o StrictHostKeyChecking=no deploy.tar.gz ${EC2_USER}@${EC2_HOST}:~/Backend/
           
-          # EC2에서 배포 (백그라운드)
           ssh -o StrictHostKeyChecking=no \
               -o ServerAliveInterval=60 \
               -o ServerAliveCountMax=30 \
               ${EC2_USER}@${EC2_HOST} << 'ENDSSH'
             cd ~/Backend
             
+            # .env.local 백업
+            [ -f .env.local ] && cp .env.local .env.backup
+            
             # 압축 해제
             tar -xzf deploy.tar.gz
             rm deploy.tar.gz
+            
+            # .env.local 복원
+            [ -f .env.backup ] && mv .env.backup .env.local
             
             # .env 확인
             if [ ! -f .env.local ]; then
@@ -61,31 +57,16 @@ jobs:
             
             # 인프라 확인
             if ! docker-compose ps 2>/dev/null | grep -q "chromadb.*Up"; then
-              echo "📦 인프라 시작..."
               docker-compose up -d chromadb nginx
               sleep 15
             fi
             
-            # 백그라운드에서 빌드 & 재시작
-            echo "🔨 백엔드 빌드 중... (백그라운드)"
+            # 빌드 & 배포 (백그라운드)
             nohup bash -c '
               docker-compose build backend && \
-              docker-compose up -d --no-deps backend && \
-              echo "✅ 배포 완료" || echo "❌ 배포 실패"
+              docker-compose up -d --no-deps backend
             ' > ~/deploy.log 2>&1 &
             
-            echo "✅ 배포 시작됨 (백그라운드)"
-            echo "📝 로그 확인: tail -f ~/deploy.log"
-            
-            # 잠시 대기 후 초기 상태 확인
-            sleep 30
-            
-            # 헬스체크 (빠른 확인만)
-            if curl -sf http://localhost/health > /dev/null 2>&1; then
-              echo "✅ 서비스 정상"
-              docker-compose ps
-            else
-              echo "⏳ 빌드 진행 중... (1-2분 소요)"
-              echo "📝 확인: ssh로 접속 후 'tail -f ~/deploy.log'"
-            fi
+            echo "✅ 배포 시작"
+            sleep 10
           ENDSSH
