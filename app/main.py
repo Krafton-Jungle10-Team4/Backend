@@ -4,7 +4,7 @@ FastAPI RAG Backend - 메인 애플리케이션
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.api.v1.endpoints import upload
+from app.api.v1.endpoints import upload, chat
 import logging
 
 # 로깅 설정
@@ -34,6 +34,7 @@ app.add_middleware(
 
 # API 라우터 등록
 app.include_router(upload.router, prefix="/api/v1")
+app.include_router(chat.router, prefix="/api/v1")
 
 
 @app.on_event("startup")
