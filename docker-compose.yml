@@ -12,9 +12,7 @@ services:
       - rag-network
 
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${DOCKERHUB_USERNAME}/backend:latest
     container_name: fastapi_backend
     volumes:
       - ./data/uploads:/app/data/uploads

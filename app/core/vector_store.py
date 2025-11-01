@@ -2,6 +2,7 @@
 ChromaDB 벡터 스토어 관리
 """
 import logging
+import time
 from typing import List, Dict, Optional
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -12,30 +13,61 @@ logger = logging.getLogger(__name__)
 
 class VectorStore:
     """ChromaDB 벡터 스토어 클래스"""
-    
+
     def __init__(self):
         self.client = None
         self.collection = None
-        
-    def connect(self):
-        """ChromaDB 연결"""
+
+    def connect(self, max_retries: int = 5, retry_delay: int = 5):
+        """
+        ChromaDB 연결 (재시도 로직 포함)
+
+        Args:
+            max_retries: 최대 재시도 횟수
+            retry_delay: 재시도 간 대기 시간(초)
+        """
         if self.client is None:
             logger.info(f"ChromaDB 연결 중: {settings.chroma_host}:{settings.chroma_port}")
-            self.client = chromadb.HttpClient(
-                host=settings.chroma_host,
-                port=settings.chroma_port,
-                settings=ChromaSettings(
-                    anonymized_telemetry=False
-                )
-            )
-            
-            # 컬렉션 생성 또는 가져오기
-            self.collection = self.client.get_or_create_collection(
-                name=settings.chroma_collection_name,
-                metadata={"description": "Document embeddings for RAG"}
-            )
-            
-            logger.info("ChromaDB 초기화 완료")
+
+            last_error = None
+            for attempt in range(1, max_retries + 1):
+                try:
+                    self.client = chromadb.HttpClient(
+                        host=settings.chroma_host,
+                        port=settings.chroma_port,
+                        settings=ChromaSettings(
+                            anonymized_telemetry=False
+                        )
+                    )
+
+                    # 연결 테스트 (heartbeat)
+                    self.client.heartbeat()
+
+                    # 컬렉션 생성 또는 가져오기
+                    self.collection = self.client.get_or_create_collection(
+                        name=settings.chroma_collection_name,
+                        metadata={"description": "Document embeddings for RAG"}
+                    )
+
+                    logger.info(f"ChromaDB 초기화 완료 (시도 {attempt}/{max_retries})")
+                    return
+
+                except Exception as e:
+                    last_error = e
+                    logger.warning(
+                        f"ChromaDB 연결 실패 (시도 {attempt}/{max_retries}): {str(e)}"
+                    )
+
+                    if attempt < max_retries:
+                        logger.info(f"{retry_delay}초 후 재시도...")
+                        time.sleep(retry_delay)
+                    else:
+                        logger.error(
+                            f"ChromaDB 연결 최종 실패 ({max_retries}회 시도). "
+                            f"ChromaDB 서비스가 실행 중인지 확인하세요: "
+                            f"{settings.chroma_host}:{settings.chroma_port}"
+                        )
+                        raise last_error
     
     def add_documents(
         self,

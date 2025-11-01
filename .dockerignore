@@ -4,62 +4,101 @@ __pycache__/
 *$py.class
 *.so
 .Python
+*.egg-info/
+dist/
+build/
 
 # 가상 환경
 venv/
 env/
 ENV/
 .venv/
+virtualenv/
 
 # 환경 변수 파일
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
-# 데이터 (볼륨으로 마운트)
-data/chroma_data/
-data/uploads/
-data/huggingface_cache/
+# 데이터 (볼륨으로 마운트되므로 제외)
+data/
+!data/.gitkeep
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.swn
+.project
+.pydevproject
+.settings/
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Git
 .git/
 .gitignore
 .gitattributes
+.gitmodules
 
 # 테스트 및 커버리지
 .coverage
 .tox/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 htmlcov/
 coverage.xml
+*.cover
+.hypothesis/
 
-# 문서
+# 문서 및 개발 파일
 docs/
 *.md
 !README.md
+LICENSE
+CHANGELOG.md
+CONTRIBUTING.md
 
 # CI/CD
 .github/
+.gitlab-ci.yml
+.travis.yml
 
-# Docker
+# Docker (이미지에 포함 불필요)
 Dockerfile
 docker-compose*.yml
 .dockerignore
 
+# 스크립트 (배포 후 불필요)
+scripts/
+*.sh
+
 # 로그
 logs/
 *.log
+*.log.*
 
 # 임시 파일
 *.tmp
 *.bak
+*.orig
+temp/
+tmp/
+
+# 개발용 설정 파일
+pytest.ini
+setup.cfg
+.flake8
+.pylintrc
+mypy.ini
+.editorconfig
+
+# 큰 파일 제외
+*.tar.gz
+*.zip
+*.rar
