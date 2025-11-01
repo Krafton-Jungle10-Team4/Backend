@@ -12,7 +12,9 @@ services:
       - rag-network
 
   backend:
-    image: lsheon0927/krafton_jungle10_team4:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: fastapi_backend
     volumes:
       - ./data/uploads:/app/data/uploads

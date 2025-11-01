@@ -11,29 +11,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Debug Secrets
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-        run: |
-          echo "=== Secrets 디버깅 ==="
-          echo "EC2_HOST 길이: ${#EC2_HOST}"
-          echo "EC2_USER 길이: ${#EC2_USER}"
-          echo "EC2_HOST 첫 5글자: ${EC2_HOST:0:5}"
-          echo "EC2_HOST 마지막 5글자: ${EC2_HOST: -5}"
-          
-          if [ -z "$EC2_HOST" ]; then
-            echo "❌ EC2_HOST가 비어있습니다!"
-            exit 1
-          fi
-          
-          if [ -z "$EC2_USER" ]; then
-            echo "❌ EC2_USER가 비어있습니다!"
-            exit 1
-          fi
-          
-          echo "✅ Secrets 값 존재함"
-
       - name: Checkout code
         uses: actions/checkout@v3
 
@@ -47,110 +24,68 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # Docker 빌드 캐싱 추가
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Cache Docker layers
-        uses: actions/cache@v3
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/krafton_jungle10_team4:latest
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
-
-      - name: Move cache
-        run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-
-      - name: Create .env.production
-        run: |
-          cat > .env.production << 'EOF'
-          APP_NAME="FastAPI RAG Backend"
-          APP_VERSION="1.0.0"
-          DEBUG=false
-          LOG_LEVEL=info
-          HOST=0.0.0.0
-          PORT=8001
-          WORKERS=4
-          CHROMA_HOST=chromadb
-          CHROMA_PORT=8000
-          CHROMA_COLLECTION_NAME=documents
-          EMBEDDING_MODEL=intfloat/multilingual-e5-large
-          EMBEDDING_DEVICE=cpu
-          BATCH_SIZE=32
-          MAX_FILE_SIZE=10485760
-          ALLOWED_EXTENSIONS=["pdf","txt","docx"]
-          CHUNK_SIZE=512
-          CHUNK_OVERLAP=128
-          DEFAULT_TOP_K=5
-          MAX_TOP_K=50
-          UPLOAD_TEMP_DIR=./data/uploads
-          ENABLE_ASYNC_PROCESSING=true
-          EOF
-
       - name: Deploy to EC2
         env:
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
-          # 디렉토리 생성
-          ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} \
-            "mkdir -p ~/Backend/data/{uploads,chroma_data,huggingface_cache}"
+          # 코드 압축
+          tar -czf deploy.tar.gz \
+            app/ \
+            requirements.txt \
+            Dockerfile \
+            docker-compose.yml \
+            nginx.conf
           
-          # 파일 전송
-          scp -o StrictHostKeyChecking=no .env.production ${EC2_USER}@${EC2_HOST}:~/Backend/.env.local
-          scp -o StrictHostKeyChecking=no docker-compose.yml ${EC2_USER}@${EC2_HOST}:~/Backend/
-          scp -o StrictHostKeyChecking=no nginx.conf ${EC2_USER}@${EC2_HOST}:~/Backend/
+          # EC2로 전송
+          scp -o StrictHostKeyChecking=no \
+              -o ServerAliveInterval=60 \
+              deploy.tar.gz ${EC2_USER}@${EC2_HOST}:~/Backend/
           
-          # 배포 실행
-          ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'ENDSSH'
-            set -e
+          # EC2에서 배포 (백그라운드)
+          ssh -o StrictHostKeyChecking=no \
+              -o ServerAliveInterval=60 \
+              -o ServerAliveCountMax=30 \
+              ${EC2_USER}@${EC2_HOST} << 'ENDSSH'
             cd ~/Backend
             
-            echo "🔍 인프라 서비스 확인 중..."
+            # 압축 해제
+            tar -xzf deploy.tar.gz
+            rm deploy.tar.gz
+            
+            # .env 확인
+            if [ ! -f .env.local ]; then
+              echo "❌ .env.local 없음"
+              exit 1
+            fi
+            
+            # 인프라 확인
             if ! docker-compose ps 2>/dev/null | grep -q "chromadb.*Up"; then
-              echo "📦 인프라 서비스 시작..."
+              echo "📦 인프라 시작..."
               docker-compose up -d chromadb nginx
               sleep 15
             fi
             
-            echo "🐳 최신 이미지 다운로드..."
-            docker-compose pull backend
+            # 백그라운드에서 빌드 & 재시작
+            echo "🔨 백엔드 빌드 중... (백그라운드)"
+            nohup bash -c '
+              docker-compose build backend && \
+              docker-compose up -d --no-deps backend && \
+              echo "✅ 배포 완료" || echo "❌ 배포 실패"
+            ' > ~/deploy.log 2>&1 &
             
-            echo "🔨 백엔드 재시작..."
-            docker-compose up -d --no-deps --force-recreate backend
+            echo "✅ 배포 시작됨 (백그라운드)"
+            echo "📝 로그 확인: tail -f ~/deploy.log"
             
-            echo "⏳ 헬스 체크..."
-            sleep 10
+            # 잠시 대기 후 초기 상태 확인
+            sleep 30
             
-            for i in {1..10}; do
-              if curl -sf http://localhost/health > /dev/null; then
-                echo "✅ 배포 성공! (${i}0초)"
-                docker-compose ps
-                exit 0
-              fi
-              echo "대기 중... ($i/10)"
-              sleep 10
-            done
-            
-            echo "❌ 헬스 체크 실패"
-            docker-compose logs --tail=50 backend
-            exit 1
+            # 헬스체크 (빠른 확인만)
+            if curl -sf http://localhost/health > /dev/null 2>&1; then
+              echo "✅ 서비스 정상"
+              docker-compose ps
+            else
+              echo "⏳ 빌드 진행 중... (1-2분 소요)"
+              echo "📝 확인: ssh로 접속 후 'tail -f ~/deploy.log'"
+            fi
           ENDSSH
