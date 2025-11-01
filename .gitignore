@@ -102,3 +102,5 @@ claude_history/
 !LICENSE
 !docs/*.md
 !.env.example
+
+docker-login-and-up.sh

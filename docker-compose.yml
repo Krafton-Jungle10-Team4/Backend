@@ -1,6 +1,7 @@
 services:
   chromadb:
     image: chromadb/chroma:0.5.3
+    platform: linux/arm64
     container_name: chromadb
     volumes:
       - ./data/chroma_data:/chroma/chroma
@@ -18,8 +19,14 @@ services:
       - rag-network
 
   backend:
-    image: ${DOCKERHUB_USERNAME}/backend:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
     container_name: fastapi_backend
+    ports:
+      - "8001:8001"  # 이 줄 추가
     volumes:
       - ./data/uploads:/app/data/uploads
       - ./data/huggingface_cache:/root/.cache/huggingface
@@ -33,20 +40,6 @@ services:
       chromadb:
         condition: service_healthy  # 헬스체크 통과할 때까지 대기
 
-    restart: unless-stopped
-    networks:
-      - rag-network
-
-  nginx:
-    image: nginx:alpine
-    container_name: nginx_proxy
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - backend
-      - chromadb
     restart: unless-stopped
     networks:
       - rag-network
