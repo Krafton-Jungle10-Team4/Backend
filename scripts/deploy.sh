@@ -37,8 +37,8 @@ echo "🔍 인프라 서비스 확인 중..."
 if ! docker-compose ps 2>/dev/null | grep -q "chromadb.*Up"; then
     echo "📦 ChromaDB 시작 (최초 배포)..."
     docker-compose up -d chromadb
-    echo "⏳ ChromaDB 초기화 대기 중 (30초)..."
-    sleep 30
+    echo "⏳ ChromaDB 초기화 대기 중 (60초)..."  
+    sleep 60
 
     # ChromaDB 상태 확인
     if ! docker-compose ps | grep -q "chromadb.*Up"; then

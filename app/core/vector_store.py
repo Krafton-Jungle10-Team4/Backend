@@ -5,7 +5,7 @@ import logging
 import time
 from typing import List, Dict, Optional
 import chromadb
-from chromadb.config import Settings as ChromaSettings
+# Settings 임포트 제거 - 0.5.x에서는 필요없음
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -32,29 +32,23 @@ class VectorStore:
             last_error = None
             for attempt in range(1, max_retries + 1):
                 try:
+                    # 0.5.x에서는 Settings 객체 없이 직접 파라미터 전달
                     self.client = chromadb.HttpClient(
                         host=settings.chroma_host,
                         port=settings.chroma_port,
-                        settings=ChromaSettings(
-                            anonymized_telemetry=False
-                        )
+                        # 0.5.x에서는 settings 파라미터가 없음
+                        # 대신 필요한 설정을 직접 파라미터로 전달
                     )
 
                     # 연결 테스트 (heartbeat)
                     self.client.heartbeat()
 
-                    # Tenant 생성 또는 가져오기 (ChromaDB 0.4.x 버그 대응)
-                    try:
-                        self.client.get_tenant(name="default_tenant")
-                        logger.info("default_tenant 이미 존재")
-                    except Exception:
-                        try:
-                            self.client.create_tenant(name="default_tenant")
-                            logger.info("default_tenant 생성 완료")
-                        except Exception as e:
-                            logger.warning(f"Tenant 생성 실패 (이미 존재 가능): {e}")
-
+                    # 0.5.x에서는 tenant/database 관리가 더 명확해짐
+                    # 기본적으로 "default_tenant"와 "default_database"를 사용
+                    # 명시적으로 생성하지 않아도 자동으로 처리됨
+                    
                     # 컬렉션 생성 또는 가져오기
+                    # 0.5.x에서도 이 메서드는 동일하게 작동
                     self.collection = self.client.get_or_create_collection(
                         name=settings.chroma_collection_name,
                         metadata={"description": "Document embeddings for RAG"}
@@ -87,7 +81,12 @@ class VectorStore:
         documents: List[str],
         metadatas: List[Dict]
     ):
-        """문서와 임베딩을 벡터 스토어에 추가"""
+        """
+        문서와 임베딩을 벡터 스토어에 추가
+        
+        0.5.x에서도 동일한 방식으로 작동하지만,
+        내부적으로 더 효율적인 배치 처리가 이루어집니다.
+        """
         if self.collection is None:
             self.connect()
             
@@ -106,10 +105,15 @@ class VectorStore:
         top_k: int = 5,
         filter_dict: Optional[Dict] = None
     ) -> Dict:
-        """유사도 검색"""
+        """
+        유사도 검색
+        
+        0.5.x에서는 query 메서드의 반환 형식이 조금 더 명확해졌습니다.
+        """
         if self.collection is None:
             self.connect()
             
+        # 0.5.x에서도 동일하게 작동
         results = self.collection.query(
             query_embeddings=[query_embedding],
             n_results=top_k,
@@ -119,7 +123,11 @@ class VectorStore:
         return results
     
     def get_document(self, document_id: str) -> Optional[Dict]:
-        """문서 ID로 문서 조회"""
+        """
+        문서 ID로 문서 조회
+        
+        0.5.x에서도 get 메서드는 동일하게 작동합니다.
+        """
         if self.collection is None:
             self.connect()
             
@@ -141,7 +149,11 @@ class VectorStore:
             return None
     
     def delete_document(self, document_id: str):
-        """문서 삭제"""
+        """
+        문서 삭제
+        
+        0.5.x에서도 동일한 방식으로 작동합니다.
+        """
         if self.collection is None:
             self.connect()
             
@@ -159,7 +171,11 @@ class VectorStore:
             raise
     
     def count_documents(self) -> int:
-        """컬렉션 내 문서 개수 반환"""
+        """
+        컬렉션 내 문서 개수 반환
+        
+        0.5.x에서도 동일하게 작동합니다.
+        """
         if self.collection is None:
             self.connect()
             

@@ -1,12 +1,18 @@
 services:
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:0.5.3
     container_name: chromadb
     volumes:
       - ./data/chroma_data:/chroma/chroma
     environment:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s  
     restart: unless-stopped
     networks:
       - rag-network
@@ -24,7 +30,9 @@ services:
     env_file:
       - .env.local
     depends_on:
-      - chromadb
+      chromadb:
+        condition: service_healthy  # 헬스체크 통과할 때까지 대기
+
     restart: unless-stopped
     networks:
       - rag-network
