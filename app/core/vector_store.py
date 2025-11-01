@@ -43,6 +43,17 @@ class VectorStore:
                     # 연결 테스트 (heartbeat)
                     self.client.heartbeat()
 
+                    # Tenant 생성 또는 가져오기 (ChromaDB 0.4.x 버그 대응)
+                    try:
+                        self.client.get_tenant(name="default_tenant")
+                        logger.info("default_tenant 이미 존재")
+                    except Exception:
+                        try:
+                            self.client.create_tenant(name="default_tenant")
+                            logger.info("default_tenant 생성 완료")
+                        except Exception as e:
+                            logger.warning(f"Tenant 생성 실패 (이미 존재 가능): {e}")
+
                     # 컬렉션 생성 또는 가져오기
                     self.collection = self.client.get_or_create_collection(
                         name=settings.chroma_collection_name,
