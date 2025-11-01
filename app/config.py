@@ -2,7 +2,7 @@
 애플리케이션 설정 관리
 """
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
 
 
 class Settings(BaseSettings):
@@ -44,10 +44,28 @@ class Settings(BaseSettings):
     # 검색
     default_top_k: int = 5
     max_top_k: int = 50
-    
+
     # 업로드
     upload_temp_dir: str = "./data/uploads"
     enable_async_processing: bool = True
+
+    # LLM 설정
+    llm_provider: str = "openai"
+
+    # OpenAI - api key는 환경 변수로 관리
+    openai_api_key: str = ""
+    openai_model: str = "gpt-3.5-turbo"
+    openai_organization: Optional[str] = None
+
+    # 챗봇 설정
+    # 생성 응답의 다양성(창의성): 높을 수록 창의적, 낮을 수록 일관적
+    chat_temperature: float = 0.7
+    # 한 번의 응답에서 생성할 최대 토큰 수
+    chat_max_tokens: int = 1000
+    # RAG 검색 시 상위 몇 개의 문서를 가져올지(top-k)
+    # 너무 크면 느려지고, 유사하지 않은 정보가 검색되고
+    # 너무 작으면 정보 누락이 생길 수 있음
+    chat_default_top_k: int = 5
     
     class Config:
         env_file = ".env.local"
