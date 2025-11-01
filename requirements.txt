@@ -23,6 +23,10 @@ langchain==0.1.0
 langchain-community==0.0.13
 tiktoken==0.5.2
 
+# LLM 클라이언트
+openai==1.12.0
+langchain-openai==0.0.5
+
 # 유틸리티
 aiofiles==23.2.1
 tenacity==8.2.3
