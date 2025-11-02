@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = False
     log_level: str = "info"
+
+    # Docker Hub
+    dockerhub_username: str = ""
+    dockerhub_token: str = ""
     
     # 서버
     host: str = "0.0.0.0"
@@ -56,6 +60,10 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-3.5-turbo"
     openai_organization: Optional[str] = None
+
+    # Anthropic Claude
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-5-20250929"
 
     # 챗봇 설정
     # 생성 응답의 다양성(창의성): 높을 수록 창의적, 낮을 수록 일관적
