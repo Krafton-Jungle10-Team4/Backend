@@ -104,3 +104,11 @@ async def api_health_check():
         "api_version": "v1",
         "app_version": settings.app_version
     }
+
+import datetime
+
+@app.get("/now")
+async def get_current_datetime():
+    """현재 서버 시각 반환"""
+    now = datetime.datetime.now()
+    return {"server_time": now.isoformat(), "timestamp": now.timestamp()}

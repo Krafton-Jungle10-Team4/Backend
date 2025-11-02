@@ -13,11 +13,13 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = False
     log_level: str = "info"
-
-    # Docker Hub
+    
+    #####################
+    # Docker Hub diff
     dockerhub_username: str = ""
     dockerhub_token: str = ""
-    
+    #####################
+
     # 서버
     host: str = "0.0.0.0"
     port: int = 8000
