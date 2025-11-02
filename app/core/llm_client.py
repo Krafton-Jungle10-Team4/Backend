@@ -75,6 +75,18 @@ def get_llm_client(provider: str = None) -> BaseLLMClient:
             model=settings.openai_model,
             organization=settings.openai_organization
         )
+    elif provider == "anthropic":
+        from app.core.providers.anthropic import AnthropicClient
+
+        if not settings.anthropic_api_key:
+            raise ValueError(
+                "ANTHROPIC_API_KEY가 설정되지 않았습니다. "
+                ".env.local 파일을 확인하세요."
+            )
+        _llm_client = AnthropicClient(
+            api_key=settings.anthropic_api_key,
+            model=settings.anthropic_model
+        )
     else:
         raise ValueError(f"지원하지 않는 LLM 제공자: {provider}")
 
