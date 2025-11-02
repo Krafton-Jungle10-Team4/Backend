@@ -53,6 +53,13 @@ async def startup_event():
                 ".env.local 파일을 확인하세요."
             )
         logger.info(f"✅ OpenAI 설정 완료 (모델: {settings.openai_model})")
+    elif settings.llm_provider == "anthropic":
+        if not settings.anthropic_api_key:
+            raise ValueError(
+                "❌ ANTHROPIC_API_KEY가 설정되지 않았습니다. "
+                ".env.local 파일을 확인하세요."
+            )
+        logger.info(f"✅ Anthropic Claude 설정 완료 (모델: {settings.anthropic_model})")
     logger.info(f"🤖 LLM 제공자: {settings.llm_provider}")
 
     # 임베딩 모델 미리 로드 (Eager Loading)
