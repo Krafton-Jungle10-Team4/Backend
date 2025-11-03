@@ -25,19 +25,28 @@ class DocumentService:
     
     def __init__(self):
         self.embedding_service = get_embedding_service()
-        self.vector_store = get_vector_store()
         self.document_processor = DocumentProcessor()
         self.text_chunker = get_text_chunker()
-        
+
         # 업로드 디렉토리 생성
         Path(settings.upload_temp_dir).mkdir(parents=True, exist_ok=True)
     
     async def process_and_store_document(
         self,
-        file: UploadFile
+        file: UploadFile,
+        team_uuid: str
     ) -> DocumentUploadResponse:
-        """문서 업로드 및 처리 전체 파이프라인"""
+        """
+        문서 업로드 및 처리 전체 파이프라인
+
+        Args:
+            file: 업로드 파일
+            team_uuid: 팀 UUID (컬렉션 분리용)
+        """
         start_time = time.time()
+
+        # 팀별 벡터 스토어 가져오기
+        vector_store = get_vector_store(team_uuid=team_uuid)
         
         # 1. 파일 저장
         document_id = str(uuid.uuid4())
@@ -83,7 +92,7 @@ class DocumentService:
                 for i in range(len(chunks))
             ]
             
-            self.vector_store.add_documents(
+            vector_store.add_documents(
                 ids=chunk_ids,
                 embeddings=embeddings,
                 documents=chunks,
@@ -137,45 +146,55 @@ class DocumentService:
         except Exception as e:
             logger.warning(f"임시 파일 삭제 실패: {e}")
     
-    def get_document_info(self, document_id: str) -> dict:
+    def get_document_info(self, document_id: str, team_uuid: str) -> dict:
         """문서 정보 조회"""
+        # 팀별 벡터 스토어 가져오기
+        vector_store = get_vector_store(team_uuid=team_uuid)
+
         # 해당 document_id의 첫 번째 청크 메타데이터 조회
-        doc = self.vector_store.get_document(f"{document_id}_chunk_0")
-        
+        doc = vector_store.get_document(f"{document_id}_chunk_0")
+
         if not doc:
             raise ValueError(f"문서를 찾을 수 없습니다: {document_id}")
-        
+
         return {
             "document_id": document_id,
             "metadata": doc["metadata"]
         }
     
-    def delete_document(self, document_id: str):
+    def delete_document(self, document_id: str, team_uuid: str):
         """문서 삭제"""
+        # 팀별 벡터 스토어 가져오기
+        vector_store = get_vector_store(team_uuid=team_uuid)
+
         logger.info(f"문서 삭제 요청: {document_id}")
-        self.vector_store.delete_document(document_id)
+        vector_store.delete_document(document_id)
     
     def search_documents(
         self,
         query: str,
+        team_uuid: str,
         top_k: int = None
     ) -> dict:
         """문서 검색"""
+        # 팀별 벡터 스토어 가져오기
+        vector_store = get_vector_store(team_uuid=team_uuid)
+
         if top_k is None:
             top_k = settings.default_top_k
-        
+
         if top_k > settings.max_top_k:
             top_k = settings.max_top_k
-        
+
         # 쿼리 임베딩 생성
         query_embedding = self.embedding_service.embed_query(query)
-        
+
         # 벡터 검색
-        results = self.vector_store.search(
+        results = vector_store.search(
             query_embedding=query_embedding,
             top_k=top_k
         )
-        
+
         return results
 
 

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.responses import StreamingResponse
 from app.services.chat_service import get_chat_service, ChatService
 from app.models.chat import ChatRequest, ChatResponse
+from app.core.auth.dependencies import get_current_user_from_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 @router.post("", response_model=ChatResponse, status_code=status.HTTP_200_OK)
 async def chat(
     request: ChatRequest,
+    user_team: tuple = Depends(get_current_user_from_api_key),
     chat_service: ChatService = Depends(get_chat_service)
 ):
     """
@@ -33,10 +35,11 @@ async def chat(
     - 400: 잘못된 요청 (메시지 길이 초과 등)
     - 500: 서버 오류 (LLM API 실패, 검색 실패 등)
     """
-    logger.info(f"[Chat] 요청: '{request.message[:50]}...' (session: {request.session_id})")
+    user, team = user_team
+    logger.info(f"[Chat] 요청: '{request.message[:50]}...' (session: {request.session_id}, team: {team.uuid})")
 
     try:
-        response = await chat_service.generate_response(request)
+        response = await chat_service.generate_response(request, team_uuid=team.uuid)
 
         logger.info(
             f"[Chat] 응답 생성 완료: {response.retrieved_chunks}개 청크 참조, "

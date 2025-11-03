@@ -19,8 +19,6 @@ class ChatService:
     def __init__(self):
         # 입력 텍스트를 벡터(숫자 표현)로 변환
         self.embedding_service = get_embedding_service()
-        # 임베딩을 저장/검색하여 유사 문서 조회(Retrieval) 수행
-        self.vector_store = get_vector_store()
         # 프롬프트를 기반으로 응답을 생성하는 모델 호출 래퍼
         self.llm_client = get_llm_client()
         # RAG 응답 생성을 위한 시스템/사용자 메시지 템플릿 관리
@@ -30,11 +28,15 @@ class ChatService:
 
     async def generate_response(
         self,
-        request: ChatRequest
+        request: ChatRequest,
+        team_uuid: str
     ) -> ChatResponse:
         """챗봇 응답 생성 (RAG 파이프라인)"""
 
         logger.info(f"챗봇 요청: '{request.message[:50]}...'")
+
+        # 팀별 벡터 스토어 가져오기
+        vector_store = get_vector_store(team_uuid=team_uuid)
 
         try:
             # 1. 쿼리 임베딩 생성
@@ -45,7 +47,7 @@ class ChatService:
 
             # 2. 벡터 검색
             logger.debug(f"벡터 검색 중 (top_k={request.top_k})...")
-            search_results = self.vector_store.search(
+            search_results = vector_store.search(
                 query_embedding=query_embedding,
                 top_k=request.top_k
             )
