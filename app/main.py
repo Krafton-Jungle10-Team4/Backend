@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from app.config import settings
-from app.api.v1.endpoints import upload, chat, auth, teams
+from app.api.v1.endpoints import upload, chat, auth, teams, bots
 import logging
 
 # 로깅 설정
@@ -45,6 +45,7 @@ app.add_middleware(
 # API 라우터 등록
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
 app.include_router(teams.router, prefix="/api/v1/teams", tags=["팀 관리"])
+app.include_router(bots.router, prefix="/api/v1/bots", tags=["봇 관리"])
 app.include_router(upload.router, prefix="/api/v1", tags=["문서"])
 app.include_router(chat.router, prefix="/api/v1", tags=["챗봇"])
 

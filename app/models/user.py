@@ -50,6 +50,7 @@ class Team(Base):
     members = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan")
     api_keys = relationship("APIKey", back_populates="team", cascade="all, delete-orphan")
     invites = relationship("InviteToken", back_populates="team", cascade="all, delete-orphan")
+    bots = relationship("Bot", back_populates="team", cascade="all, delete-orphan")
 
 
 class TeamMember(Base):
