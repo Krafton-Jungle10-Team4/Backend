@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     s3_bucket_name: str = ""
     
+    # Database
+    database_url: str = ""
+
     # ChromaDB
     chroma_host: str = "localhost"
     chroma_port: int = 8001
@@ -76,6 +79,19 @@ class Settings(BaseSettings):
     # 너무 크면 느려지고, 유사하지 않은 정보가 검색되고
     # 너무 작으면 정보 누락이 생길 수 있음
     chat_default_top_k: int = 5
+
+    # 인증 설정 (환경 변수에서 로드)
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
+
+    # JWT (환경 변수에서 로드)
+    jwt_secret_key: str = ""
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+
+    # 프론트엔드 (환경 변수에서 로드)
+    frontend_url: str = ""
     
     class Config:
         env_file = ".env.local"
