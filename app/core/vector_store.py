@@ -14,9 +14,15 @@ logger = logging.getLogger(__name__)
 class VectorStore:
     """ChromaDB 벡터 스토어 클래스"""
 
-    def __init__(self):
+    def __init__(self, team_uuid: Optional[str] = None):
+        """
+        Args:
+            team_uuid: 팀 UUID (팀별 컬렉션 분리용)
+                      None이면 기본 컬렉션 사용 (하위 호환성)
+        """
         self.client = None
         self.collection = None
+        self.team_uuid = team_uuid
 
     def connect(self, max_retries: int = 5, retry_delay: int = 5):
         """
@@ -47,11 +53,19 @@ class VectorStore:
                     # 기본적으로 "default_tenant"와 "default_database"를 사용
                     # 명시적으로 생성하지 않아도 자동으로 처리됨
                     
+                    # 팀별 컬렉션 이름 생성
+                    if self.team_uuid:
+                        collection_name = f"team_{self.team_uuid}"
+                    else:
+                        collection_name = settings.chroma_collection_name
+
                     # 컬렉션 생성 또는 가져오기
-                    # 0.5.x에서도 이 메서드는 동일하게 작동
                     self.collection = self.client.get_or_create_collection(
-                        name=settings.chroma_collection_name,
-                        metadata={"description": "Document embeddings for RAG"}
+                        name=collection_name,
+                        metadata={
+                            "description": "Document embeddings for RAG",
+                            "team_uuid": self.team_uuid or "default"
+                        }
                     )
 
                     logger.info(f"ChromaDB 초기화 완료 (시도 {attempt}/{max_retries})")
@@ -182,13 +196,23 @@ class VectorStore:
         return self.collection.count()
 
 
-# 싱글톤 인스턴스
-_vector_store = None
+# 팀별 벡터 스토어 캐시
+_vector_stores: Dict[str, VectorStore] = {}
 
 
-def get_vector_store() -> VectorStore:
-    """벡터 스토어 싱글톤 인스턴스 반환"""
-    global _vector_store
-    if _vector_store is None:
-        _vector_store = VectorStore()
-    return _vector_store
+def get_vector_store(team_uuid: Optional[str] = None) -> VectorStore:
+    """
+    팀별 벡터 스토어 인스턴스 반환
+
+    Args:
+        team_uuid: 팀 UUID (None이면 기본 컬렉션)
+
+    Returns:
+        VectorStore 인스턴스 (팀별로 캐싱됨)
+    """
+    cache_key = team_uuid or "default"
+
+    if cache_key not in _vector_stores:
+        _vector_stores[cache_key] = VectorStore(team_uuid=team_uuid)
+
+    return _vector_stores[cache_key]

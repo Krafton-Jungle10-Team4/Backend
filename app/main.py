@@ -3,8 +3,9 @@ FastAPI RAG Backend - 메인 애플리케이션
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from app.config import settings
-from app.api.v1.endpoints import upload, chat
+from app.api.v1.endpoints import upload, chat, auth, teams
 import logging
 
 # 로깅 설정
@@ -23,6 +24,15 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# 세션 미들웨어 (OAuth에 필요)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.jwt_secret_key,  # JWT 시크릿 재사용
+    max_age=1800,  # 30분
+    same_site="lax",
+    https_only=False  # 개발환경: False, 배포환경: True로 변경 필요
+)
+
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
@@ -33,8 +43,10 @@ app.add_middleware(
 )
 
 # API 라우터 등록
-app.include_router(upload.router, prefix="/api/v1")
-app.include_router(chat.router, prefix="/api/v1")
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
+app.include_router(teams.router, prefix="/api/v1/teams", tags=["팀 관리"])
+app.include_router(upload.router, prefix="/api/v1", tags=["문서"])
+app.include_router(chat.router, prefix="/api/v1", tags=["챗봇"])
 
 
 @app.on_event("startup")

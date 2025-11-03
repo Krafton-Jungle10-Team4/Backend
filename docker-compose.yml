@@ -1,4 +1,23 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    platform: linux/arm64
+    container_name: postgres_db
+    env_file:
+      - .env.local
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - rag-network
+
   chromadb:
     image: chromadb/chroma:0.5.3
     platform: linux/arm64
@@ -13,7 +32,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s  
+      start_period: 30s
     restart: unless-stopped
     networks:
       - rag-network
@@ -37,6 +56,8 @@ services:
     env_file:
       - .env.local
     depends_on:
+      postgres:
+        condition: service_healthy
       chromadb:
         condition: service_healthy  # 헬스체크 통과할 때까지 대기
 
