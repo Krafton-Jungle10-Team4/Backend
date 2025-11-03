@@ -11,6 +11,7 @@ from app.config import settings
 from app.core.database import Base
 # 모든 모델 import (Alembic이 자동으로 감지하도록)
 from app.models.user import User, Team, TeamMember, APIKey, InviteToken
+from app.models.bot import Bot, BotKnowledge
 
 # Alembic Config 객체
 config = context.config
