@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
 from app.services.document_service import get_document_service, DocumentService
 from app.models.documents import DocumentUploadResponse, SearchResponse
-from app.core.auth.dependencies import get_current_user_from_api_key
+from app.core.auth.dependencies import get_current_user_from_jwt_only, get_user_team
 from app.models.user import User, Team
 from app.config import settings
 
@@ -17,17 +17,19 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 @router.post("/upload", response_model=DocumentUploadResponse)
 async def upload_document(
     file: UploadFile = File(..., description="업로드할 문서 파일"),
-    user_team: tuple = Depends(get_current_user_from_api_key),
+    user: User = Depends(get_current_user_from_jwt_only),
+    team: Team = Depends(get_user_team),
     doc_service: DocumentService = Depends(get_document_service)
 ):
     """
     문서 업로드 및 처리
 
+    **인증 방식:** JWT 토큰 (로그인 필수)
+
     Headers:
-        X-API-Key: API 키 (팀 오너가 발급)
+        Authorization: Bearer <token>
     """
-    user, team = user_team
-    logger.info(f"파일 업로드 요청: {file.filename} (Team: {team.uuid})")
+    logger.info(f"파일 업로드 요청: {file.filename} (User: {user.email}, Team: {team.uuid})")
     
     # 파일 크기 검증
     file.file.seek(0, 2)
@@ -68,17 +70,19 @@ async def upload_document(
 async def search_documents(
     query: str = Query(..., description="검색할 텍스트", min_length=1),
     top_k: int = Query(5, description="반환할 결과 개수", ge=1, le=50),
-    user_team: tuple = Depends(get_current_user_from_api_key),
+    user: User = Depends(get_current_user_from_jwt_only),
+    team: Team = Depends(get_user_team),
     doc_service: DocumentService = Depends(get_document_service)
 ):
     """
     문서 검색 (RAG 유사도 검색)
 
+    **인증 방식:** JWT 토큰 (로그인 필수)
+
     Headers:
-        X-API-Key: API 키
+        Authorization: Bearer <token>
     """
-    user, team = user_team
-    logger.info(f"검색 요청: query='{query}', top_k={top_k} (Team: {team.uuid})")
+    logger.info(f"검색 요청: query='{query}', top_k={top_k} (User: {user.email}, Team: {team.uuid})")
 
     try:
         results = doc_service.search_documents(query=query, top_k=top_k, team_uuid=team.uuid)
@@ -99,11 +103,18 @@ async def search_documents(
 @router.get("/{document_id}")
 async def get_document_info(
     document_id: str,
-    user_team: tuple = Depends(get_current_user_from_api_key),
+    user: User = Depends(get_current_user_from_jwt_only),
+    team: Team = Depends(get_user_team),
     doc_service: DocumentService = Depends(get_document_service)
 ):
-    """문서 정보 조회"""
-    user, team = user_team
+    """
+    문서 정보 조회
+
+    **인증 방식:** JWT 토큰 (로그인 필수)
+
+    Headers:
+        Authorization: Bearer <token>
+    """
     try:
         info = doc_service.get_document_info(document_id, team_uuid=team.uuid)
         return info
@@ -117,11 +128,18 @@ async def get_document_info(
 @router.delete("/{document_id}")
 async def delete_document(
     document_id: str,
-    user_team: tuple = Depends(get_current_user_from_api_key),
+    user: User = Depends(get_current_user_from_jwt_only),
+    team: Team = Depends(get_user_team),
     doc_service: DocumentService = Depends(get_document_service)
 ):
-    """문서 삭제"""
-    user, team = user_team
+    """
+    문서 삭제
+
+    **인증 방식:** JWT 토큰 (로그인 필수)
+
+    Headers:
+        Authorization: Bearer <token>
+    """
     try:
         doc_service.delete_document(document_id, team_uuid=team.uuid)
         return {"status": "success", "message": f"문서가 삭제되었습니다: {document_id}"}

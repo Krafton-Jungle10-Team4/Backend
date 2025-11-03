@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.responses import StreamingResponse
 from app.services.chat_service import get_chat_service, ChatService
 from app.models.chat import ChatRequest, ChatResponse
-from app.core.auth.dependencies import get_current_user_from_api_key
+from app.core.auth.dependencies import get_current_user_or_team_from_jwt_or_apikey
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +16,17 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 @router.post("", response_model=ChatResponse, status_code=status.HTTP_200_OK)
 async def chat(
     request: ChatRequest,
-    user_team: tuple = Depends(get_current_user_from_api_key),
+    user_team: tuple = Depends(get_current_user_or_team_from_jwt_or_apikey),
     chat_service: ChatService = Depends(get_chat_service)
 ):
     """
     RAG 기반 챗봇 대화
 
     사용자 질문을 받아 관련 문서를 검색하고 LLM으로 자연스러운 응답 생성
+
+    **인증 방식:**
+    - JWT 토큰: 로그인한 사용자 (Authorization: Bearer <token>)
+    - API 키: 미로그인 사용자 (X-API-Key: <key>)
 
     **처리 흐름:**
     1. 사용자 질문 임베딩 생성
@@ -32,11 +36,13 @@ async def chat(
     5. 응답 및 출처 정보 반환
 
     **에러 코드:**
+    - 401: 인증 실패 (JWT 또는 API 키 누락/유효하지 않음)
     - 400: 잘못된 요청 (메시지 길이 초과 등)
     - 500: 서버 오류 (LLM API 실패, 검색 실패 등)
     """
     user, team = user_team
-    logger.info(f"[Chat] 요청: '{request.message[:50]}...' (session: {request.session_id}, team: {team.uuid})")
+    auth_method = "JWT" if user else "API_KEY"
+    logger.info(f"[Chat] 요청: '{request.message[:50]}...' (session: {request.session_id}, team: {team.uuid}, auth: {auth_method})")
 
     try:
         response = await chat_service.generate_response(request, team_uuid=team.uuid)
