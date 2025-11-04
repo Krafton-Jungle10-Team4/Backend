@@ -10,7 +10,7 @@ from app.core.auth.dependencies import get_current_user_or_team_from_jwt_or_apik
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/chat", tags=["chat"])
+router = APIRouter(tags=["chat"])
 
 
 @router.post("", response_model=ChatResponse, status_code=status.HTTP_200_OK)
