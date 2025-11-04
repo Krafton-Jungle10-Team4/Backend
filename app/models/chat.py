@@ -10,7 +10,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., description="사용자 질문", min_length=1, max_length=2000)
     session_id: Optional[str] = Field(None, description="대화 세션 ID")
     top_k: int = Field(5, description="검색할 문서 개수", ge=1, le=20)
-    include_sources: bool = Field(True, description="출처 정보 포함 여부")
+    include_sources: bool = Field(False, description="출처 정보 포함 여부")
 
     # Pydantic 모델 설정
     # ConfigDict: 타입 안정성을 가진 설정 객체(딕셔너리)
