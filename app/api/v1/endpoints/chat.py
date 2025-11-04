@@ -21,8 +21,8 @@ limiter = Limiter(key_func=get_remote_address)
 @router.post("", response_model=ChatResponse, status_code=status.HTTP_200_OK)
 @limiter.limit("20/minute")  # 분당 20회 제한 (LLM 비용 고려)
 async def chat(
-    request_obj: Request,
-    request: ChatRequest,
+    request: Request,
+    chat_request: ChatRequest,
     user_team: tuple = Depends(get_current_user_or_team_from_jwt_or_apikey),
     chat_service: ChatService = Depends(get_chat_service)
 ):
@@ -49,10 +49,10 @@ async def chat(
     """
     user, team = user_team
     auth_method = "JWT" if user else "API_KEY"
-    logger.info(f"[Chat] 요청: '{request.message[:50]}...' (session: {request.session_id}, team: {team.uuid}, auth: {auth_method})")
+    logger.info(f"[Chat] 요청: '{chat_request.message[:50]}...' (session: {chat_request.session_id}, team: {team.uuid}, auth: {auth_method})")
 
     try:
-        response = await chat_service.generate_response(request, team_uuid=team.uuid)
+        response = await chat_service.generate_response(chat_request, team_uuid=team.uuid)
 
         logger.info(
             f"[Chat] 응답 생성 완료: {response.retrieved_chunks}개 청크 참조, "
