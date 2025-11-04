@@ -2,8 +2,10 @@
 챗봇 API 엔드포인트
 """
 import logging
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 from fastapi.responses import StreamingResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from app.services.chat_service import get_chat_service, ChatService
 from app.models.chat import ChatRequest, ChatResponse
 from app.core.auth.dependencies import get_current_user_or_team_from_jwt_or_apikey
@@ -12,9 +14,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Rate limiter 인스턴스
+limiter = Limiter(key_func=get_remote_address)
+
 
 @router.post("", response_model=ChatResponse, status_code=status.HTTP_200_OK)
+@limiter.limit("20/minute")  # 분당 20회 제한 (LLM 비용 고려)
 async def chat(
+    request_obj: Request,
     request: ChatRequest,
     user_team: tuple = Depends(get_current_user_or_team_from_jwt_or_apikey),
     chat_service: ChatService = Depends(get_chat_service)
@@ -63,11 +70,11 @@ async def chat(
         )
 
     except Exception as e:
-        # 시스템 에러
+        # 시스템 에러 (상세 정보는 로그에만 기록, 클라이언트에는 일반 메시지)
         logger.error(f"[Chat] 응답 생성 실패: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"응답 생성 중 오류가 발생했습니다: {str(e)}"
+            detail="응답 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
         )
 
 
