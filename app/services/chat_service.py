@@ -186,22 +186,37 @@ class ChatService:
         return sources
 
     def _clean_response(self, response: str) -> str:
-        """LLM 응답에서 Sources 섹션 제거"""
-        import re
+        """LLM 응답에서 Sources 섹션과 그 이후 모든 내용 제거"""
+        # "Sources:" 또는 "출처:" 등이 나오면 그 이전까지만 반환
+        # 줄바꿈, 공백, 볼드 마크다운 등 모든 형식 대응
 
-        # "Sources:" 또는 "**Sources:**" 등으로 시작하는 섹션 제거
-        # 대소문자 구분 없이, 볼드/마크다운 포맷 상관없이 제거
-        patterns = [
-            r'\n\s*\*?\*?Sources?\*?\*?:\s*.*$',  # Sources: 또는 **Sources:** 등
-            r'\n\s*출처\s*:\s*.*$',  # 한글 "출처:" 섹션
-            r'\n\s*참고\s*:\s*.*$',  # 한글 "참고:" 섹션
+        # Sources: 위치 찾기 (대소문자 무시)
+        lower_response = response.lower()
+
+        # 여러 패턴 체크
+        markers = [
+            'sources:',
+            '**sources:**',
+            'source:',
+            '**source:**',
+            '출처:',
+            '**출처:**',
+            '참고:',
+            '**참고:**'
         ]
 
-        cleaned = response
-        for pattern in patterns:
-            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+        # 가장 먼저 나오는 마커 위치 찾기
+        earliest_pos = len(response)
+        for marker in markers:
+            pos = lower_response.find(marker)
+            if pos != -1 and pos < earliest_pos:
+                earliest_pos = pos
 
-        return cleaned.strip()
+        # Sources 이전까지만 반환
+        if earliest_pos < len(response):
+            return response[:earliest_pos].strip()
+
+        return response.strip()
 
 
 # 싱글톤 인스턴스 및 Lock
