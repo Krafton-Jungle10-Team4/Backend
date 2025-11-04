@@ -77,6 +77,7 @@ class DocumentService:
             # 6. 메타데이터 생성
             metadata = self.document_processor.extract_metadata(file_path, file_size)
             metadata["document_id"] = document_id
+            metadata["original_filename"] = file.filename  # 원본 파일명 저장
             metadata["created_at"] = datetime.now().isoformat()
             metadata["chunk_count"] = len(chunks)
             
