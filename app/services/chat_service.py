@@ -174,7 +174,7 @@ class ChatService:
                 similarity_score=round(similarity_score, 3),
                 # 추가 메타데이터(파일명, 문서 내 청크 인덱스, 파일 타입 등)
                 metadata={
-                    "filename": metadata.get("filename"),
+                    "filename": metadata.get("original_filename") or metadata.get("filename"),  # 원본 파일명 우선
                     "chunk_index": metadata.get("chunk_index"),
                     "file_type": metadata.get("file_type")
                 }
