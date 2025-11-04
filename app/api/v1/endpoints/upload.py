@@ -2,7 +2,9 @@
 문서 업로드 API 엔드포인트
 """
 import logging
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from app.services.document_service import get_document_service, DocumentService
 from app.models.documents import DocumentUploadResponse, SearchResponse
 from app.core.auth.dependencies import get_current_user_from_jwt_only, get_user_team
@@ -13,9 +15,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Rate limiter 인스턴스
+limiter = Limiter(key_func=get_remote_address)
+
 
 @router.post("/upload", response_model=DocumentUploadResponse)
+@limiter.limit("10/minute")  # 분당 10회 제한 (파일 업로드는 비용 큼)
 async def upload_document(
+    request: Request,
     file: UploadFile = File(..., description="업로드할 문서 파일"),
     user: User = Depends(get_current_user_from_jwt_only),
     team: Team = Depends(get_user_team),
@@ -62,8 +69,9 @@ async def upload_document(
         logger.error(f"문서 처리 검증 실패: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"문서 처리 중 오류 발생: {e}")
-        raise HTTPException(status_code=500, detail=f"문서 처리 중 오류가 발생했습니다: {str(e)}")
+        # 시스템 에러 (상세 정보는 로그에만 기록)
+        logger.error(f"문서 처리 중 오류 발생: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="문서 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
 
 
 @router.get("/search", response_model=SearchResponse)
@@ -96,8 +104,8 @@ async def search_documents(
             count=count
         )
     except Exception as e:
-        logger.error(f"검색 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"검색 중 오류가 발생했습니다: {str(e)}")
+        logger.error(f"검색 실패: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="검색 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
 
 
 @router.get("/{document_id}")
@@ -121,8 +129,8 @@ async def get_document_info(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"문서 정보 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"문서 정보 조회 중 오류가 발생했습니다: {str(e)}")
+        logger.error(f"문서 정보 조회 실패: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="문서 정보 조회 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
 
 
 @router.delete("/{document_id}")
@@ -144,5 +152,5 @@ async def delete_document(
         doc_service.delete_document(document_id, team_uuid=team.uuid)
         return {"status": "success", "message": f"문서가 삭제되었습니다: {document_id}"}
     except Exception as e:
-        logger.error(f"문서 삭제 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"문서 삭제 중 오류가 발생했습니다: {str(e)}")
+        logger.error(f"문서 삭제 실패: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="문서 삭제 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
