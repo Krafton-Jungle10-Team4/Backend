@@ -101,10 +101,13 @@ class ChatService:
             # 7. 출처 정보 생성
             sources = self._build_sources(retrieved_chunks, search_results)
 
+            # 8. LLM 응답 후처리 (Sources 섹션 제거)
+            cleaned_response = self._clean_response(llm_response)
+
             # LLM 응답과 메타데이터를 담아 ChatResponse 객체로 최종 반환
             return ChatResponse(
-                # LLM이 생성한 최종 답변 문자열
-                response=llm_response,
+                # LLM이 생성한 최종 답변 문자열 (후처리 완료)
+                response=cleaned_response,
                 # 검색된 출처 리스트를 포함, 아니면 빈 리스트로 반환
                 # 벡터 검색으로 찾아낸 근거 문서들의 메타데이터 목록
                 sources=sources if request.include_sources else [],
@@ -181,6 +184,24 @@ class ChatService:
             ))
 
         return sources
+
+    def _clean_response(self, response: str) -> str:
+        """LLM 응답에서 Sources 섹션 제거"""
+        import re
+
+        # "Sources:" 또는 "**Sources:**" 등으로 시작하는 섹션 제거
+        # 대소문자 구분 없이, 볼드/마크다운 포맷 상관없이 제거
+        patterns = [
+            r'\n\s*\*?\*?Sources?\*?\*?:\s*.*$',  # Sources: 또는 **Sources:** 등
+            r'\n\s*출처\s*:\s*.*$',  # 한글 "출처:" 섹션
+            r'\n\s*참고\s*:\s*.*$',  # 한글 "참고:" 섹션
+        ]
+
+        cleaned = response
+        for pattern in patterns:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+
+        return cleaned.strip()
 
 
 # 싱글톤 인스턴스 및 Lock
