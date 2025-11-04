@@ -2,14 +2,23 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Literal
 from datetime import datetime
+from enum import Enum
+
+
+class BotGoal(str, Enum):
+    """봇 목표 ENUM"""
+    CUSTOMER_SUPPORT = "customer-support"
+    AI_ASSISTANT = "ai-assistant"
+    SALES = "sales"
+    OTHER = "other"
 
 
 class CreateBotRequest(BaseModel):
     """봇 생성 요청"""
     name: str = Field(..., min_length=1, max_length=100, description="봇 이름")
-    goal: Optional[str] = Field(None, max_length=500, description="봇의 목표")
+    goal: Optional[BotGoal] = Field(None, description="봇의 목표")
     personality: Optional[str] = Field(None, max_length=2000, description="봇의 성격/어조")
-    knowledge: Optional[List[str]] = Field(default_factory=list, description="봇의 지식 항목")
+    knowledge: Optional[List[str]] = Field(default_factory=list, description="문서 ID 배열")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -17,7 +26,7 @@ class CreateBotRequest(BaseModel):
                 "name": "고객 지원 봇",
                 "goal": "customer-support",
                 "personality": "친절하고 전문적인 어조",
-                "knowledge": ["제품 정보", "가격 정책"]
+                "knowledge": ["doc_abc123", "doc_def456"]
             }
         }
     )
@@ -67,6 +76,53 @@ class BotResponse(BaseModel):
             createdAt=bot.created_at,
             updatedAt=bot.updated_at
         )
+
+
+class BotListResponse(BaseModel):
+    """봇 목록 응답"""
+    bots: List[BotResponse] = Field(..., description="봇 목록")
+    total: int = Field(..., description="전체 봇 개수")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "bots": [
+                    {
+                        "id": "bot_1730718000_a8b9c3d4e",
+                        "name": "고객 지원 봇",
+                        "description": "customer-support",
+                        "avatar": None,
+                        "status": "active",
+                        "messagesCount": 0,
+                        "errorsCount": 0,
+                        "createdAt": "2024-11-04T12:00:00Z",
+                        "updatedAt": None
+                    }
+                ],
+                "total": 1
+            }
+        }
+    )
+
+
+class UpdateBotRequest(BaseModel):
+    """봇 수정 요청"""
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="봇 이름")
+    goal: Optional[BotGoal] = Field(None, description="봇의 목표")
+    personality: Optional[str] = Field(None, max_length=2000, description="봇의 성격/어조")
+    avatar: Optional[str] = Field(None, max_length=500, description="봇 아바타 URL")
+    status: Optional[Literal["active", "inactive", "error"]] = Field(None, description="봇 상태")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "수정된 봇 이름",
+                "goal": "ai-assistant",
+                "personality": "더욱 친절한 어조",
+                "status": "active"
+            }
+        }
+    )
 
 
 class ErrorResponse(BaseModel):
