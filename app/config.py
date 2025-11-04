@@ -91,8 +91,15 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
 
     # 프론트엔드 (환경 변수에서 로드)
+    # 여러 URL을 쉼표로 구분 가능: "https://snapagent.shop,http://localhost:5173"
     frontend_url: str = ""
-    
+
+    def get_frontend_urls(self) -> List[str]:
+        """프론트엔드 URL 리스트 반환 (쉼표로 구분된 경우)"""
+        if not self.frontend_url:
+            return []
+        return [url.strip() for url in self.frontend_url.split(",")]
+
     class Config:
         env_file = ".env.local"
         case_sensitive = False
