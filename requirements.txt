@@ -32,6 +32,7 @@ langchain-openai==0.0.5
 aiofiles==23.2.1
 tenacity==8.2.3
 itsdangerous==2.1.2  # SessionMiddleware 필수
+slowapi==0.1.9  # Rate limiting
 
 # 데이터베이스
 sqlalchemy==2.0.25

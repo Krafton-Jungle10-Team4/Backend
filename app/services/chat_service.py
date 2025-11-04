@@ -2,6 +2,7 @@
 RAG 챗봇 서비스
 """
 import logging
+import threading
 from typing import List, Dict, Optional
 from app.core.embeddings import get_embedding_service
 from app.core.vector_store import get_vector_store
@@ -9,6 +10,7 @@ from app.core.llm_client import get_llm_client
 from app.core.prompt_templates import PromptTemplate
 from app.models.chat import ChatRequest, ChatResponse, Source
 from app.config import settings
+from app.utils.validators import sanitize_chat_query
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +41,23 @@ class ChatService:
         vector_store = get_vector_store(team_uuid=team_uuid)
 
         try:
+            # 0. 사용자 입력 검증 및 정제
+            try:
+                sanitized_message = sanitize_chat_query(request.message)
+                logger.debug(f"입력 검증 완료 (원본: {len(request.message)}자 → 정제: {len(sanitized_message)}자)")
+            except ValueError as e:
+                logger.warning(f"입력 검증 실패: {e}")
+                return ChatResponse(
+                    response=f"입력 오류: {str(e)}",
+                    sources=[],
+                    session_id=request.session_id or "default",
+                    retrieved_chunks=0
+                )
+
             # 1. 쿼리 임베딩 생성
             logger.debug("쿼리 임베딩 생성 중...")
-            # 사용자의 질문 텍스트(request.message)를 임베딩 벡터(List[float])로 변환
-            # 이후 벡터 스토어 유사도 검색에 입력으로 사용
-            query_embedding = self.embedding_service.embed_query(request.message)
+            # 정제된 사용자 질문을 임베딩 벡터(List[float])로 변환
+            query_embedding = self.embedding_service.embed_query(sanitized_message)
 
             # 2. 벡터 검색
             logger.debug(f"벡터 검색 중 (top_k={request.top_k})...")
@@ -68,9 +82,9 @@ class ChatService:
             logger.debug(f"컨텍스트 구성 중 ({len(retrieved_chunks)}개 청크)...")
             context = self.prompt_template.format_context(retrieved_chunks)
 
-            # 5. 프롬프트 메시지 생성
+            # 5. 프롬프트 메시지 생성 (정제된 메시지 사용)
             messages = self.prompt_template.build_messages(
-                user_query=request.message,
+                user_query=sanitized_message,
                 context=context
             )
 
@@ -169,13 +183,26 @@ class ChatService:
         return sources
 
 
-# 싱글톤 인스턴스
+# 싱글톤 인스턴스 및 Lock
 _chat_service: Optional[ChatService] = None
+_chat_service_lock = threading.Lock()
 
 
 def get_chat_service() -> ChatService:
-    """챗봇 서비스 싱글톤 인스턴스 반환"""
+    """
+    챗봇 서비스 싱글톤 인스턴스 반환 (스레드 안전)
+
+    Double-checked locking 패턴 사용
+    """
     global _chat_service
-    if _chat_service is None:
-        _chat_service = ChatService()
-    return _chat_service
+
+    # Fast path: 이미 생성된 경우
+    if _chat_service is not None:
+        return _chat_service
+
+    # Slow path: Lock 획득 후 생성
+    with _chat_service_lock:
+        # Double-check
+        if _chat_service is None:
+            _chat_service = ChatService()
+        return _chat_service

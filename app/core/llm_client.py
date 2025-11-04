@@ -4,6 +4,7 @@ LLM API 클라이언트 추상화 및 팩토리
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, AsyncGenerator
 import logging
+import threading
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -49,45 +50,59 @@ class BaseLLMClient(ABC):
         pass
 
 
-# 싱글톤 인스턴스
+# 싱글톤 인스턴스 및 Lock
 _llm_client: Optional[BaseLLMClient] = None
+_llm_client_lock = threading.Lock()
 
 
 def get_llm_client(provider: str = None) -> BaseLLMClient:
-    """LLM 클라이언트 팩토리 (싱글톤)"""
+    """
+    LLM 클라이언트 팩토리 (스레드 안전 싱글톤)
+
+    Double-checked locking 패턴 사용:
+    - 첫 번째 체크: Lock 없이 빠른 반환 (이미 생성된 경우)
+    - Lock 획득 후 두 번째 체크: 동시 생성 방지
+    """
     global _llm_client
 
+    # Fast path: 이미 생성된 경우 Lock 없이 반환
     if _llm_client is not None:
         return _llm_client
 
-    provider = provider or settings.llm_provider
+    # Slow path: Lock을 획득하고 생성
+    with _llm_client_lock:
+        # Double-check: Lock 대기 중 다른 스레드가 생성했을 수 있음
+        if _llm_client is not None:
+            return _llm_client
 
-    if provider == "openai":
-        from app.core.providers.openai import OpenAIClient
+        provider = provider or settings.llm_provider
 
-        if not settings.openai_api_key:
-            raise ValueError(
-                "OPENAI_API_KEY가 설정되지 않았습니다. "
-                ".env.local 파일을 확인하세요."
+        if provider == "openai":
+            from app.core.providers.openai import OpenAIClient
+
+            if not settings.openai_api_key:
+                raise ValueError(
+                    "OPENAI_API_KEY가 설정되지 않았습니다. "
+                    ".env.local 파일을 확인하세요."
+                )
+            _llm_client = OpenAIClient(
+                api_key=settings.openai_api_key,
+                model=settings.openai_model,
+                organization=settings.openai_organization
             )
-        _llm_client = OpenAIClient(
-            api_key=settings.openai_api_key,
-            model=settings.openai_model,
-            organization=settings.openai_organization
-        )
-    elif provider == "anthropic":
-        from app.core.providers.anthropic import AnthropicClient
+        elif provider == "anthropic":
+            from app.core.providers.anthropic import AnthropicClient
 
-        if not settings.anthropic_api_key:
-            raise ValueError(
-                "ANTHROPIC_API_KEY가 설정되지 않았습니다. "
-                ".env.local 파일을 확인하세요."
+            if not settings.anthropic_api_key:
+                raise ValueError(
+                    "ANTHROPIC_API_KEY가 설정되지 않았습니다. "
+                    ".env.local 파일을 확인하세요."
+                )
+            _llm_client = AnthropicClient(
+                api_key=settings.anthropic_api_key,
+                model=settings.anthropic_model
             )
-        _llm_client = AnthropicClient(
-            api_key=settings.anthropic_api_key,
-            model=settings.anthropic_model
-        )
-    else:
-        raise ValueError(f"지원하지 않는 LLM 제공자: {provider}")
+        else:
+            raise ValueError(f"지원하지 않는 LLM 제공자: {provider}")
 
-    return _llm_client
+        return _llm_client

@@ -1,9 +1,12 @@
 """
 FastAPI RAG Backend - 메인 애플리케이션
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.api.v1.endpoints import upload, chat, auth, teams, bots
 import logging
@@ -15,6 +18,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Rate Limiter 초기화
+limiter = Limiter(key_func=get_remote_address)
+
 # FastAPI 앱 생성
 app = FastAPI(
     title=settings.app_name,
@@ -24,19 +30,26 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# Rate limiter 등록
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # 세션 미들웨어 (OAuth에 필요)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.jwt_secret_key,  # JWT 시크릿 재사용
     max_age=1800,  # 30분
     same_site="lax",
-    https_only=False  # 개발환경: False, 배포환경: True로 변경 필요
+    https_only=settings.is_production  # 프로덕션: HTTPS only, 개발: HTTP 허용
 )
 
-# CORS 설정
+# CORS 설정 (환경별 보안 정책)
+cors_origins = settings.cors_origins
+logger.info(f"CORS 허용 출처: {cors_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
