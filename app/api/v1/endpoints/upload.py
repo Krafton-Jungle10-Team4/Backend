@@ -11,7 +11,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["documents"])
+router = APIRouter()
 
 
 @router.post("/upload", response_model=DocumentUploadResponse)
