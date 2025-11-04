@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = False
     log_level: str = "info"
+    environment: str = "development"  # development, staging, production
     
     #####################
     # Docker Hub diff
@@ -99,6 +100,23 @@ class Settings(BaseSettings):
         if not self.frontend_url:
             return []
         return [url.strip() for url in self.frontend_url.split(",")]
+
+    @property
+    def is_production(self) -> bool:
+        """프로덕션 환경 여부 확인"""
+        return self.environment.lower() == "production"
+
+    @property
+    def cors_origins(self) -> List[str]:
+        """환경에 따른 CORS 허용 출처 반환"""
+        frontend_urls = self.get_frontend_urls()
+        if self.is_production:
+            # 프로덕션: 설정된 프론트엔드 URL만 허용
+            return frontend_urls if frontend_urls else []
+        else:
+            # 개발/스테이징: 프론트엔드 URL + localhost 허용
+            dev_origins = ["http://localhost:5173", "http://localhost:3000"]
+            return list(set(frontend_urls + dev_origins)) if frontend_urls else ["*"]
 
     class Config:
         env_file = ".env.local"
