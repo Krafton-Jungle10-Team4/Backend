@@ -23,6 +23,11 @@ async def google_login(request: Request):
 
     프론트엔드에서 이 URL로 리다이렉트하면 Google 로그인 페이지로 이동
     """
+    # 요청 출처(프론트엔드) 저장 - 콜백 시 원래 프론트로 돌려보내기 위함
+    referer = request.headers.get("referer", "")
+    if referer:
+        request.session["origin_url"] = referer
+
     redirect_uri = settings.google_redirect_uri
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
@@ -96,9 +101,23 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
         data={"user_id": user.id, "email": user.email}
     )
 
+    # 원래 요청했던 프론트엔드로 리다이렉트
+    origin_url = request.session.get("origin_url", "")
+    frontend_urls = settings.get_frontend_urls()
+
+    # 기본값: 첫 번째 프론트엔드 URL 사용
+    target_url = frontend_urls[0] if frontend_urls else settings.frontend_url
+
+    # origin_url과 매칭되는 프론트엔드 찾기
+    if origin_url:
+        for url in frontend_urls:
+            if origin_url.startswith(url):
+                target_url = url
+                break
+
     # 프론트엔드로 리다이렉트 (토큰 포함)
-    frontend_url = f"{settings.frontend_url}/auth/callback?token={access_token}"
-    return RedirectResponse(url=frontend_url)
+    redirect_url = f"{target_url}/auth/callback?token={access_token}"
+    return RedirectResponse(url=redirect_url)
 
 
 @router.get("/me", response_model=UserResponse)
