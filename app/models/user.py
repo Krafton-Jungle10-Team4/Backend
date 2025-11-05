@@ -17,15 +17,25 @@ class UserRole(str, enum.Enum):
     MEMBER = "member"  # 팀원
 
 
+class AuthType(str, enum.Enum):
+    """인증 타입"""
+    GOOGLE = "google"  # Google OAuth
+    LOCAL = "local"    # 로컬 인증 (테스트용)
+
+
 class User(Base):
-    """사용자 테이블 (Google OAuth)"""
+    """사용자 테이블 (Google OAuth / Local Auth)"""
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
     name = Column(String(100))
     profile_image = Column(String(500))
-    google_id = Column(String(100), unique=True, index=True, nullable=False)
+
+    # 인증 타입별 필드
+    auth_type = Column(SQLEnum(AuthType), nullable=False, default=AuthType.GOOGLE)
+    google_id = Column(String(100), unique=True, index=True, nullable=True)  # Google OAuth용
+    password_hash = Column(String(255), nullable=True)  # 로컬 인증용
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
