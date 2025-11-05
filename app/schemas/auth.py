@@ -1,7 +1,20 @@
 """인증 관련 스키마"""
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from typing import Optional
+
+
+class LoginRequest(BaseModel):
+    """로컬 로그인 요청"""
+    email: EmailStr
+    password: str = Field(..., min_length=6)
+
+
+class RegisterRequest(BaseModel):
+    """로컬 회원가입 요청"""
+    email: EmailStr
+    password: str = Field(..., min_length=6)
+    name: str = Field(..., min_length=1, max_length=100)
 
 
 class TokenResponse(BaseModel):

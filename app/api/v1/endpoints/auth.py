@@ -4,16 +4,20 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import timedelta
+from passlib.context import CryptContext
 
 from app.core.database import get_db
 from app.core.auth.oauth import oauth, get_google_user_info
 from app.core.auth.jwt import create_access_token
 from app.core.auth.dependencies import get_current_user_from_jwt
-from app.models.user import User, Team, TeamMember, UserRole
-from app.schemas.auth import TokenResponse, UserResponse
+from app.models.user import User, Team, TeamMember, UserRole, AuthType
+from app.schemas.auth import TokenResponse, UserResponse, LoginRequest, RegisterRequest
 from app.config import settings
 
 router = APIRouter()
+
+# 비밀번호 해싱
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 @router.get("/google/login")
@@ -141,3 +145,106 @@ async def logout(user: User = Depends(get_current_user_from_jwt)):
     (실제로는 프론트엔드에서 토큰 삭제만 하면 됨)
     """
     return {"message": "Logged out successfully"}
+
+
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+async def register(
+    request: RegisterRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    로컬 계정 회원가입 (테스트용)
+
+    이메일이 이미 존재하면 실패
+    """
+    # 이메일 중복 체크
+    result = await db.execute(
+        select(User).where(User.email == request.email)
+    )
+    existing_user = result.scalar_one_or_none()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+
+    # 비밀번호 해싱
+    hashed_password = pwd_context.hash(request.password)
+
+    # 사용자 생성
+    user = User(
+        email=request.email,
+        name=request.name,
+        auth_type=AuthType.LOCAL,
+        password_hash=hashed_password
+    )
+    db.add(user)
+    await db.flush()
+
+    # 자동으로 팀 생성 (팀장으로)
+    team = Team(
+        name=f"{request.name}'s Team",
+        description="기본 팀"
+    )
+    db.add(team)
+    await db.flush()
+
+    # 팀 멤버십 생성
+    membership = TeamMember(
+        user_id=user.id,
+        team_id=team.id,
+        role=UserRole.OWNER
+    )
+    db.add(membership)
+    await db.commit()
+    await db.refresh(user)
+
+    # JWT 토큰 생성
+    access_token = create_access_token(
+        data={"user_id": user.id, "email": user.email}
+    )
+
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=UserResponse.model_validate(user)
+    )
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(
+    request: LoginRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    로컬 계정 로그인 (테스트용)
+
+    이메일/비밀번호로 로그인
+    """
+    # 사용자 찾기
+    result = await db.execute(
+        select(User).where(
+            User.email == request.email,
+            User.auth_type == AuthType.LOCAL
+        )
+    )
+    user = result.scalar_one_or_none()
+
+    # 사용자가 없거나 비밀번호가 틀린 경우
+    if not user or not pwd_context.verify(request.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password"
+        )
+
+    # JWT 토큰 생성
+    access_token = create_access_token(
+        data={"user_id": user.id, "email": user.email}
+    )
+
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=UserResponse.model_validate(user)
+    )
