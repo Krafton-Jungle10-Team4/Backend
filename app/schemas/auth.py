@@ -1,4 +1,5 @@
 """인증 관련 스키마"""
+from __future__ import annotations
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from typing import Optional
@@ -17,13 +18,6 @@ class RegisterRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
 
 
-class TokenResponse(BaseModel):
-    """JWT 토큰 응답"""
-    access_token: str
-    token_type: str = "bearer"
-    user: "UserResponse"
-
-
 class UserResponse(BaseModel):
     """사용자 정보 응답"""
     id: int
@@ -34,6 +28,13 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True  # ORM 모델 변환 허용
+
+
+class TokenResponse(BaseModel):
+    """JWT 토큰 응답"""
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
 
 
 class TeamResponse(BaseModel):
