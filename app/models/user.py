@@ -19,8 +19,8 @@ class UserRole(str, enum.Enum):
 
 class AuthType(str, enum.Enum):
     """인증 타입"""
-    GOOGLE = "google"  # Google OAuth
-    LOCAL = "local"    # 로컬 인증 (테스트용)
+    GOOGLE = "GOOGLE"  # Google OAuth
+    LOCAL = "LOCAL"    # 로컬 인증 (테스트용)
 
 
 class User(Base):
