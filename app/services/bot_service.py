@@ -108,7 +108,12 @@ class BotService:
             # 4. description 생성 (goal이 있으면 사용, 없으면 name 기반)
             description = goal_str if goal_str else f"{request.name} 봇"
 
-            # 5. Bot 인스턴스 생성
+            # 5. workflow 직렬화 (Pydantic → dict)
+            workflow_dict = None
+            if request.workflow:
+                workflow_dict = request.workflow.model_dump(mode='json')
+
+            # 6. Bot 인스턴스 생성
             bot = Bot(
                 bot_id=bot_id,
                 team_id=team_id,
@@ -116,6 +121,7 @@ class BotService:
                 goal=goal_str,
                 personality=personality,
                 description=description,
+                workflow=workflow_dict,
                 status=BotStatus.ACTIVE,
                 messages_count=0,
                 errors_count=0
@@ -214,25 +220,35 @@ class BotService:
         logger.info(f"팀 {team_id}의 봇 {len(bots)}개 조회")
         return list(bots)
 
-    async def get_bot_by_id(self, bot_id: str, team_id: int, db: AsyncSession) -> Optional[Bot]:
+    async def get_bot_by_id(
+        self,
+        bot_id: str,
+        team_id: Optional[int],
+        db: AsyncSession,
+        include_workflow: bool = False
+    ) -> Optional[Bot]:
         """
         특정 봇 조회
 
         Args:
             bot_id: 봇 ID
-            team_id: 팀 ID
+            team_id: 팀 ID (None이면 team_id 검증 생략)
             db: 데이터베이스 세션
+            include_workflow: workflow 포함 여부 (상세 조회용)
 
         Returns:
             Bot 인스턴스 또는 None
         """
-        result = await db.execute(
-            select(Bot).where(Bot.bot_id == bot_id, Bot.team_id == team_id)
-        )
+        query = select(Bot).where(Bot.bot_id == bot_id)
+
+        if team_id is not None:
+            query = query.where(Bot.team_id == team_id)
+
+        result = await db.execute(query)
         bot = result.scalar_one_or_none()
 
         if bot:
-            logger.info(f"봇 조회 성공: bot_id={bot_id}")
+            logger.info(f"봇 조회 성공: bot_id={bot_id}, include_workflow={include_workflow}")
         else:
             logger.warning(f"봇을 찾을 수 없음: bot_id={bot_id}, team_id={team_id}")
 
@@ -273,6 +289,10 @@ class BotService:
                 setattr(bot, field, BotStatus(value))
             elif field == "goal" and value is not None:
                 setattr(bot, field, value.value)
+            elif field == "workflow" and value is not None:
+                # Pydantic Workflow 객체 → dict 변환
+                workflow_dict = value.model_dump(mode='json') if hasattr(value, 'model_dump') else value
+                setattr(bot, field, workflow_dict)
             else:
                 setattr(bot, field, value)
 

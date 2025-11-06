@@ -4,6 +4,8 @@ RAG 챗봇 서비스
 import logging
 import threading
 from typing import List, Dict, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.embeddings import get_embedding_service
 from app.core.vector_store import get_vector_store
 from app.core.llm_client import get_llm_client
@@ -31,12 +33,68 @@ class ChatService:
     async def generate_response(
         self,
         request: ChatRequest,
-        team_uuid: str
+        team_uuid: str,
+        db: Optional[AsyncSession] = None
     ) -> ChatResponse:
-        """챗봇 응답 생성 (RAG 파이프라인)"""
+        """챗봇 응답 생성 (RAG 파이프라인 또는 Workflow 실행)"""
 
         logger.info(f"챗봇 요청: '{request.message[:50]}...'")
 
+        # bot_id가 있으면 Workflow 실행
+        if request.bot_id and db:
+            return await self._execute_workflow(request, team_uuid, db)
+
+        # 기본 RAG 파이프라인 실행
+        return await self._execute_rag_pipeline(request, team_uuid)
+
+    async def _execute_workflow(
+        self,
+        request: ChatRequest,
+        team_uuid: str,
+        db: AsyncSession
+    ) -> ChatResponse:
+        """Workflow 기반 응답 생성"""
+        from app.services.bot_service import get_bot_service
+        from app.services.workflow_engine import get_workflow_engine, WorkflowEngine
+        from app.services.vector_service import get_vector_service
+        from app.services.llm_service import get_llm_service
+
+        logger.info(f"[ChatService] Workflow 실행: bot_id={request.bot_id}")
+
+        # Bot 조회
+        bot_service = get_bot_service()
+        bot = await bot_service.get_bot_by_id(request.bot_id, None, db, include_workflow=True)
+
+        if not bot:
+            raise ValueError(f"Bot not found: {request.bot_id}")
+
+        if not bot.workflow:
+            raise ValueError(f"Bot has no workflow defined: {request.bot_id}")
+
+        # Workflow 엔진으로 실행
+        vector_service = get_vector_service()
+        llm_service = get_llm_service()
+        workflow_engine = get_workflow_engine(vector_service, llm_service)
+
+        from app.schemas.workflow import Workflow
+        workflow = Workflow(**bot.workflow)
+
+        result = await workflow_engine.execute_workflow(
+            workflow=workflow,
+            user_message=request.message,
+            team_uuid=team_uuid,
+            session_id=request.session_id or "default",
+            db=db
+        )
+
+        return ChatResponse(**result)
+
+    async def _execute_rag_pipeline(
+        self,
+        request: ChatRequest,
+        team_uuid: str
+    ) -> ChatResponse:
+        """기본 RAG 파이프라인 실행"""
         # 팀별 벡터 스토어 가져오기
         vector_store = get_vector_store(team_uuid=team_uuid)
 
