@@ -35,9 +35,13 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # 세션 미들웨어 (OAuth에 필요)
+# 보안: JWT와 Session Secret Key를 분리하는 이유
+# 1. 단일 장애점 제거: 하나의 키 유출 시 전체 인증 시스템 침해 방지
+# 2. 권한 분리 원칙: 각 인증 메커니즘(JWT, Session)은 독립적인 키 사용
+# 3. 영향 범위 제한: Session 키 유출 시 OAuth만 영향, JWT는 안전
 app.add_middleware(
     SessionMiddleware,
-    secret_key=settings.jwt_secret_key,  # JWT 시크릿 재사용
+    secret_key=settings.session_secret_key,  # Session 전용 시크릿 키 (JWT와 분리)
     max_age=1800,  # 30분
     same_site="lax",
     https_only=settings.is_production  # 프로덕션: HTTPS only, 개발: HTTP 허용

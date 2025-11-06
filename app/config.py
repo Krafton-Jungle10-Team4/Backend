@@ -89,7 +89,11 @@ class Settings(BaseSettings):
     # JWT (환경 변수에서 로드)
     jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    access_token_expire_minutes: int = 15      # Access Token: 15분 (보안 강화)
+    refresh_token_expire_days: int = 7         # Refresh Token: 7일
+
+    # Session (환경 변수에서 로드)
+    session_secret_key: str = ""  # OAuth 세션용 (JWT와 분리)
 
     # 프론트엔드 (환경 변수에서 로드)
     # 여러 URL을 쉼표로 구분 가능: "https://snapagent.shop,http://localhost:5173"
