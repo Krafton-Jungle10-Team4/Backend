@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
+import json
+import base64
 
 from app.core.database import get_db
 from app.core.auth.oauth import oauth, get_google_user_info
@@ -31,30 +33,56 @@ async def google_login(request: Request, redirect_uri: str = None):
         redirect_uri: 프론트엔드에서 전달한 콜백 URL (선택)
                       예: http://localhost:5173/auth/callback
     """
-    # 프론트엔드가 명시적으로 redirect_uri를 보낸 경우 우선 사용
+    # state 파라미터에 redirect_uri 정보 저장 (Google을 거쳐도 유지됨)
     if redirect_uri:
-        request.session["origin_url"] = redirect_uri
+        origin_url = redirect_uri
     else:
-        # fallback: referer 헤더 사용
+        # fallback: referer 헤더에서 도메인 추출
         referer = request.headers.get("referer", "")
         if referer:
-            request.session["origin_url"] = referer
+            # referer에서 도메인만 추출 (예: http://localhost:5173 → /auth/callback 추가)
+            from urllib.parse import urlparse
+            parsed = urlparse(referer)
+            origin_url = f"{parsed.scheme}://{parsed.netloc}/auth/callback"
+        else:
+            # 기본값
+            origin_url = f"{settings.get_frontend_urls()[0]}/auth/callback"
+
+    # state에 origin_url 인코딩
+    state_data = {"redirect_uri": origin_url}
+    state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
 
     google_redirect_uri = settings.google_redirect_uri
-    return await oauth.google.authorize_redirect(request, google_redirect_uri)
+    return await oauth.google.authorize_redirect(request, google_redirect_uri, state=state)
 
 
 @router.get("/google/callback")
-async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
+async def google_callback(request: Request, state: str = None, db: AsyncSession = Depends(get_db)):
     """
     Google OAuth 콜백
 
     Google 로그인 후 여기로 돌아옴
-    
+
     **보안 강화**:
     - Access Token: URL 파라미터로 프론트엔드 전달 (일회성)
     - Refresh Token: httpOnly 쿠키로 전달 (XSS 방어)
+
+    Args:
+        state: Google에서 돌려받은 state 파라미터 (redirect_uri 포함)
     """
+    # state에서 redirect_uri 복원
+    redirect_uri = None
+    if state:
+        try:
+            state_data = json.loads(base64.urlsafe_b64decode(state.encode()).decode())
+            redirect_uri = state_data.get("redirect_uri")
+        except Exception:
+            pass  # state 파싱 실패 시 기본값 사용
+
+    # 기본값
+    if not redirect_uri:
+        redirect_uri = f"{settings.get_frontend_urls()[0]}/auth/callback"
+
     try:
         # Google에서 토큰 받기
         token = await oauth.google.authorize_access_token(request)
@@ -123,22 +151,8 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(user)
 
-    # 원래 요청했던 프론트엔드로 리다이렉트
-    origin_url = request.session.get("origin_url", "")
-    frontend_urls = settings.get_frontend_urls()
-
-    # 기본값: 첫 번째 프론트엔드 URL 사용
-    target_url = frontend_urls[0] if frontend_urls else settings.frontend_url
-
-    # origin_url과 매칭되는 프론트엔드 찾기
-    if origin_url:
-        for url in frontend_urls:
-            if origin_url.startswith(url):
-                target_url = url
-                break
-
-    # 프론트엔드로 리다이렉트 (Access Token 포함)
-    redirect_url = f"{target_url}/auth/callback?token={tokens['access_token']}"
+    # redirect_uri로 직접 리다이렉트 (이미 /auth/callback 포함됨)
+    redirect_url = f"{redirect_uri}?token={tokens['access_token']}"
     response = RedirectResponse(url=redirect_url)
 
     # httpOnly 쿠키로 Refresh Token 전달
