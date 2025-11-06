@@ -100,8 +100,8 @@ async def create_bot(
         # 2. 봇 생성
         bot = await bot_service.create_bot(request, team_id, db)
 
-        # 3. 응답 변환
-        response = BotResponse.from_bot(bot)
+        # 3. 응답 변환 (생성 시에는 workflow 포함)
+        response = BotResponse.from_bot(bot, include_workflow=True)
 
         logger.info(f"봇 생성 성공: bot_id={bot.bot_id}, user={user.email}")
 
@@ -194,8 +194,8 @@ async def get_bot(
         # 1. 사용자의 팀 ID 조회
         team_id = await get_user_team(user, db)
 
-        # 2. 봇 조회
-        bot = await bot_service.get_bot_by_id(bot_id, team_id, db)
+        # 2. 봇 조회 (workflow 포함)
+        bot = await bot_service.get_bot_by_id(bot_id, team_id, db, include_workflow=True)
 
         if not bot:
             raise HTTPException(
@@ -203,8 +203,8 @@ async def get_bot(
                 detail=f"봇을 찾을 수 없습니다: {bot_id}"
             )
 
-        # 3. 응답 변환
-        return BotResponse.from_bot(bot)
+        # 3. 응답 변환 (workflow 포함)
+        return BotResponse.from_bot(bot, include_workflow=True)
 
     except HTTPException:
         raise
