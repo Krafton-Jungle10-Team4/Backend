@@ -21,19 +21,27 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 @router.get("/google/login")
-async def google_login(request: Request):
+async def google_login(request: Request, redirect_uri: str = None):
     """
     Google OAuth 로그인 시작
 
     프론트엔드에서 이 URL로 리다이렉트하면 Google 로그인 페이지로 이동
-    """
-    # 요청 출처(프론트엔드) 저장 - 콜백 시 원래 프론트로 돌려보내기 위함
-    referer = request.headers.get("referer", "")
-    if referer:
-        request.session["origin_url"] = referer
 
-    redirect_uri = settings.google_redirect_uri
-    return await oauth.google.authorize_redirect(request, redirect_uri)
+    Args:
+        redirect_uri: 프론트엔드에서 전달한 콜백 URL (선택)
+                      예: http://localhost:5173/auth/callback
+    """
+    # 프론트엔드가 명시적으로 redirect_uri를 보낸 경우 우선 사용
+    if redirect_uri:
+        request.session["origin_url"] = redirect_uri
+    else:
+        # fallback: referer 헤더 사용
+        referer = request.headers.get("referer", "")
+        if referer:
+            request.session["origin_url"] = referer
+
+    google_redirect_uri = settings.google_redirect_uri
+    return await oauth.google.authorize_redirect(request, google_redirect_uri)
 
 
 @router.get("/google/callback")
