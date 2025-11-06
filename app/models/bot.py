@@ -1,7 +1,7 @@
 """
 봇 관련 데이터베이스 모델
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum as SQLEnum, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -34,6 +34,9 @@ class Bot(Base):
     status = Column(SQLEnum(BotStatus), nullable=False, default=BotStatus.ACTIVE)
     messages_count = Column(Integer, default=0, nullable=False)
     errors_count = Column(Integer, default=0, nullable=False)
+
+    # Workflow 정의 (JSON 형식)
+    workflow = Column(JSON, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
