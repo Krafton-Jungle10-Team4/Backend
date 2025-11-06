@@ -4,6 +4,8 @@ from typing import Optional, List, Literal
 from datetime import datetime
 from enum import Enum
 
+from app.schemas.workflow import Workflow
+
 
 class BotGoal(str, Enum):
     """봇 목표 ENUM"""
@@ -19,6 +21,7 @@ class CreateBotRequest(BaseModel):
     goal: Optional[BotGoal] = Field(None, description="봇의 목표")
     personality: Optional[str] = Field(None, max_length=2000, description="봇의 성격/어조")
     knowledge: Optional[List[str]] = Field(default_factory=list, description="문서 ID 배열")
+    workflow: Optional[Workflow] = Field(None, description="Workflow 정의")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -26,7 +29,18 @@ class CreateBotRequest(BaseModel):
                 "name": "고객 지원 봇",
                 "goal": "customer-support",
                 "personality": "친절하고 전문적인 어조",
-                "knowledge": ["doc_abc123", "doc_def456"]
+                "knowledge": ["doc_abc123", "doc_def456"],
+                "workflow": {
+                    "nodes": [
+                        {
+                            "id": "1",
+                            "type": "start",
+                            "position": {"x": 100, "y": 150},
+                            "data": {"title": "Start", "desc": "시작 노드", "type": "start"}
+                        }
+                    ],
+                    "edges": []
+                }
             }
         }
     )
@@ -43,6 +57,7 @@ class BotResponse(BaseModel):
     errorsCount: int = Field(..., description="오류 개수", serialization_alias="errorsCount")
     createdAt: datetime = Field(..., description="생성 시간", serialization_alias="createdAt")
     updatedAt: Optional[datetime] = Field(None, description="수정 시간", serialization_alias="updatedAt")
+    workflow: Optional[Workflow] = Field(None, description="Workflow 정의 (상세 조회에만 포함)")
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -63,8 +78,13 @@ class BotResponse(BaseModel):
     )
 
     @classmethod
-    def from_bot(cls, bot):
-        """Bot 모델에서 BotResponse 생성"""
+    def from_bot(cls, bot, include_workflow: bool = False):
+        """Bot 모델에서 BotResponse 생성
+
+        Args:
+            bot: Bot 모델 인스턴스
+            include_workflow: workflow 포함 여부 (상세 조회에만 True)
+        """
         return cls(
             id=bot.bot_id,
             name=bot.name,
@@ -74,7 +94,8 @@ class BotResponse(BaseModel):
             messagesCount=bot.messages_count,
             errorsCount=bot.errors_count,
             createdAt=bot.created_at,
-            updatedAt=bot.updated_at
+            updatedAt=bot.updated_at,
+            workflow=bot.workflow if include_workflow else None
         )
 
 
@@ -112,6 +133,7 @@ class UpdateBotRequest(BaseModel):
     personality: Optional[str] = Field(None, max_length=2000, description="봇의 성격/어조")
     avatar: Optional[str] = Field(None, max_length=500, description="봇 아바타 URL")
     status: Optional[Literal["active", "inactive", "error"]] = Field(None, description="봇 상태")
+    workflow: Optional[Workflow] = Field(None, description="Workflow 정의")
 
     model_config = ConfigDict(
         json_schema_extra={
