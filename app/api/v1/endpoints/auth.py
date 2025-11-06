@@ -1,16 +1,16 @@
 """인증 API 엔드포인트"""
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Response
+from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
 
 from app.core.database import get_db
 from app.core.auth.oauth import oauth, get_google_user_info
-from app.core.auth.jwt import create_access_token
+from app.core.auth.jwt import create_access_token, create_token_pair
 from app.core.auth.dependencies import get_current_user_from_jwt
-from app.models.user import User, Team, TeamMember, UserRole, AuthType
+from app.models.user import User, Team, TeamMember, UserRole, AuthType, RefreshToken
 from app.schemas.auth import TokenResponse, UserResponse, LoginRequest, RegisterRequest
 from app.config import settings
 
@@ -42,6 +42,10 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     Google OAuth 콜백
 
     Google 로그인 후 여기로 돌아옴
+    
+    **보안 강화**:
+    - Access Token: URL 파라미터로 프론트엔드 전달 (일회성)
+    - Refresh Token: httpOnly 쿠키로 전달 (XSS 방어)
     """
     try:
         # Google에서 토큰 받기
@@ -97,13 +101,19 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
             role=UserRole.OWNER
         )
         db.add(membership)
-        await db.commit()
-        await db.refresh(user)
 
-    # JWT 토큰 생성
-    access_token = create_access_token(
-        data={"user_id": user.id, "email": user.email}
+    # Access Token + Refresh Token 생성
+    tokens = create_token_pair(user.id, user.email)
+
+    # Refresh Token DB에 저장
+    refresh_token_obj = RefreshToken(
+        user_id=user.id,
+        token=tokens["refresh_token"],
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
     )
+    db.add(refresh_token_obj)
+    await db.commit()
+    await db.refresh(user)
 
     # 원래 요청했던 프론트엔드로 리다이렉트
     origin_url = request.session.get("origin_url", "")
@@ -119,9 +129,22 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
                 target_url = url
                 break
 
-    # 프론트엔드로 리다이렉트 (토큰 포함)
-    redirect_url = f"{target_url}/auth/callback?token={access_token}"
-    return RedirectResponse(url=redirect_url)
+    # 프론트엔드로 리다이렉트 (Access Token 포함)
+    redirect_url = f"{target_url}/auth/callback?token={tokens['access_token']}"
+    response = RedirectResponse(url=redirect_url)
+
+    # httpOnly 쿠키로 Refresh Token 전달
+    response.set_cookie(
+        key="refresh_token",
+        value=tokens["refresh_token"],
+        httponly=True,              # JavaScript 접근 차단 (XSS 방어)
+        secure=settings.is_production,  # HTTPS에서만 전송
+        samesite="lax",             # CSRF 방어
+        max_age=60 * 60 * 24 * 7,   # 7일
+        path="/api/v1/auth/refresh"
+    )
+
+    return response
 
 
 @router.get("/me", response_model=UserResponse)
@@ -137,14 +160,104 @@ async def get_current_user(
     return user
 
 
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_access_token(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Refresh Token으로 Access Token 갱신
+
+    - httpOnly 쿠키에서 refresh_token 추출
+    - DB에서 유효성 검증 (만료, 무효화 여부)
+    - 새로운 Access Token 발급
+    
+    **보안**:
+    - Refresh Token은 httpOnly 쿠키에 저장되어 JavaScript 접근 불가 (XSS 방어)
+    - HTTPS 환경에서만 전송 (Secure 플래그)
+    """
+    from datetime import datetime, timezone
+    from app.models.user import RefreshToken
+    from app.core.auth.jwt import create_access_token
+
+    # httpOnly 쿠키에서 Refresh Token 추출
+    refresh_token = request.cookies.get("refresh_token")
+
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token not found in cookies"
+        )
+
+    # DB에서 토큰 검증
+    result = await db.execute(
+        select(RefreshToken)
+        .where(RefreshToken.token == refresh_token)
+        .where(RefreshToken.revoked == False)
+        .where(RefreshToken.expires_at > datetime.now(timezone.utc))
+    )
+    db_token = result.scalar_one_or_none()
+
+    if not db_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token"
+        )
+
+    # 사용자 정보 가져오기
+    user = await db.get(User, db_token.user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # 새로운 Access Token 생성
+    access_token = create_access_token(
+        data={"user_id": user.id, "email": user.email}
+    )
+
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=UserResponse.model_validate(user)
+    )
+
+
 @router.post("/logout")
-async def logout(user: User = Depends(get_current_user_from_jwt)):
+async def logout(
+    request: Request,
+    user: User = Depends(get_current_user_from_jwt),
+    db: AsyncSession = Depends(get_db)
+):
     """
     로그아웃
-
-    (실제로는 프론트엔드에서 토큰 삭제만 하면 됨)
+    
+    - Refresh Token 무효화 (DB에서 revoked = True)
+    - httpOnly 쿠키 삭제
+    
+    **보안**:
+    - 로그아웃 후 Refresh Token 재사용 불가
+    - 쿠키 완전 삭제로 XSS 공격 차단
     """
-    return {"message": "Logged out successfully"}
+    from sqlalchemy import update
+    
+    refresh_token = request.cookies.get("refresh_token")
+
+    if refresh_token:
+        # DB에서 토큰 무효화
+        await db.execute(
+            update(RefreshToken)
+            .where(RefreshToken.token == refresh_token)
+            .values(revoked=True)
+        )
+        await db.commit()
+
+    # 쿠키 삭제
+    response = JSONResponse(content={"message": "Logged out successfully"})
+    response.delete_cookie(key="refresh_token", path="/api/v1/auth/refresh")
+
+    return response
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
@@ -156,6 +269,10 @@ async def register(
     로컬 계정 회원가입 (테스트용)
 
     이메일이 이미 존재하면 실패
+    
+    **보안 강화**:
+    - Access Token (15분): 응답 body에 포함
+    - Refresh Token (7일): httpOnly 쿠키로 전달 (XSS 방어)
     """
     # 이메일 중복 체크
     result = await db.execute(
@@ -197,19 +314,41 @@ async def register(
         role=UserRole.OWNER
     )
     db.add(membership)
+    
+    # Access Token + Refresh Token 생성
+    tokens = create_token_pair(user.id, user.email)
+
+    # Refresh Token DB에 저장
+    refresh_token_obj = RefreshToken(
+        user_id=user.id,
+        token=tokens["refresh_token"],
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+    )
+    db.add(refresh_token_obj)
     await db.commit()
     await db.refresh(user)
 
-    # JWT 토큰 생성
-    access_token = create_access_token(
-        data={"user_id": user.id, "email": user.email}
+    # httpOnly 쿠키로 Refresh Token 전달
+    response = JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content={
+            "access_token": tokens["access_token"],
+            "token_type": "bearer",
+            "user": UserResponse.model_validate(user).model_dump()
+        }
     )
 
-    return TokenResponse(
-        access_token=access_token,
-        token_type="bearer",
-        user=UserResponse.model_validate(user)
+    response.set_cookie(
+        key="refresh_token",
+        value=tokens["refresh_token"],
+        httponly=True,              # JavaScript 접근 차단 (XSS 방어)
+        secure=settings.is_production,  # HTTPS에서만 전송 (중간자 공격 방어)
+        samesite="lax",             # CSRF 방어
+        max_age=60 * 60 * 24 * 7,   # 7일
+        path="/api/v1/auth/refresh" # refresh 엔드포인트에만 전송
     )
+
+    return response
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -221,6 +360,10 @@ async def login(
     로컬 계정 로그인 (테스트용)
 
     이메일/비밀번호로 로그인
+    
+    **보안 강화**:
+    - Access Token (15분): 응답 body에 포함
+    - Refresh Token (7일): httpOnly 쿠키로 전달 (XSS 방어)
     """
     # 사용자 찾기
     result = await db.execute(
@@ -238,13 +381,35 @@ async def login(
             detail="Incorrect email or password"
         )
 
-    # JWT 토큰 생성
-    access_token = create_access_token(
-        data={"user_id": user.id, "email": user.email}
+    # Access Token + Refresh Token 생성
+    tokens = create_token_pair(user.id, user.email)
+
+    # Refresh Token DB에 저장
+    refresh_token_obj = RefreshToken(
+        user_id=user.id,
+        token=tokens["refresh_token"],
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+    )
+    db.add(refresh_token_obj)
+    await db.commit()
+
+    # httpOnly 쿠키로 Refresh Token 전달
+    response = JSONResponse(
+        content={
+            "access_token": tokens["access_token"],
+            "token_type": "bearer",
+            "user": UserResponse.model_validate(user).model_dump()
+        }
     )
 
-    return TokenResponse(
-        access_token=access_token,
-        token_type="bearer",
-        user=UserResponse.model_validate(user)
+    response.set_cookie(
+        key="refresh_token",
+        value=tokens["refresh_token"],
+        httponly=True,              # JavaScript 접근 차단 (XSS 방어)
+        secure=settings.is_production,  # HTTPS에서만 전송 (중간자 공격 방어)
+        samesite="lax",             # CSRF 방어
+        max_age=60 * 60 * 24 * 7,   # 7일
+        path="/api/v1/auth/refresh" # refresh 엔드포인트에만 전송
     )
+
+    return response
