@@ -356,7 +356,7 @@ async def register(
         content={
             "access_token": tokens["access_token"],
             "token_type": "bearer",
-            "user": UserResponse.model_validate(user).model_dump()
+            "user": UserResponse.model_validate(user).model_dump(mode='json')
         }
     )
 
@@ -420,7 +420,7 @@ async def login(
         content={
             "access_token": tokens["access_token"],
             "token_type": "bearer",
-            "user": UserResponse.model_validate(user).model_dump()
+            "user": UserResponse.model_validate(user).model_dump(mode='json')
         }
     )
 
