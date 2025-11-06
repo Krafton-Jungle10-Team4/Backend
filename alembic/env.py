@@ -16,9 +16,7 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 from app.core.database import Base
 from app.models.user import User, RefreshToken, Team, TeamMember, APIKey, InviteToken
-from app.models.bot import Bot
-from app.models.chat import ChatSession, ChatMessage
-from app.models.documents import Document, DocumentChunk
+from app.models.bot import Bot, BotKnowledge
 
 target_metadata = Base.metadata
 
