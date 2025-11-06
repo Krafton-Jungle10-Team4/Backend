@@ -7,6 +7,7 @@ from typing import List, Optional, Dict, Any
 
 class ChatRequest(BaseModel):
     """챗봇 요청 모델"""
+    bot_id: Optional[str] = Field(None, description="봇 ID (workflow 실행용)")
     message: str = Field(..., description="사용자 질문", min_length=1, max_length=2000)
     session_id: Optional[str] = Field(None, description="대화 세션 ID")
     top_k: int = Field(5, description="검색할 문서 개수", ge=1, le=20)
@@ -19,6 +20,7 @@ class ChatRequest(BaseModel):
         # FastAPI 문서에서 요청/응답 예시로 표시
         json_schema_extra={
             "example": {
+                "bot_id": "bot_1234567890_abc123",
                 "message": "FastAPI의 주요 특징은 무엇인가요?",
                 "session_id": "user_123",
                 "top_k": 5,
