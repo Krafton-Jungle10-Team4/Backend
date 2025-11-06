@@ -42,6 +42,23 @@ class User(Base):
 
     # 관계
     team_memberships = relationship("TeamMember", back_populates="user", cascade="all, delete-orphan")
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+
+
+class RefreshToken(Base):
+    """Refresh Token 테이블 (JWT 갱신용)"""
+    __tablename__ = "refresh_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token = Column(String(255), unique=True, index=True, nullable=False)  # 랜덤 토큰
+    
+    expires_at = Column(DateTime(timezone=True), nullable=False)  # 7일 후 만료
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    revoked = Column(Boolean, default=False)  # 로그아웃 또는 보안상 무효화
+    
+    # 관계
+    user = relationship("User", back_populates="refresh_tokens")
 
 
 class Team(Base):
