@@ -89,6 +89,13 @@ async def startup_event():
     logger.info(f"디버그 모드: {settings.debug}")
     logger.info(f"임베딩 모델: {settings.embedding_model}")
 
+    # Redis 연결
+    try:
+        from app.core.redis_client import redis_client
+        await redis_client.connect()
+    except Exception as e:
+        logger.error(f"Redis 연결 실패, 계속 진행: {e}")
+
     # LLM 설정 검증
     logger.info("LLM 설정 검증 중...")
     if settings.llm_provider == "openai":
@@ -119,6 +126,10 @@ async def startup_event():
 async def shutdown_event():
     """애플리케이션 종료 시 실행"""
     logger.info(f"{settings.app_name} 종료")
+
+    # Redis 연결 종료
+    from app.core.redis_client import redis_client
+    await redis_client.close()
 
     # 임베딩 서비스 ThreadPoolExecutor 정리
     from app.core.embeddings import get_embedding_service
