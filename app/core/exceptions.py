@@ -225,6 +225,28 @@ class UnauthorizedError(AuthenticationError):
         super().__init__(message, error_code="UNAUTHORIZED", **kwargs)
 
 
+class UnauthorizedException(AuthenticationError):
+    """인증 실패 (Widget API용)"""
+    def __init__(self, message: str = "인증에 실패했습니다", **kwargs):
+        super().__init__(message, error_code="UNAUTHORIZED", **kwargs)
+
+
+# ============================================================================
+# HTTP 관련 예외
+# ============================================================================
+
+class NotFoundException(BaseAppException):
+    """리소스를 찾을 수 없음 (404)"""
+    def __init__(self, message: str = "요청한 리소스를 찾을 수 없습니다", **kwargs):
+        super().__init__(message, error_code="NOT_FOUND", **kwargs)
+
+
+class ForbiddenException(BaseAppException):
+    """접근 금지 (403)"""
+    def __init__(self, message: str = "접근 권한이 없습니다", **kwargs):
+        super().__init__(message, error_code="FORBIDDEN", **kwargs)
+
+
 # ============================================================================
 # 파일 업로드 관련 예외
 # ============================================================================
