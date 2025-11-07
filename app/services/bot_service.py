@@ -4,9 +4,9 @@
 import logging
 import time
 import secrets
-from typing import Optional
+from typing import Optional, Tuple, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.bot import Bot, BotKnowledge, BotStatus
@@ -239,7 +239,7 @@ class BotService:
 
     async def get_bots_by_team(self, team_id: int, db: AsyncSession) -> list[Bot]:
         """
-        팀의 모든 봇 조회
+        팀의 모든 봇 조회 (레거시 - 기존 호환성 유지용)
 
         Args:
             team_id: 팀 ID
@@ -254,6 +254,84 @@ class BotService:
         bots = result.scalars().all()
         logger.info(f"팀 {team_id}의 봇 {len(bots)}개 조회")
         return list(bots)
+
+    async def get_bots_with_pagination(
+        self,
+        team_id: int,
+        db: AsyncSession,
+        page: int = 1,
+        limit: int = 10,
+        sort: str = "updated_at:desc",
+        search: Optional[str] = None
+    ) -> Tuple[List[Bot], int]:
+        """
+        페이지네이션과 검색을 지원하는 Bot 목록 조회
+
+        Args:
+            team_id: 팀 ID
+            db: 데이터베이스 세션
+            page: 페이지 번호 (1부터 시작)
+            limit: 페이지당 항목 수
+            sort: 정렬 기준 (field:asc/desc)
+            search: 검색어
+
+        Returns:
+            (봇 목록, 전체 개수) 튜플
+        """
+        # 기본 쿼리
+        query = select(Bot).where(Bot.team_id == team_id)
+
+        # 검색 필터 (이름과 설명으로 검색)
+        if search:
+            query = query.where(
+                or_(
+                    Bot.name.ilike(f"%{search}%"),
+                    Bot.description.ilike(f"%{search}%")
+                )
+            )
+
+        # 전체 개수 조회
+        count_result = await db.execute(
+            select(func.count()).select_from(Bot).where(Bot.team_id == team_id).where(
+                or_(
+                    Bot.name.ilike(f"%{search}%"),
+                    Bot.description.ilike(f"%{search}%")
+                ) if search else True
+            )
+        )
+        total = count_result.scalar()
+
+        # 정렬 처리
+        if sort:
+            field, order = sort.split(':') if ':' in sort else (sort, 'asc')
+
+            # 필드명 매핑 (camelCase → snake_case)
+            field_mapping = {
+                'updatedAt': 'updated_at',
+                'createdAt': 'created_at',
+                'name': 'name'
+            }
+
+            field = field_mapping.get(field, 'updated_at')
+
+            # 정렬 적용
+            if hasattr(Bot, field):
+                sort_column = getattr(Bot, field)
+                if order.lower() == 'desc':
+                    query = query.order_by(sort_column.desc())
+                else:
+                    query = query.order_by(sort_column.asc())
+
+        # 페이지네이션 적용
+        offset = (page - 1) * limit
+        query = query.offset(offset).limit(limit)
+
+        result = await db.execute(query)
+        bots = result.scalars().all()
+
+        logger.info(f"팀 {team_id}의 봇 페이지네이션 조회: page={page}, limit={limit}, total={total}")
+
+        return list(bots), total
 
     async def get_bot_by_id(
         self,
@@ -357,6 +435,71 @@ class BotService:
                     "bot_id": bot_id,
                     "team_id": team_id,
                     "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )
+
+    async def toggle_bot_status(
+        self,
+        bot_id: str,
+        team_id: int,
+        is_active: bool,
+        db: AsyncSession
+    ) -> Bot:
+        """
+        Bot 활성화 상태 토글
+
+        Args:
+            bot_id: 봇 ID
+            team_id: 팀 ID
+            is_active: 활성화 여부
+            db: 데이터베이스 세션
+
+        Returns:
+            업데이트된 Bot 인스턴스
+
+        Raises:
+            ValueError: 봇을 찾을 수 없거나 workflow 검증 실패
+        """
+        bot = await self.get_bot_by_id(bot_id, team_id, db)
+
+        if not bot:
+            raise ValueError(f"봇을 찾을 수 없습니다: {bot_id}")
+
+        # 활성화 시 workflow 검증
+        if is_active and bot.workflow:
+            # 간단한 검증 - 실제로는 더 복잡한 검증이 필요할 수 있음
+            workflow = bot.workflow if isinstance(bot.workflow, dict) else {}
+            nodes = workflow.get('nodes', [])
+            edges = workflow.get('edges', [])
+
+            # Start 노드 확인
+            start_nodes = [n for n in nodes if n.get('type') == 'start']
+            if not start_nodes:
+                raise ValueError("Workflow 검증 실패: Start 노드가 필요합니다")
+
+            # End 노드 확인
+            end_nodes = [n for n in nodes if n.get('type') == 'end']
+            if not end_nodes:
+                raise ValueError("Workflow 검증 실패: End 노드가 필요합니다")
+
+        # 상태 변경
+        bot.status = BotStatus.ACTIVE if is_active else BotStatus.INACTIVE
+
+        try:
+            await db.commit()
+            await db.refresh(bot)
+            logger.info(f"봇 상태 토글 성공: bot_id={bot_id}, is_active={is_active}")
+            return bot
+        except SQLAlchemyError as e:
+            logger.error(f"봇 상태 토글 DB 오류: {e}", exc_info=True)
+            await db.rollback()
+            raise DatabaseTransactionError(
+                message="봇 상태 변경 중 데이터베이스 오류가 발생했습니다",
+                details={
+                    "bot_id": bot_id,
+                    "team_id": team_id,
+                    "is_active": is_active,
                     "error": str(e)
                 }
             )
