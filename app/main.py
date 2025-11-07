@@ -13,6 +13,7 @@ from app.core.middleware.rate_limit import (
     public_limiter,
     custom_rate_limit_handler
 )
+from app.core.middleware.audit_logging import AuditLoggingMiddleware
 from app.api.v1.endpoints import upload, chat, auth, teams, bots
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -21,14 +22,14 @@ from app.api.exception_handlers import (
     http_exception_handler,
     unhandled_exception_handler
 )
-import logging
+from app.core.logging_config import setup_logging, get_logger
 
-# 로깅 설정
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper()),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# 구조화된 로깅 설정
+setup_logging(
+    log_level=settings.log_level,
+    use_structured=True  # 구조화된 포맷 사용
 )
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # FastAPI 앱 생성
 app = FastAPI(
@@ -73,6 +74,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 감사 로깅 미들웨어
+app.add_middleware(AuditLoggingMiddleware)
 
 # API 라우터 등록
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])

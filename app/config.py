@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = False
     log_level: str = "info"
+    use_structured_logging: bool = True  # 구조화된 로깅 사용 여부 (가독성 향상)
     environment: str = "development"  # development, staging, production
     
     #####################
