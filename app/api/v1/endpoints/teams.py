@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import secrets
 
 from app.core.database import get_db
@@ -165,7 +165,7 @@ async def create_invite_token(
         team_id=team.id,
         token=token,
         created_by_user_id=user.id,
-        expires_at=datetime.utcnow() + timedelta(hours=24),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
         is_used=False
     )
     db.add(invite)
@@ -210,7 +210,7 @@ async def join_team_by_invite(
             detail="Invite token already used"
         )
 
-    if datetime.utcnow() > invite.expires_at:
+    if datetime.now(timezone.utc) > invite.expires_at:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invite token expired"
@@ -238,7 +238,7 @@ async def join_team_by_invite(
 
     # 초대 토큰 사용 처리
     invite.is_used = True
-    invite.used_at = datetime.utcnow()
+    invite.used_at = datetime.now(timezone.utc)
     invite.used_by_user_id = user.id
 
     await db.commit()
