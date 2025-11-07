@@ -6,10 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.config import settings
+from app.core.middleware.rate_limit import (
+    limiter,
+    public_limiter,
+    custom_rate_limit_handler
+)
 from app.api.v1.endpoints import upload, chat, auth, teams, bots
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -27,9 +30,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Rate Limiter 초기화
-limiter = Limiter(key_func=get_remote_address)
-
 # FastAPI 앱 생성
 app = FastAPI(
     title=settings.app_name,
@@ -41,7 +41,7 @@ app = FastAPI(
 
 # Rate limiter 등록
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, custom_rate_limit_handler)
 
 # 글로벌 예외 핸들러 등록 (순서 중요: 구체적인 것부터 등록)
 app.add_exception_handler(BaseAppException, base_app_exception_handler)
