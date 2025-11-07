@@ -7,9 +7,15 @@ import secrets
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.bot import Bot, BotKnowledge, BotStatus
 from app.schemas.bot import CreateBotRequest, UpdateBotRequest
+from app.core.exceptions import (
+    BotCreationError,
+    BotConfigurationError,
+    DatabaseTransactionError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +150,39 @@ class BotService:
 
             return bot
 
+        except SQLAlchemyError as e:
+            logger.error(f"봇 생성 DB 오류: {e}", exc_info=True)
+            await db.rollback()
+            raise DatabaseTransactionError(
+                message="봇 생성 중 데이터베이스 오류가 발생했습니다",
+                details={
+                    "bot_name": request.name,
+                    "team_id": team_id,
+                    "error": str(e)
+                }
+            )
+        except ValueError as e:
+            logger.error(f"봇 생성 검증 오류: {e}", exc_info=True)
+            await db.rollback()
+            raise BotConfigurationError(
+                message=str(e),
+                details={
+                    "bot_name": request.name,
+                    "team_id": team_id
+                }
+            )
         except Exception as e:
             logger.error(f"봇 생성 실패: {e}", exc_info=True)
             await db.rollback()
-            raise
+            raise BotCreationError(
+                message="봇 생성 중 예기치 않은 오류가 발생했습니다",
+                details={
+                    "bot_name": request.name,
+                    "team_id": team_id,
+                    "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )
 
     async def _generate_unique_bot_id(self, db: AsyncSession, max_retries: int = 5) -> str:
         """
@@ -301,10 +336,30 @@ class BotService:
             await db.refresh(bot)
             logger.info(f"봇 수정 성공: bot_id={bot_id}, 수정 필드={list(update_data.keys())}")
             return bot
+        except SQLAlchemyError as e:
+            logger.error(f"봇 수정 DB 오류: {e}", exc_info=True)
+            await db.rollback()
+            raise DatabaseTransactionError(
+                message="봇 수정 중 데이터베이스 오류가 발생했습니다",
+                details={
+                    "bot_id": bot_id,
+                    "team_id": team_id,
+                    "update_fields": list(update_data.keys()),
+                    "error": str(e)
+                }
+            )
         except Exception as e:
             logger.error(f"봇 수정 실패: {e}", exc_info=True)
             await db.rollback()
-            raise
+            raise BotConfigurationError(
+                message="봇 수정 중 예기치 않은 오류가 발생했습니다",
+                details={
+                    "bot_id": bot_id,
+                    "team_id": team_id,
+                    "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )
 
     async def delete_bot(self, bot_id: str, team_id: int, db: AsyncSession) -> bool:
         """
@@ -331,10 +386,29 @@ class BotService:
             await db.commit()
             logger.info(f"봇 삭제 성공: bot_id={bot_id}")
             return True
+        except SQLAlchemyError as e:
+            logger.error(f"봇 삭제 DB 오류: {e}", exc_info=True)
+            await db.rollback()
+            raise DatabaseTransactionError(
+                message="봇 삭제 중 데이터베이스 오류가 발생했습니다",
+                details={
+                    "bot_id": bot_id,
+                    "team_id": team_id,
+                    "error": str(e)
+                }
+            )
         except Exception as e:
             logger.error(f"봇 삭제 실패: {e}", exc_info=True)
             await db.rollback()
-            raise
+            raise BotConfigurationError(
+                message="봇 삭제 중 예기치 않은 오류가 발생했습니다",
+                details={
+                    "bot_id": bot_id,
+                    "team_id": team_id,
+                    "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )
 
 
 # 싱글톤 인스턴스

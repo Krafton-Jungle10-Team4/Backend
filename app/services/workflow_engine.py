@@ -8,6 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas.workflow import Workflow, WorkflowNode, WorkflowEdge
 from app.services.vector_service import VectorService
 from app.services.llm_service import LLMService
+from app.core.exceptions import (
+    WorkflowExecutionError,
+    WorkflowValidationError,
+    LLMServiceError,
+    VectorStoreError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +83,27 @@ class WorkflowEngine:
 
             try:
                 await self._execute_node(node, context, team_uuid, db)
+            except (LLMServiceError, VectorStoreError) as e:
+                logger.error(f"[WorkflowEngine] 노드 실행 중 서비스 오류: {node_id}, error: {e}", exc_info=True)
+                raise WorkflowExecutionError(
+                    message=f"워크플로우 노드 실행 중 서비스 오류가 발생했습니다: {node_id}",
+                    details={
+                        "node_id": node_id,
+                        "node_type": node.type,
+                        "error": str(e)
+                    }
+                )
             except Exception as e:
                 logger.error(f"[WorkflowEngine] 노드 실행 실패: {node_id}, error: {e}", exc_info=True)
-                raise
+                raise WorkflowExecutionError(
+                    message=f"워크플로우 노드 실행 중 예기치 않은 오류가 발생했습니다: {node_id}",
+                    details={
+                        "node_id": node_id,
+                        "node_type": node.type,
+                        "error_type": type(e).__name__,
+                        "error": str(e)
+                    }
+                )
 
         logger.info(f"[WorkflowEngine] Workflow 실행 완료")
 

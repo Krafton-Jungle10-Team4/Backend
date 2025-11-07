@@ -13,6 +13,12 @@ from app.core.prompt_templates import PromptTemplate
 from app.models.chat import ChatRequest, ChatResponse, Source
 from app.config import settings
 from app.utils.validators import sanitize_chat_query
+from app.core.exceptions import (
+    ChatServiceError,
+    ChatMessageError,
+    LLMServiceError,
+    VectorStoreError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -176,9 +182,42 @@ class ChatService:
                 retrieved_chunks=len(retrieved_chunks)
             )
 
+        except VectorStoreError as e:
+            logger.error(f"벡터 검색 중 오류: {e}", exc_info=True)
+            raise ChatMessageError(
+                message="문서 검색 중 오류가 발생했습니다",
+                details={
+                    "message": request.message[:100],
+                    "team_uuid": team_uuid,
+                    "error": str(e)
+                }
+            )
+        except LLMServiceError as e:
+            logger.error(f"LLM 응답 생성 중 오류: {e}", exc_info=True)
+            raise ChatMessageError(
+                message="응답 생성 중 오류가 발생했습니다",
+                details={
+                    "message": request.message[:100],
+                    "error": str(e)
+                }
+            )
+        except ValueError as e:
+            logger.error(f"입력 검증 오류: {e}", exc_info=True)
+            raise ChatMessageError(
+                message=str(e),
+                details={"message": request.message[:100]}
+            )
         except Exception as e:
             logger.error(f"챗봇 응답 생성 실패: {e}", exc_info=True)
-            raise
+            raise ChatServiceError(
+                message="챗봇 응답 생성 중 예기치 않은 오류가 발생했습니다",
+                details={
+                    "message": request.message[:100],
+                    "team_uuid": team_uuid,
+                    "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )
 
     def _extract_chunks(self, search_results: Dict) -> List[Dict]:
         """벡터 검색 결과에서 청크 추출"""

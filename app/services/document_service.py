@@ -16,6 +16,13 @@ from app.core.vector_store import get_vector_store
 from app.core.document_processor import DocumentProcessor
 from app.core.chunking import get_text_chunker
 from app.models.documents import DocumentUploadResponse
+from app.core.exceptions import (
+    DocumentProcessingError,
+    DocumentParsingError,
+    DocumentChunkingError,
+    VectorStoreError,
+    FileProcessingError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,12 +124,41 @@ class DocumentService:
                 status="success",
                 message=f"문서가 성공적으로 처리되었습니다. {len(chunks)}개 청크 생성됨"
             )
-            
-        except Exception as e:
-            # 에러 발생 시 임시 파일 정리
+
+        except DocumentParsingError as e:
+            # 문서 파싱 오류 (이미 구체화된 예외)
             self._cleanup_temp_file(file_path)
-            logger.error(f"문서 처리 실패: {e}")
+            logger.error(f"문서 파싱 실패: {e}")
             raise
+        except VectorStoreError as e:
+            # 벡터 스토어 오류 (이미 구체화된 예외)
+            self._cleanup_temp_file(file_path)
+            logger.error(f"벡터 저장 실패: {e}")
+            raise
+        except ValueError as e:
+            # 검증 오류
+            self._cleanup_temp_file(file_path)
+            logger.error(f"문서 처리 검증 실패: {e}")
+            raise DocumentProcessingError(
+                message=str(e),
+                details={
+                    "document_id": document_id,
+                    "filename": file.filename
+                }
+            )
+        except Exception as e:
+            # 예기치 않은 오류
+            self._cleanup_temp_file(file_path)
+            logger.error(f"문서 처리 실패: {e}", exc_info=True)
+            raise DocumentProcessingError(
+                message="문서 처리 중 예기치 않은 오류가 발생했습니다",
+                details={
+                    "document_id": document_id,
+                    "filename": file.filename,
+                    "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )
     
     async def _save_uploaded_file(self, file: UploadFile, document_id: str) -> str:
         """업로드된 파일을 임시 디렉토리에 저장"""
@@ -145,8 +181,10 @@ class DocumentService:
             if os.path.exists(file_path):
                 os.remove(file_path)
                 logger.info(f"임시 파일 삭제: {file_path}")
+        except OSError as e:
+            logger.warning(f"임시 파일 삭제 실패 (OS 오류): {file_path}, {e}")
         except Exception as e:
-            logger.warning(f"임시 파일 삭제 실패: {e}")
+            logger.warning(f"임시 파일 삭제 실패 (예기치 않은 오류): {file_path}, {e}")
     
     def get_document_info(self, document_id: str, team_uuid: str) -> dict:
         """문서 정보 조회"""
