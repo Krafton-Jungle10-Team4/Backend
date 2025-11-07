@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     # 여러 URL을 쉼표로 구분 가능: "https://snapagent.shop,http://localhost:5173"
     frontend_url: str = ""
 
+    # Widget 설정
+    widget_session_expire_hours: int = 24  # Widget 세션 유효 시간
+    widget_refresh_token_expire_days: int = 7  # Refresh Token 유효 시간
+
     def get_frontend_urls(self) -> List[str]:
         """프론트엔드 URL 리스트 반환 (쉼표로 구분된 경우)"""
         if not self.frontend_url:
