@@ -97,8 +97,8 @@ async def get_current_user_from_api_key(
         )
 
     # 마지막 사용 시간 업데이트
-    from datetime import datetime
-    matched_key.last_used_at = datetime.utcnow()
+    from datetime import datetime, timezone
+    matched_key.last_used_at = datetime.now(timezone.utc)
     await db.commit()
 
     # 팀 정보 가져오기
@@ -245,8 +245,8 @@ async def get_current_user_or_team_from_jwt_or_apikey(
 
         if matched_key:
             # 마지막 사용 시간 업데이트
-            from datetime import datetime
-            matched_key.last_used_at = datetime.utcnow()
+            from datetime import datetime, timezone
+            matched_key.last_used_at = datetime.now(timezone.utc)
             await db.commit()
 
             # 팀 정보 가져오기

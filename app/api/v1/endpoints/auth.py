@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 import json
 import base64
 
@@ -17,6 +19,9 @@ from app.schemas.auth import TokenResponse, UserResponse, LoginRequest, Register
 from app.config import settings
 
 router = APIRouter()
+
+# Rate Limiter 초기화 (IP 기반)
+limiter = Limiter(key_func=get_remote_address)
 
 # 비밀번호 해싱
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -183,6 +188,7 @@ async def get_current_user(
 
 
 @router.post("/refresh", response_model=TokenResponse)
+@limiter.limit("10/minute")  # 1분에 10회 제한 (정상 사용 범위)
 async def refresh_access_token(
     request: Request,
     db: AsyncSession = Depends(get_db)
@@ -283,8 +289,10 @@ async def logout(
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("3/hour")  # 1시간에 3회 제한 (계정 생성 남용 방지)
 async def register(
-    request: RegisterRequest,
+    request: Request,
+    register_data: RegisterRequest,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -298,7 +306,7 @@ async def register(
     """
     # 이메일 중복 체크
     result = await db.execute(
-        select(User).where(User.email == request.email)
+        select(User).where(User.email == register_data.email)
     )
     existing_user = result.scalar_one_or_none()
 
@@ -309,12 +317,12 @@ async def register(
         )
 
     # 비밀번호 해싱
-    hashed_password = pwd_context.hash(request.password)
+    hashed_password = pwd_context.hash(register_data.password)
 
     # 사용자 생성
     user = User(
-        email=request.email,
-        name=request.name,
+        email=register_data.email,
+        name=register_data.name,
         auth_type=AuthType.LOCAL,
         password_hash=hashed_password
     )
@@ -323,7 +331,7 @@ async def register(
 
     # 자동으로 팀 생성 (팀장으로)
     team = Team(
-        name=f"{request.name}'s Team",
+        name=f"{register_data.name}'s Team",
         description="기본 팀"
     )
     db.add(team)
@@ -374,8 +382,10 @@ async def register(
 
 
 @router.post("/login", response_model=TokenResponse)
+@limiter.limit("5/minute")  # 1분에 5회 제한 (Brute-force 방지)
 async def login(
-    request: LoginRequest,
+    request: Request,
+    login_data: LoginRequest,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -390,14 +400,14 @@ async def login(
     # 사용자 찾기
     result = await db.execute(
         select(User).where(
-            User.email == request.email,
+            User.email == login_data.email,
             User.auth_type == AuthType.LOCAL
         )
     )
     user = result.scalar_one_or_none()
 
     # 사용자가 없거나 비밀번호가 틀린 경우
-    if not user or not pwd_context.verify(request.password, user.password_hash):
+    if not user or not pwd_context.verify(login_data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
