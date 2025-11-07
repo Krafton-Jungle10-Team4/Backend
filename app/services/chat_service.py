@@ -77,23 +77,33 @@ class ChatService:
         if not bot.workflow:
             raise ValueError(f"Bot has no workflow defined: {request.bot_id}")
 
-        # Workflow 엔진으로 실행
-        vector_service = get_vector_service()
-        llm_service = get_llm_service()
-        workflow_engine = get_workflow_engine(vector_service, llm_service)
+        # 새로운 Workflow Executor로 실행
+        from app.core.workflow.executor import WorkflowExecutor
+        from app.services.vector_service import VectorService
+        from app.services.llm_service import LLMService
 
-        from app.schemas.workflow import Workflow
-        workflow = Workflow(**bot.workflow)
+        vector_service = VectorService()
+        llm_service = LLMService()
 
-        result = await workflow_engine.execute_workflow(
-            workflow=workflow,
-            user_message=request.message,
-            team_uuid=team_uuid,
+        executor = WorkflowExecutor()
+
+        # 워크플로우 실행
+        response_text = await executor.execute(
+            workflow_data=bot.workflow,
             session_id=request.session_id or "default",
-            db=db
+            user_message=request.message,
+            vector_service=vector_service,
+            llm_service=llm_service
         )
 
-        return ChatResponse(**result)
+        # ChatResponse 형식으로 변환
+        return ChatResponse(
+            response=response_text,
+            sources=[],
+            session_id=request.session_id or "default",
+            retrieved_chunks=0,
+            metadata={}
+        )
 
     async def _execute_rag_pipeline(
         self,
