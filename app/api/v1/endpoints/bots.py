@@ -10,10 +10,11 @@ from app.core.auth.dependencies import get_current_user_from_jwt
 from app.models.user import User, TeamMember
 from app.models.bot import Bot, BotStatus
 from app.schemas.bot import (
-    CreateBotRequest, BotResponse, BotListResponse, UpdateBotRequest, ErrorResponse,
+    CreateBotRequest, BotResponse, BotListResponse, ErrorResponse,
     # 새로운 명세서 준수 스키마
     BotListItemResponse, BotListResponseV2, PaginationInfo,
-    BotDetailResponse, CreateBotRequestV2, UpdateBotRequestV2,
+    BotDetailResponse, CreateBotRequestV2,
+    UpdateBotRequestPut, UpdateBotRequestPatch,
     StatusToggleRequest, StatusToggleResponse
 )
 from app.services.bot_service import get_bot_service, BotService
@@ -287,10 +288,10 @@ async def get_bot(
     **인증:**
     - JWT Bearer 토큰 필요 (Authorization: Bearer {token})
 
-    **요청 필드:**
-    - `name`: 봇 이름
-    - `description`: 봇 설명
-    - `workflow`: Workflow 정의 (workflowRevision 포함)
+    **요청 필드 (모두 필수):**
+    - `name`: 봇 이름 (필수)
+    - `description`: 봇 설명 (선택)
+    - `workflow`: Workflow 정의 (필수, workflowRevision 포함)
 
     **응답:**
     - data 객체 내에 수정된 봇 정보와 workflow 포함
@@ -298,7 +299,7 @@ async def get_bot(
 )
 async def update_bot_put(
     bot_id: str,
-    request: UpdateBotRequest,  # 기존 스키마 재사용 가능
+    request: UpdateBotRequestPut,  # PUT용 필수 필드 스키마
     user: User = Depends(get_current_user_from_jwt),
     db: AsyncSession = Depends(get_db),
     bot_service: BotService = Depends(get_bot_service)
@@ -384,7 +385,7 @@ async def update_bot_put(
 )
 async def update_bot_patch(
     bot_id: str,
-    request: UpdateBotRequest,
+    request: UpdateBotRequestPatch,  # PATCH용 선택 필드 스키마
     user: User = Depends(get_current_user_from_jwt),
     db: AsyncSession = Depends(get_db),
     bot_service: BotService = Depends(get_bot_service)

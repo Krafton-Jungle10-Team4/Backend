@@ -10,7 +10,7 @@ from sqlalchemy import select, or_, func
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.bot import Bot, BotKnowledge, BotStatus
-from app.schemas.bot import CreateBotRequest, UpdateBotRequest
+from app.schemas.bot import CreateBotRequest, UpdateBotRequestPut, UpdateBotRequestPatch
 from app.core.exceptions import (
     BotCreationError,
     BotConfigurationError,
@@ -371,7 +371,7 @@ class BotService:
         self,
         bot_id: str,
         team_id: int,
-        request: UpdateBotRequest,
+        request: UpdateBotRequestPut | UpdateBotRequestPatch,
         db: AsyncSession
     ) -> Optional[Bot]:
         """
