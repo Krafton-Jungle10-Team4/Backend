@@ -85,8 +85,8 @@ app.include_router(bots.router, prefix="/api/v1/bots", tags=["봇 관리"])
 app.include_router(workflows.router, prefix="/api/v1", tags=["워크플로우"])
 app.include_router(upload.router, prefix="/api/v1/documents", tags=["문서"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["챗봇"])
-app.include_router(deployment.router, prefix="/api/v1", tags=["배포 관리"])
-app.include_router(widget.router, prefix="/api/v1", tags=["Widget"])
+app.include_router(deployment.router, prefix="/api/v1/bots", tags=["배포 관리"])
+app.include_router(widget.router, prefix="/api/v1/widget", tags=["Widget"])
 
 
 @app.on_event("startup")

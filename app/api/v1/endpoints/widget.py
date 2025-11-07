@@ -20,7 +20,7 @@ from app.core.exceptions import NotFoundException, ForbiddenException, Unauthori
 router = APIRouter()
 
 
-@router.get("/widget/config/{widget_key}", response_model=WidgetConfigResponse)
+@router.get("/config/{widget_key}", response_model=WidgetConfigResponse)
 @public_limiter.limit("1000 per hour")
 async def get_widget_config(
     request: Request,
@@ -46,7 +46,7 @@ async def get_widget_config(
         raise HTTPException(status_code=403, detail=str(e))
 
 
-@router.post("/widget/sessions", response_model=SessionCreateResponse)
+@router.post("/sessions", response_model=SessionCreateResponse)
 @public_limiter.limit("100 per hour")
 async def create_session(
     request: Request,
@@ -69,7 +69,7 @@ async def create_session(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/widget/chat", response_model=ChatMessageResponse)
+@router.post("/chat", response_model=ChatMessageResponse)
 @public_limiter.limit("20 per minute")
 async def send_message(
     request: Request,
@@ -97,7 +97,7 @@ async def send_message(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/widget/feedback")
+@router.post("/feedback")
 @public_limiter.limit("50 per hour")
 async def submit_feedback(
     request: Request,
