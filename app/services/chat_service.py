@@ -74,8 +74,10 @@ class ChatService:
         if not bot:
             raise ValueError(f"Bot not found: {request.bot_id}")
 
+        # Workflow가 없으면 기본 RAG 파이프라인으로 fallback
         if not bot.workflow:
-            raise ValueError(f"Bot has no workflow defined: {request.bot_id}")
+            logger.info(f"[ChatService] Bot {request.bot_id}에 Workflow가 없어 기본 RAG 파이프라인 실행")
+            return await self._execute_rag_pipeline(request, team_uuid)
 
         # 새로운 Workflow Executor로 실행
         from app.core.workflow.executor import WorkflowExecutor
