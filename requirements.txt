@@ -17,10 +17,9 @@ sentence-transformers==2.3.1
 
 # Vector DB (다운그레이드)
 chromadb==0.5.3
-# LangChain
+# LangChain (경량화: 텍스트 분할만 사용)
 langchain==0.1.0
 langchain-community==0.0.13
-tiktoken==0.5.2
 
 # LLM 클라이언트
 openai==1.54.0
@@ -29,8 +28,6 @@ httpx==0.27.2
 langchain-openai==0.0.5
 
 # 유틸리티
-aiofiles==23.2.1
-tenacity==8.2.3
 itsdangerous==2.1.2  # SessionMiddleware 필수
 slowapi==0.1.9  # Rate limiting
 
