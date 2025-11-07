@@ -3,6 +3,7 @@
 """
 from pydantic_settings import BaseSettings
 from typing import List, Optional
+import os
 
 
 class Settings(BaseSettings):
@@ -123,7 +124,10 @@ class Settings(BaseSettings):
             return list(set(frontend_urls + dev_origins)) if frontend_urls else ["*"]
 
     class Config:
-        env_file = ".env.local"
+        # 환경에 따라 다른 .env 파일 로드
+        # 로컬: .env.local (기본값)
+        # 서버: ENV_FILE=.env.production 환경 변수 설정
+        env_file = os.getenv("ENV_FILE", ".env.local")
         case_sensitive = False
 
 
