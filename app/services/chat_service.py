@@ -74,8 +74,10 @@ class ChatService:
         if not bot:
             raise ValueError(f"Bot not found: {request.bot_id}")
 
+        # Workflow가 없으면 기본 RAG 파이프라인으로 fallback
         if not bot.workflow:
-            raise ValueError(f"Bot has no workflow defined: {request.bot_id}")
+            logger.info(f"[ChatService] Bot {request.bot_id}에 Workflow가 없어 기본 RAG 파이프라인 실행")
+            return await self._execute_rag_pipeline(request, team_uuid)
 
         # 새로운 Workflow Executor로 실행
         from app.core.workflow.executor import WorkflowExecutor
@@ -87,9 +89,19 @@ class ChatService:
 
         executor = WorkflowExecutor()
 
+        # 런타임 모델 오버라이드 처리
+        workflow_data = bot.workflow.copy() if bot.workflow else {}
+        if request.model and workflow_data.get("nodes"):
+            logger.info(f"[ChatService] 런타임 모델 오버라이드: {request.model}")
+            for node in workflow_data["nodes"]:
+                if node.get("type") == "llm" and node.get("data"):
+                    original_model = node["data"].get("model")
+                    node["data"]["model"] = request.model
+                    logger.info(f"[ChatService] LLM 노드 모델 변경: {original_model} → {request.model}")
+
         # 워크플로우 실행
         response_text = await executor.execute(
-            workflow_data=bot.workflow,
+            workflow_data=workflow_data,
             session_id=request.session_id or "default",
             user_message=request.message,
             vector_service=vector_service,

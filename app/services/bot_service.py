@@ -35,6 +35,136 @@ def generate_bot_id() -> str:
 class BotService:
     """봇 비즈니스 로직"""
 
+    def _create_default_workflow(self, knowledge_list: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        기본 워크플로우 생성
+
+        Args:
+            knowledge_list: 지식 문서 ID 리스트
+
+        Returns:
+            기본 워크플로우 딕셔너리 (START → KNOWLEDGE → LLM → ANSWER)
+        """
+        nodes = []
+        edges = []
+
+        # 1. START 노드
+        start_node = {
+            "id": "start-1",
+            "type": "start",
+            "position": {"x": 100, "y": 150},
+            "data": {
+                "title": "START",
+                "desc": "시작 노드",
+                "type": "start"
+            }
+        }
+        nodes.append(start_node)
+
+        current_x = 100
+        last_node_id = "start-1"
+
+        # 2. KNOWLEDGE RETRIEVAL 노드 (knowledge가 있는 경우에만)
+        if knowledge_list and len(knowledge_list) > 0:
+            current_x += 300
+
+            knowledge_node = {
+                "id": "knowledge-1",
+                "type": "knowledge-retrieval",
+                "position": {"x": current_x, "y": 150},
+                "data": {
+                    "title": "KNOWLEDGE RETRIEVAL",
+                    "desc": "지식 검색",
+                    "type": "knowledge-retrieval",
+                    "dataset": knowledge_list[0] if knowledge_list else None,
+                    "dataset_name": f"{len(knowledge_list)}개 문서",
+                    "mode": "semantic",
+                    "top_k": 5
+                }
+            }
+            nodes.append(knowledge_node)
+
+            # START → KNOWLEDGE 엣지
+            edge_1 = {
+                "id": f"e-{last_node_id}-knowledge-1",
+                "source": last_node_id,
+                "target": "knowledge-1",
+                "type": "custom",
+                "data": {
+                    "source_type": "start",
+                    "target_type": "knowledge-retrieval"
+                }
+            }
+            edges.append(edge_1)
+
+            last_node_id = "knowledge-1"
+
+        # 3. LLM 노드 (프론트엔드 호환 구조)
+        current_x += 300
+        llm_node = {
+            "id": "llm-1",
+            "type": "llm",
+            "position": {"x": current_x, "y": 150},
+            "data": {
+                "title": "LLM",
+                "desc": "언어 모델",
+                "type": "llm",
+                "model": {
+                    "provider": "Anthropic",
+                    "name": "claude"
+                },
+                "prompt": "Context: {context}\nQuestion: {question}\nAnswer:",
+                "temperature": 0.7,
+                "max_tokens": 500
+            }
+        }
+        nodes.append(llm_node)
+
+        # 이전 노드 → LLM 엣지
+        edge_llm = {
+            "id": f"e-{last_node_id}-llm-1",
+            "source": last_node_id,
+            "target": "llm-1",
+            "type": "custom",
+            "data": {
+                "source_type": "knowledge-retrieval" if last_node_id == "knowledge-1" else "start",
+                "target_type": "llm"
+            }
+        }
+        edges.append(edge_llm)
+
+        # 4. END 노드
+        current_x += 300
+        end_node = {
+            "id": "end-1",
+            "type": "end",
+            "position": {"x": current_x, "y": 150},
+            "data": {
+                "title": "END",
+                "desc": "종료 노드",
+                "type": "end"
+            }
+        }
+        nodes.append(end_node)
+
+        # LLM → END 엣지
+        edge_end = {
+            "id": "e-llm-1-end-1",
+            "source": "llm-1",
+            "target": "end-1",
+            "type": "custom",
+            "data": {
+                "source_type": "llm",
+                "target_type": "end"
+            }
+        }
+        edges.append(edge_end)
+
+        return {
+            "nodes": nodes,
+            "edges": edges
+        }
+
     def _get_default_personality(self, goal: str) -> str:
         """
         Goal에 따른 기본 페르소나 반환
@@ -114,10 +244,20 @@ class BotService:
             # 4. description 생성 (goal이 있으면 사용, 없으면 name 기반)
             description = goal_str if goal_str else f"{request.name} 봇"
 
-            # 5. workflow 직렬화 (Pydantic → dict)
+            # 5. workflow 처리: 없거나 기본 노드만 있으면 자동 생성
             workflow_dict = None
             if request.workflow:
                 workflow_dict = request.workflow.model_dump(mode='json')
+
+                # workflow가 START/END만 있거나 비어있으면 기본 워크플로우 생성
+                nodes = workflow_dict.get('nodes', [])
+                if len(nodes) <= 2:  # START와 END만 있는 경우
+                    logger.info("기본 워크플로우 자동 생성 (START/END만 존재)")
+                    workflow_dict = self._create_default_workflow(request.knowledge)
+            else:
+                # workflow가 없으면 기본 워크플로우 생성
+                logger.info("기본 워크플로우 자동 생성 (workflow 없음)")
+                workflow_dict = self._create_default_workflow(request.knowledge)
 
             # 6. Bot 인스턴스 생성
             bot = Bot(
