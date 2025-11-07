@@ -6,10 +6,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.config import settings
+from app.core.middleware.rate_limit import (
+    limiter,
+    public_limiter,
+    custom_rate_limit_handler
+)
+from app.core.middleware.audit_logging import AuditLoggingMiddleware
 from app.api.v1.endpoints import upload, chat, auth, teams, bots
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -18,17 +22,14 @@ from app.api.exception_handlers import (
     http_exception_handler,
     unhandled_exception_handler
 )
-import logging
+from app.core.logging_config import setup_logging, get_logger
 
-# 로깅 설정
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper()),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# 구조화된 로깅 설정
+setup_logging(
+    log_level=settings.log_level,
+    use_structured=True  # 구조화된 포맷 사용
 )
-logger = logging.getLogger(__name__)
-
-# Rate Limiter 초기화
-limiter = Limiter(key_func=get_remote_address)
+logger = get_logger(__name__)
 
 # FastAPI 앱 생성
 app = FastAPI(
@@ -41,7 +42,7 @@ app = FastAPI(
 
 # Rate limiter 등록
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, custom_rate_limit_handler)
 
 # 글로벌 예외 핸들러 등록 (순서 중요: 구체적인 것부터 등록)
 app.add_exception_handler(BaseAppException, base_app_exception_handler)
@@ -74,6 +75,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 감사 로깅 미들웨어
+app.add_middleware(AuditLoggingMiddleware)
+
 # API 라우터 등록
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
 app.include_router(teams.router, prefix="/api/v1/teams", tags=["팀 관리"])
@@ -88,6 +92,13 @@ async def startup_event():
     logger.info(f"{settings.app_name} v{settings.app_version} 시작")
     logger.info(f"디버그 모드: {settings.debug}")
     logger.info(f"임베딩 모델: {settings.embedding_model}")
+
+    # Redis 연결
+    try:
+        from app.core.redis_client import redis_client
+        await redis_client.connect()
+    except Exception as e:
+        logger.error(f"Redis 연결 실패, 계속 진행: {e}")
 
     # LLM 설정 검증
     logger.info("LLM 설정 검증 중...")
@@ -120,6 +131,10 @@ async def shutdown_event():
     """애플리케이션 종료 시 실행"""
     logger.info(f"{settings.app_name} 종료")
 
+    # Redis 연결 종료
+    from app.core.redis_client import redis_client
+    await redis_client.close()
+
     # 임베딩 서비스 ThreadPoolExecutor 정리
     from app.core.embeddings import get_embedding_service
     embedding_service = get_embedding_service()
@@ -138,7 +153,8 @@ async def root():
 
 
 @app.get("/health")
-async def health_check():
+@limiter.limit(f"{settings.rate_limit_per_minute} per minute")
+async def health_check(request: Request):
     """헬스 체크 엔드포인트"""
     return {
         "status": "healthy",

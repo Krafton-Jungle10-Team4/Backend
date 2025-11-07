@@ -5,8 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 import json
 import base64
 
@@ -17,11 +15,9 @@ from app.core.auth.dependencies import get_current_user_from_jwt
 from app.models.user import User, Team, TeamMember, UserRole, AuthType, RefreshToken
 from app.schemas.auth import TokenResponse, UserResponse, LoginRequest, RegisterRequest
 from app.config import settings
+from app.core.middleware.rate_limit import limiter
 
 router = APIRouter()
-
-# Rate Limiter 초기화 (IP 기반)
-limiter = Limiter(key_func=get_remote_address)
 
 # 비밀번호 해싱
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

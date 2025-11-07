@@ -31,6 +31,9 @@ langchain-openai==0.0.5
 itsdangerous==2.1.2  # SessionMiddleware 필수
 slowapi==0.1.9  # Rate limiting
 
+# Redis
+redis==5.0.1
+
 # 데이터베이스
 sqlalchemy==2.0.25
 alembic==1.13.1

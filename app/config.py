@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = False
     log_level: str = "info"
+    use_structured_logging: bool = True  # 구조화된 로깅 사용 여부 (가독성 향상)
     environment: str = "development"  # development, staging, production
     
     #####################
@@ -40,7 +41,32 @@ class Settings(BaseSettings):
     chroma_host: str = "localhost"
     chroma_port: int = 8001
     chroma_collection_name: str = "documents"
-    
+
+    # Redis 
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_password: str = ""
+    redis_db: int = 0
+    redis_url: str = ""
+
+    # 연결 문자열 생성 규칙을 한 곳에 모아 일관성 있게 관리하려는 목적
+    # 비밀번호 포함/미포함, 기본값 처리 등을 캡슐화
+    def get_redis_url(self) -> str:
+        """Redis URL 반환 (우선순위: redis_url > 개별 설정)"""
+        if self.redis_url:
+            return self.redis_url
+
+        # 비밀번호가 있으면 포함
+        if self.redis_password:
+            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        else:
+            return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+    # Rate Limiting
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = 100
+    rate_limit_public_per_hour: int = 1000
+
     # 임베딩
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"  # t3.medium 최적화 (~80MB, 2-3배 빠름): str = "BAAI/bge-small-en-v1.5"  # EC2 무료 티어 대응 (~100MB)
     embedding_device: str = "cpu"

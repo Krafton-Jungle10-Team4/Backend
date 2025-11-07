@@ -3,20 +3,16 @@
 """
 import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from app.services.document_service import get_document_service, DocumentService
 from app.models.documents import DocumentUploadResponse, SearchResponse
 from app.core.auth.dependencies import get_current_user_from_jwt_only, get_user_team
 from app.models.user import User, Team
 from app.config import settings
+from app.core.middleware.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Rate limiter 인스턴스
-limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/upload", response_model=DocumentUploadResponse)

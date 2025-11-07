@@ -1,8 +1,9 @@
 """봇 관련 스키마"""
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict, Any
 from datetime import datetime
 from enum import Enum
+import json
 
 from app.schemas.workflow import Workflow
 
@@ -162,3 +163,197 @@ class ErrorResponse(BaseModel):
             }
         }
     )
+
+
+# ========== 명세서 준수 새로운 스키마 ==========
+
+class BotListItemResponse(BaseModel):
+    """Bot 목록용 응답 스키마 (명세서 준수)"""
+    id: str = Field(..., description="봇 ID")
+    name: str = Field(..., description="봇 이름")
+    description: Optional[str] = Field(None, description="봇 설명")
+    isActive: bool = Field(..., description="활성화 상태")
+    nodeCount: int = Field(..., description="Workflow 노드 개수")
+    edgeCount: int = Field(..., description="Workflow 엣지 개수")
+    createdAt: datetime = Field(..., description="생성 시간")
+    updatedAt: datetime = Field(..., description="수정 시간")
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True
+    )
+
+    @classmethod
+    def from_bot(cls, bot) -> "BotListItemResponse":
+        """Bot 모델에서 응답 생성"""
+        # workflow JSON에서 node/edge 개수 계산
+        node_count = 0
+        edge_count = 0
+
+        if bot.workflow:
+            workflow_data = bot.workflow if isinstance(bot.workflow, dict) else json.loads(bot.workflow)
+            node_count = len(workflow_data.get('nodes', []))
+            edge_count = len(workflow_data.get('edges', []))
+
+        return cls(
+            id=bot.bot_id,
+            name=bot.name,
+            description=bot.description,
+            isActive=(bot.status.value == "active"),
+            nodeCount=node_count,
+            edgeCount=edge_count,
+            createdAt=bot.created_at,
+            updatedAt=bot.updated_at
+        )
+
+
+class PaginationInfo(BaseModel):
+    """페이지네이션 정보"""
+    page: int = Field(..., description="현재 페이지 번호")
+    limit: int = Field(..., description="페이지당 항목 수")
+    total: int = Field(..., description="전체 항목 수")
+    totalPages: int = Field(..., description="전체 페이지 수")
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+
+class BotListResponseV2(BaseModel):
+    """명세서 준수 Bot 목록 응답"""
+    data: List[BotListItemResponse] = Field(..., description="Bot 목록")
+    pagination: PaginationInfo = Field(..., description="페이지네이션 정보")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "data": [
+                    {
+                        "id": "bot_1730718000_a8b9c3d4e",
+                        "name": "Test",
+                        "description": "고객 문의 응답 봇",
+                        "isActive": True,
+                        "nodeCount": 4,
+                        "edgeCount": 3,
+                        "createdAt": "2025-11-04T19:21:11.000Z",
+                        "updatedAt": "2025-11-04T19:21:11.000Z"
+                    }
+                ],
+                "pagination": {
+                    "page": 1,
+                    "limit": 10,
+                    "total": 1,
+                    "totalPages": 1
+                }
+            }
+        }
+    )
+
+
+class BotDetailResponse(BaseModel):
+    """Bot 상세 조회 응답 (명세서 준수)"""
+    data: Dict[str, Any] = Field(..., description="Bot 상세 데이터")
+
+    @classmethod
+    def from_bot(cls, bot) -> "BotDetailResponse":
+        """Bot 모델에서 상세 응답 생성"""
+        # Workflow 데이터 처리
+        workflow_dict = None
+        if bot.workflow:
+            workflow_data = bot.workflow if isinstance(bot.workflow, dict) else json.loads(bot.workflow)
+            # 명세서 형식으로 변환
+            workflow_dict = {
+                "schemaVersion": workflow_data.get("schemaVersion", "1.0.0"),
+                "workflowRevision": workflow_data.get("workflowRevision", 0),
+                "projectId": workflow_data.get("projectId"),
+                "createdAt": workflow_data.get("createdAt"),
+                "updatedAt": workflow_data.get("updatedAt"),
+                "nodes": workflow_data.get("nodes", []),
+                "edges": workflow_data.get("edges", [])
+            }
+
+        return cls(
+            data={
+                "id": bot.bot_id,
+                "name": bot.name,
+                "description": bot.description,
+                "isActive": bot.status.value == "active",
+                "createdAt": bot.created_at.isoformat() + "Z",
+                "updatedAt": bot.updated_at.isoformat() + "Z" if bot.updated_at else None,
+                "workflow": workflow_dict
+            }
+        )
+
+
+class CreateBotRequestV2(BaseModel):
+    """Bot 생성 요청 (명세서 준수)"""
+    name: str = Field(..., min_length=1, max_length=100, description="봇 이름")
+    description: Optional[str] = Field(None, description="봇 설명")
+    workflow: Dict[str, Any] = Field(..., description="Workflow 정의")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "고객 문의 응답 봇",
+                "description": "RAG 기반 자동 응답 시스템",
+                "workflow": {
+                    "schemaVersion": "1.0.0",
+                    "workflowRevision": 0,
+                    "projectId": "project-uuid",
+                    "nodes": [],
+                    "edges": []
+                }
+            }
+        }
+    )
+
+
+class UpdateBotRequestV2(BaseModel):
+    """Bot 수정 요청 (명세서 준수)"""
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="봇 이름")
+    description: Optional[str] = Field(None, description="봇 설명")
+    workflow: Optional[Dict[str, Any]] = Field(None, description="Workflow 정의")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "고객 문의 응답 봇 v2",
+                "description": "업데이트된 설명",
+                "workflow": {
+                    "schemaVersion": "1.0.0",
+                    "workflowRevision": 1,
+                    "nodes": [],
+                    "edges": []
+                }
+            }
+        }
+    )
+
+
+class StatusToggleRequest(BaseModel):
+    """Bot 상태 토글 요청"""
+    isActive: bool = Field(..., description="활성화 상태")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "isActive": True
+            }
+        }
+    )
+
+
+class StatusToggleResponse(BaseModel):
+    """Bot 상태 토글 응답"""
+    data: Dict[str, Any] = Field(..., description="상태 변경 결과")
+
+    @classmethod
+    def from_bot(cls, bot) -> "StatusToggleResponse":
+        """Bot 모델에서 상태 토글 응답 생성"""
+        return cls(
+            data={
+                "id": bot.bot_id,
+                "isActive": bot.status.value == "active",
+                "updatedAt": bot.updated_at.isoformat() + "Z" if bot.updated_at else None
+            }
+        )
