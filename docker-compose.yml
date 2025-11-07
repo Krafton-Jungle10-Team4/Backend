@@ -37,6 +37,28 @@ services:
     networks:
       - rag-network
 
+  # Redis 컨테이너 설정
+  redis:
+    # 사용할 도커 이미지: Redis 7 버전의 가벼운 Alpine 리눅스 기반 이미지
+    image: redis:7-alpine
+    platform: linux/arm64
+    container_name: redis_cache
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    networks:
+      - rag-network
+    # 헬스체크 명령. "Pong" 응답이 오면 헬스 체크 성공.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s # 30초마다 헬스체크
+      timeout: 10s # 10초 타임아웃
+      retries: 3 # 3번 실패하면 헬스체크 실패
+    restart: unless-stopped # 실패 시 재시작
+    # Redis 서버 실행 명령. AOF 모드 활성화 및 비밀번호 설정 (환경변수에서 로드, 없으면 비밀번호 없음)
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+
   backend:
     build:
       context: .
@@ -63,7 +85,9 @@ services:
       postgres:
         condition: service_healthy
       chromadb:
-        condition: service_healthy  # 헬스체크 통과할 때까지 대기
+        condition: service_healthy 
+      redis:
+        condition: service_healthy
 
     restart: unless-stopped
     networks:
