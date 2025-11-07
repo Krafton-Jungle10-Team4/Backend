@@ -149,7 +149,8 @@ async def root():
 
 
 @app.get("/health")
-async def health_check():
+@limiter.limit(f"{settings.rate_limit_per_minute} per minute")
+async def health_check(request: Request):
     """헬스 체크 엔드포인트"""
     return {
         "status": "healthy",

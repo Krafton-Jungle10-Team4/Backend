@@ -56,8 +56,8 @@ services:
       timeout: 10s # 10초 타임아웃
       retries: 3 # 3번 실패하면 헬스체크 실패
     restart: unless-stopped # 실패 시 재시작
-    # Redis 서버 실행 명령. AOF 모드 활성화 및 비밀번호 설정 (환경변수에서 로드, 없으면 비밀번호 없음)
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    # Redis 서버 실행 명령. AOF 모드 활성화 (개발 환경에서는 비밀번호 없음)
+    command: redis-server --appendonly yes
 
   backend:
     build:
