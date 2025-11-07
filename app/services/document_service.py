@@ -72,7 +72,8 @@ class DocumentService:
             
             # 5. 임베딩 생성
             logger.info(f"임베딩 생성 시작: {len(chunks)}개 청크")
-            embeddings = self.embedding_service.embed_documents(chunks)
+            # 비동기로 임베딩 생성 (블로킹 방지)
+            embeddings = await self.embedding_service.embed_documents(chunks)
             
             # 6. 메타데이터 생성
             metadata = self.document_processor.extract_metadata(file_path, file_size)
