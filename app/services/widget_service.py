@@ -1,7 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 import secrets
 
@@ -116,8 +117,8 @@ class WidgetService:
         session_token_hash = widget_security.hash_token(session_token)
         refresh_token_hash = widget_security.hash_token(refresh_token)
 
-        # 만료 시간 계산
-        expires_at = datetime.utcnow() + timedelta(hours=settings.widget_session_expire_hours)
+        # 만료 시간 계산 (timezone-aware)
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.widget_session_expire_hours)
 
         # 세션 생성
         session = WidgetSession(
@@ -182,8 +183,8 @@ class WidgetService:
         if not session:
             raise UnauthorizedException("Invalid session")
 
-        # 만료 확인
-        if datetime.utcnow() > session.expires_at:
+        # 만료 확인 (timezone-aware 비교)
+        if datetime.now(timezone.utc) > session.expires_at:
             raise UnauthorizedException("Session expired")
 
         # 사용자 메시지 저장
@@ -197,9 +198,13 @@ class WidgetService:
         )
         db.add(user_message)
 
-        # 배포 및 봇 정보 로드
+        # 배포 및 봇 정보 로드 (team relationship을 eager loading)
         deployment = await db.get(BotDeployment, session.deployment_id)
-        bot = await db.get(Bot, deployment.bot_id)
+
+        # Bot 조회 시 team도 함께 로드 (lazy loading 방지)
+        stmt = select(Bot).where(Bot.id == deployment.bot_id).options(selectinload(Bot.team))
+        result = await db.execute(stmt)
+        bot = result.scalar_one_or_none()
 
         # ChatService로 RAG 파이프라인 실행
         from app.services.chat_service import ChatService
@@ -234,8 +239,8 @@ class WidgetService:
         )
         db.add(bot_message)
 
-        # 마지막 활동 시간 업데이트
-        session.last_activity = datetime.utcnow()
+        # 마지막 활동 시간 업데이트 (timezone-aware)
+        session.last_activity = datetime.now(timezone.utc)
 
         await db.commit()
         await db.refresh(bot_message)
