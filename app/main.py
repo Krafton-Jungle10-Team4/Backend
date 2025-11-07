@@ -105,6 +105,12 @@ async def shutdown_event():
     """애플리케이션 종료 시 실행"""
     logger.info(f"{settings.app_name} 종료")
 
+    # 임베딩 서비스 ThreadPoolExecutor 정리
+    from app.core.embeddings import get_embedding_service
+    embedding_service = get_embedding_service()
+    embedding_service.shutdown()
+    logger.info("✅ 임베딩 서비스 리소스 정리 완료")
+
 
 @app.get("/")
 async def root():

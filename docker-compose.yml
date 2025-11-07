@@ -47,8 +47,12 @@ services:
     ports:
       - "8001:8001"  # 이 줄 추가
     volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
       - ./data/uploads:/app/data/uploads
       - ./data/huggingface_cache:/root/.cache/huggingface
+    command: sh -c "alembic upgrade head || true && uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload"
     environment:
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000

@@ -115,7 +115,8 @@ class ChatService:
             # 1. 쿼리 임베딩 생성
             logger.debug("쿼리 임베딩 생성 중...")
             # 정제된 사용자 질문을 임베딩 벡터(List[float])로 변환
-            query_embedding = self.embedding_service.embed_query(sanitized_message)
+            # 비동기 메서드 호출 (이벤트 루프 블로킹 방지)
+            query_embedding = await self.embedding_service.embed_query(sanitized_message)
 
             # 2. 벡터 검색
             logger.debug(f"벡터 검색 중 (top_k={request.top_k})...")
