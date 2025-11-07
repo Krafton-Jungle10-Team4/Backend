@@ -44,6 +44,7 @@ class Bot(Base):
     # 관계
     team = relationship("Team", back_populates="bots")
     knowledge_items = relationship("BotKnowledge", back_populates="bot", cascade="all, delete-orphan")
+    deployments = relationship("BotDeployment", back_populates="bot", cascade="all, delete-orphan")
 
 
 class BotKnowledge(Base):
