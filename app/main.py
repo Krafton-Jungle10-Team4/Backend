@@ -3,12 +3,21 @@ FastAPI RAG Backend - 메인 애플리케이션
 """
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.api.v1.endpoints import upload, chat, auth, teams, bots
+from app.core.exceptions import BaseAppException
+from app.api.exception_handlers import (
+    base_app_exception_handler,
+    validation_exception_handler,
+    http_exception_handler,
+    unhandled_exception_handler
+)
 import logging
 
 # 로깅 설정
@@ -33,6 +42,12 @@ app = FastAPI(
 # Rate limiter 등록
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# 글로벌 예외 핸들러 등록 (순서 중요: 구체적인 것부터 등록)
+app.add_exception_handler(BaseAppException, base_app_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # 세션 미들웨어 (OAuth에 필요)
 # 보안: JWT와 Session Secret Key를 분리하는 이유

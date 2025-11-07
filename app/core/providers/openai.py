@@ -4,7 +4,13 @@ OpenAI API 클라이언트 구현
 from typing import List, Dict, Optional, AsyncGenerator
 import logging
 from openai import AsyncOpenAI
+from openai import APIError, RateLimitError, APITimeoutError
 from app.core.llm_client import BaseLLMClient
+from app.core.exceptions import (
+    LLMAPIError,
+    LLMRateLimitError,
+    LLMInvalidResponseError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +55,43 @@ class OpenAIClient(BaseLLMClient):
                 **kwargs
             )
             return response.choices[0].message.content
+        except RateLimitError as e:
+            logger.error(f"OpenAI API 사용량 제한: {e}")
+            raise LLMRateLimitError(
+                message="OpenAI API 사용량 제한에 도달했습니다",
+                details={
+                    "model": self.model,
+                    "error": str(e)
+                }
+            )
+        except APITimeoutError as e:
+            logger.error(f"OpenAI API 타임아웃: {e}")
+            raise LLMAPIError(
+                message="OpenAI API 요청 시간이 초과되었습니다",
+                details={
+                    "model": self.model,
+                    "error": str(e)
+                }
+            )
+        except APIError as e:
+            logger.error(f"OpenAI API 오류: {e}")
+            raise LLMAPIError(
+                message=f"OpenAI API 호출 중 오류가 발생했습니다: {str(e)}",
+                details={
+                    "model": self.model,
+                    "error": str(e)
+                }
+            )
         except Exception as e:
-            logger.error(f"OpenAI API 호출 실패: {e}")
-            raise
+            logger.error(f"OpenAI API 호출 실패 (예기치 않은 오류): {e}", exc_info=True)
+            raise LLMAPIError(
+                message="OpenAI API 호출 중 예기치 않은 오류가 발생했습니다",
+                details={
+                    "model": self.model,
+                    "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )
 
     async def generate_stream(
         self,
@@ -74,6 +114,34 @@ class OpenAIClient(BaseLLMClient):
             async for chunk in stream:
                 if chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
+        except RateLimitError as e:
+            logger.error(f"OpenAI API 사용량 제한 (스트리밍): {e}")
+            raise LLMRateLimitError(
+                message="OpenAI API 사용량 제한에 도달했습니다",
+                details={
+                    "model": self.model,
+                    "stream": True,
+                    "error": str(e)
+                }
+            )
+        except APIError as e:
+            logger.error(f"OpenAI 스트리밍 오류: {e}")
+            raise LLMAPIError(
+                message=f"OpenAI 스트리밍 중 오류가 발생했습니다: {str(e)}",
+                details={
+                    "model": self.model,
+                    "stream": True,
+                    "error": str(e)
+                }
+            )
         except Exception as e:
-            logger.error(f"OpenAI 스트리밍 실패: {e}")
-            raise
+            logger.error(f"OpenAI 스트리밍 실패 (예기치 않은 오류): {e}", exc_info=True)
+            raise LLMAPIError(
+                message="OpenAI 스트리밍 중 예기치 않은 오류가 발생했습니다",
+                details={
+                    "model": self.model,
+                    "stream": True,
+                    "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )

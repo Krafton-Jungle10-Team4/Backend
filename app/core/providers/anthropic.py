@@ -4,7 +4,13 @@ Anthropic Claude API 클라이언트 구현
 from typing import List, Dict, Optional, AsyncGenerator
 import logging
 from anthropic import AsyncAnthropic
+from anthropic import APIError, RateLimitError, APITimeoutError
 from app.core.llm_client import BaseLLMClient
+from app.core.exceptions import (
+    LLMAPIError,
+    LLMRateLimitError,
+    LLMInvalidResponseError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +80,43 @@ class AnthropicClient(BaseLLMClient):
             # 응답 텍스트 추출
             return response.content[0].text
 
+        except RateLimitError as e:
+            logger.error(f"Anthropic API 사용량 제한: {e}")
+            raise LLMRateLimitError(
+                message="Anthropic API 사용량 제한에 도달했습니다",
+                details={
+                    "model": self.model,
+                    "error": str(e)
+                }
+            )
+        except APITimeoutError as e:
+            logger.error(f"Anthropic API 타임아웃: {e}")
+            raise LLMAPIError(
+                message="Anthropic API 요청 시간이 초과되었습니다",
+                details={
+                    "model": self.model,
+                    "error": str(e)
+                }
+            )
+        except APIError as e:
+            logger.error(f"Anthropic API 오류: {e}")
+            raise LLMAPIError(
+                message=f"Anthropic API 호출 중 오류가 발생했습니다: {str(e)}",
+                details={
+                    "model": self.model,
+                    "error": str(e)
+                }
+            )
         except Exception as e:
-            logger.error(f"Anthropic API 호출 실패: {e}")
-            raise
+            logger.error(f"Anthropic API 호출 실패 (예기치 않은 오류): {e}", exc_info=True)
+            raise LLMAPIError(
+                message="Anthropic API 호출 중 예기치 않은 오류가 발생했습니다",
+                details={
+                    "model": self.model,
+                    "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )
 
     async def generate_stream(
         self,
@@ -102,6 +142,34 @@ class AnthropicClient(BaseLLMClient):
                 async for text in stream.text_stream:
                     yield text
 
+        except RateLimitError as e:
+            logger.error(f"Anthropic API 사용량 제한 (스트리밍): {e}")
+            raise LLMRateLimitError(
+                message="Anthropic API 사용량 제한에 도달했습니다",
+                details={
+                    "model": self.model,
+                    "stream": True,
+                    "error": str(e)
+                }
+            )
+        except APIError as e:
+            logger.error(f"Anthropic 스트리밍 오류: {e}")
+            raise LLMAPIError(
+                message=f"Anthropic 스트리밍 중 오류가 발생했습니다: {str(e)}",
+                details={
+                    "model": self.model,
+                    "stream": True,
+                    "error": str(e)
+                }
+            )
         except Exception as e:
-            logger.error(f"Anthropic 스트리밍 실패: {e}")
-            raise
+            logger.error(f"Anthropic 스트리밍 실패 (예기치 않은 오류): {e}", exc_info=True)
+            raise LLMAPIError(
+                message="Anthropic 스트리밍 중 예기치 않은 오류가 발생했습니다",
+                details={
+                    "model": self.model,
+                    "stream": True,
+                    "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )

@@ -5,8 +5,14 @@ import logging
 import time
 from typing import List, Dict, Optional
 import chromadb
+from chromadb.errors import ChromaError
 # Settings 임포트 제거 - 0.5.x에서는 필요없음
 from app.config import settings
+from app.core.exceptions import (
+    VectorStoreConnectionError,
+    VectorStoreQueryError,
+    VectorStoreDocumentError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +77,7 @@ class VectorStore:
                     logger.info(f"ChromaDB 초기화 완료 (시도 {attempt}/{max_retries})")
                     return
 
-                except Exception as e:
+                except ChromaError as e:
                     last_error = e
                     logger.warning(
                         f"ChromaDB 연결 실패 (시도 {attempt}/{max_retries}): {str(e)}"
@@ -86,7 +92,38 @@ class VectorStore:
                             f"ChromaDB 서비스가 실행 중인지 확인하세요: "
                             f"{settings.chroma_host}:{settings.chroma_port}"
                         )
-                        raise last_error
+                        raise VectorStoreConnectionError(
+                            message=f"ChromaDB 연결에 {max_retries}회 실패했습니다",
+                            details={
+                                "host": settings.chroma_host,
+                                "port": settings.chroma_port,
+                                "attempts": max_retries,
+                                "last_error": str(last_error)
+                            }
+                        )
+                except Exception as e:
+                    last_error = e
+                    logger.warning(
+                        f"예기치 않은 오류 (시도 {attempt}/{max_retries}): {str(e)}"
+                    )
+
+                    if attempt < max_retries:
+                        logger.info(f"{retry_delay}초 후 재시도...")
+                        time.sleep(retry_delay)
+                    else:
+                        logger.error(
+                            f"ChromaDB 연결 중 예기치 않은 오류 발생 ({max_retries}회 시도)"
+                        )
+                        raise VectorStoreConnectionError(
+                            message=f"ChromaDB 연결 중 예기치 않은 오류가 발생했습니다",
+                            details={
+                                "host": settings.chroma_host,
+                                "port": settings.chroma_port,
+                                "attempts": max_retries,
+                                "error_type": type(last_error).__name__,
+                                "last_error": str(last_error)
+                            }
+                        )
     
     def add_documents(
         self,
@@ -139,18 +176,27 @@ class VectorStore:
     def get_document(self, document_id: str) -> Optional[Dict]:
         """
         문서 ID로 문서 조회
-        
+
         0.5.x에서도 get 메서드는 동일하게 작동합니다.
+
+        Args:
+            document_id: 조회할 문서 ID
+
+        Returns:
+            문서 정보 딕셔너리 또는 None
+
+        Raises:
+            VectorStoreQueryError: 문서 조회 중 오류 발생 시
         """
         if self.collection is None:
             self.connect()
-            
+
         try:
             results = self.collection.get(
                 ids=[document_id],
                 include=["documents", "metadatas", "embeddings"]
             )
-            
+
             if results and results["ids"]:
                 return {
                     "id": results["ids"][0],
@@ -158,31 +204,69 @@ class VectorStore:
                     "metadata": results["metadatas"][0]
                 }
             return None
-        except Exception as e:
+        except ChromaError as e:
             logger.error(f"문서 조회 실패: {e}")
-            return None
+            raise VectorStoreQueryError(
+                message=f"문서 조회 중 오류가 발생했습니다",
+                details={
+                    "document_id": document_id,
+                    "error": str(e)
+                }
+            )
+        except Exception as e:
+            logger.error(f"문서 조회 중 예기치 않은 오류: {e}")
+            raise VectorStoreQueryError(
+                message=f"문서 조회 중 예기치 않은 오류가 발생했습니다",
+                details={
+                    "document_id": document_id,
+                    "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )
     
     def delete_document(self, document_id: str):
         """
         문서 삭제
-        
+
         0.5.x에서도 동일한 방식으로 작동합니다.
+
+        Args:
+            document_id: 삭제할 문서 ID
+
+        Raises:
+            VectorStoreDocumentError: 문서 삭제 중 오류 발생 시
         """
         if self.collection is None:
             self.connect()
-            
+
         # document_id로 시작하는 모든 청크 삭제
         try:
             results = self.collection.get(
                 where={"document_id": document_id}
             )
-            
+
             if results and results["ids"]:
                 self.collection.delete(ids=results["ids"])
                 logger.info(f"문서 삭제 완료: {document_id} ({len(results['ids'])}개 청크)")
-        except Exception as e:
+        except ChromaError as e:
             logger.error(f"문서 삭제 실패: {e}")
-            raise
+            raise VectorStoreDocumentError(
+                message=f"문서 삭제 중 오류가 발생했습니다",
+                details={
+                    "document_id": document_id,
+                    "error": str(e)
+                }
+            )
+        except Exception as e:
+            logger.error(f"문서 삭제 중 예기치 않은 오류: {e}")
+            raise VectorStoreDocumentError(
+                message=f"문서 삭제 중 예기치 않은 오류가 발생했습니다",
+                details={
+                    "document_id": document_id,
+                    "error_type": type(e).__name__,
+                    "error": str(e)
+                }
+            )
     
     def count_documents(self) -> int:
         """
