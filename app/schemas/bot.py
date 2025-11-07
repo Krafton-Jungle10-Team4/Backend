@@ -127,22 +127,39 @@ class BotListResponse(BaseModel):
     )
 
 
-class UpdateBotRequest(BaseModel):
-    """봇 수정 요청"""
+class UpdateBotRequestPut(BaseModel):
+    """봇 수정 요청 (PUT - 전체 업데이트, 모든 필드 필수)"""
+    name: str = Field(..., min_length=1, max_length=100, description="봇 이름")
+    description: Optional[str] = Field(None, max_length=2000, description="봇 설명")
+    workflow: Workflow = Field(..., description="Workflow 정의 (필수)")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "고객 문의 응답 봇 v2",
+                "description": "업데이트된 설명",
+                "workflow": {
+                    "schemaVersion": "1.0.0",
+                    "workflowRevision": 1,
+                    "nodes": [],
+                    "edges": []
+                }
+            }
+        }
+    )
+
+
+class UpdateBotRequestPatch(BaseModel):
+    """봇 수정 요청 (PATCH - 부분 업데이트, 모든 필드 선택)"""
     name: Optional[str] = Field(None, min_length=1, max_length=100, description="봇 이름")
-    goal: Optional[BotGoal] = Field(None, description="봇의 목표")
-    personality: Optional[str] = Field(None, max_length=2000, description="봇의 성격/어조")
-    avatar: Optional[str] = Field(None, max_length=500, description="봇 아바타 URL")
-    status: Optional[Literal["active", "inactive", "error"]] = Field(None, description="봇 상태")
+    description: Optional[str] = Field(None, max_length=2000, description="봇 설명")
     workflow: Optional[Workflow] = Field(None, description="Workflow 정의")
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "name": "수정된 봇 이름",
-                "goal": "ai-assistant",
-                "personality": "더욱 친절한 어조",
-                "status": "active"
+                "description": "수정된 설명"
             }
         }
     )
