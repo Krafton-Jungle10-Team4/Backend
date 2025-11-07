@@ -20,8 +20,8 @@ class EmbeddingService:
         self.model_name = settings.embedding_model
         self.device = settings.embedding_device
         self.batch_size = settings.batch_size
-        # 임베딩 작업용 스레드 풀 (CPU 코어 수에 맞춰 조정)
-        self.executor = ThreadPoolExecutor(max_workers=2)
+        # 임베딩 작업용 스레드 풀 (병렬 처리 최적화)
+        self.executor = ThreadPoolExecutor(max_workers=4)
         self._lock = threading.Lock()  # 스레드 안전성을 위한 락
 
     def load_model(self):
@@ -43,25 +43,56 @@ class EmbeddingService:
             embedding = self.model.encode(texts[0], convert_to_numpy=True)
             return [embedding.tolist()]
         else:
-            # 배치 문서 인코딩
+            # 배치 문서 인코딩 (서브배치로 분할하여 처리)
             embeddings = self.model.encode(
                 texts,
                 batch_size=self.batch_size,
                 show_progress_bar=False,  # 비동기 실행 시 progress bar 비활성화
-                convert_to_numpy=True
+                convert_to_numpy=True,
+                normalize_embeddings=True  # 정규화로 검색 성능 향상
             )
             return embeddings.tolist()
 
     async def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """문서 텍스트를 임베딩으로 변환 (비동기)"""
-        loop = asyncio.get_event_loop()
-        embeddings = await loop.run_in_executor(
-            self.executor,
-            self._encode_sync,
-            texts,
-            False  # is_query=False
-        )
-        return embeddings
+        """문서 텍스트를 임베딩으로 변환 (비동기, 서브배치 최적화)"""
+        # 큰 배치는 서브배치로 분할하여 병렬 처리
+        if len(texts) <= self.batch_size:
+            # 작은 배치는 한 번에 처리
+            loop = asyncio.get_event_loop()
+            embeddings = await loop.run_in_executor(
+                self.executor,
+                self._encode_sync,
+                texts,
+                False  # is_query=False
+            )
+            return embeddings
+        else:
+            # 큰 배치는 서브배치로 분할하여 병렬 처리
+            sub_batches = [
+                texts[i:i + self.batch_size]
+                for i in range(0, len(texts), self.batch_size)
+            ]
+
+            loop = asyncio.get_event_loop()
+            tasks = [
+                loop.run_in_executor(
+                    self.executor,
+                    self._encode_sync,
+                    batch,
+                    False
+                )
+                for batch in sub_batches
+            ]
+
+            # 모든 서브배치를 병렬로 처리
+            results = await asyncio.gather(*tasks)
+
+            # 결과 병합
+            all_embeddings = []
+            for batch_embeddings in results:
+                all_embeddings.extend(batch_embeddings)
+
+            return all_embeddings
 
     async def embed_query(self, text: str) -> List[float]:
         """검색 쿼리를 임베딩으로 변환 (비동기)"""
