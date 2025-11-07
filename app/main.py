@@ -14,7 +14,7 @@ from app.core.middleware.rate_limit import (
     custom_rate_limit_handler
 )
 from app.core.middleware.audit_logging import AuditLoggingMiddleware
-from app.api.v1.endpoints import upload, chat, auth, teams, bots, workflows
+from app.api.v1.endpoints import upload, chat, auth, teams, bots, workflows, deployment, widget
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
     base_app_exception_handler,
