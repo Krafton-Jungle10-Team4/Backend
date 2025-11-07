@@ -1,0 +1,354 @@
+"""
+워크플로우 검증기
+
+워크플로우의 유효성을 검사하는 모듈입니다.
+순환 참조, 고립 노드, 필수 노드 확인 등의 검증을 수행합니다.
+"""
+
+from typing import Dict, List, Set, Tuple, Optional, Any
+from collections import defaultdict, deque
+from app.core.workflow.base_node import BaseNode, NodeType
+from app.core.workflow.node_registry import node_registry
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class WorkflowValidationError(Exception):
+    """워크플로우 검증 오류"""
+    pass
+
+
+class WorkflowValidator:
+    """
+    워크플로우 검증기
+
+    워크플로우의 구조적 무결성과 논리적 일관성을 검증합니다.
+    """
+
+    def __init__(self):
+        """검증기 초기화"""
+        self.errors: List[str] = []
+        self.warnings: List[str] = []
+
+    def validate(
+        self,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]]
+    ) -> Tuple[bool, List[str], List[str]]:
+        """
+        워크플로우 전체 검증
+
+        Args:
+            nodes: 노드 리스트
+            edges: 엣지 리스트
+
+        Returns:
+            Tuple: (유효 여부, 오류 리스트, 경고 리스트)
+        """
+        self.errors = []
+        self.warnings = []
+
+        # 기본 검증
+        if not nodes:
+            self.errors.append("워크플로우에 노드가 없습니다")
+            return False, self.errors, self.warnings
+
+        # 노드 맵 생성
+        node_map = {node["id"]: node for node in nodes}
+
+        # 엣지 맵 생성
+        adjacency_list = self._build_adjacency_list(edges, node_map)
+
+        # 검증 수행
+        self._validate_required_nodes(nodes)
+        self._validate_node_configurations(nodes)
+        self._validate_edges(edges, node_map)
+        self._validate_connectivity(node_map, adjacency_list)
+        self._validate_no_cycles(adjacency_list)
+        self._validate_isolated_nodes(node_map, adjacency_list)
+        self._validate_node_constraints(nodes, adjacency_list)
+        self._validate_execution_order(adjacency_list)
+
+        is_valid = len(self.errors) == 0
+        return is_valid, self.errors, self.warnings
+
+    def _build_adjacency_list(
+        self,
+        edges: List[Dict[str, Any]],
+        node_map: Dict[str, Dict]
+    ) -> Dict[str, List[str]]:
+        """
+        인접 리스트 생성
+
+        Args:
+            edges: 엣지 리스트
+            node_map: 노드 맵
+
+        Returns:
+            인접 리스트
+        """
+        adjacency_list = defaultdict(list)
+        for edge in edges:
+            source = edge.get("source")
+            target = edge.get("target")
+            if source and target:
+                adjacency_list[source].append(target)
+        return dict(adjacency_list)
+
+    def _validate_required_nodes(self, nodes: List[Dict[str, Any]]):
+        """필수 노드 존재 여부 검증"""
+        node_types = {node.get("type") for node in nodes}
+
+        # Start 노드 검증
+        start_count = sum(1 for node in nodes if node.get("type") == NodeType.START.value)
+        if start_count == 0:
+            self.errors.append("Start 노드가 필요합니다")
+        elif start_count > 1:
+            self.errors.append("Start 노드는 하나만 있어야 합니다")
+
+        # End 노드 검증
+        end_count = sum(1 for node in nodes if node.get("type") == NodeType.END.value)
+        if end_count == 0:
+            self.errors.append("End 노드가 필요합니다")
+        elif end_count > 1:
+            self.errors.append("End 노드는 하나만 있어야 합니다")
+
+    def _validate_node_configurations(self, nodes: List[Dict[str, Any]]):
+        """각 노드의 설정 검증"""
+        for node in nodes:
+            node_id = node.get("id")
+            node_type = node.get("type")
+            node_data = node.get("data", {})
+
+            if not node_id:
+                self.errors.append("노드 ID가 없는 노드가 있습니다")
+                continue
+
+            if not node_type:
+                self.errors.append(f"노드 {node_id}의 타입이 없습니다")
+                continue
+
+            # 노드 타입별 설정 검증
+            try:
+                node_type_enum = NodeType(node_type)
+                node_class = node_registry.get(node_type_enum)
+
+                if node_class:
+                    # 설정 클래스로 검증
+                    config_class = node_class.get_config_class()
+                    if node_data and config_class != type(None):
+                        try:
+                            config = config_class(**node_data)
+                        except Exception as e:
+                            self.errors.append(f"노드 {node_id}의 설정이 유효하지 않습니다: {str(e)}")
+                else:
+                    self.warnings.append(f"알 수 없는 노드 타입: {node_type}")
+
+            except ValueError:
+                self.errors.append(f"유효하지 않은 노드 타입: {node_type}")
+
+    def _validate_edges(
+        self,
+        edges: List[Dict[str, Any]],
+        node_map: Dict[str, Dict]
+    ):
+        """엣지 유효성 검증"""
+        for edge in edges:
+            source = edge.get("source")
+            target = edge.get("target")
+
+            if not source or not target:
+                self.errors.append("Source 또는 Target이 없는 엣지가 있습니다")
+                continue
+
+            if source not in node_map:
+                self.errors.append(f"존재하지 않는 Source 노드: {source}")
+
+            if target not in node_map:
+                self.errors.append(f"존재하지 않는 Target 노드: {target}")
+
+            # 자기 자신으로의 엣지 확인
+            if source == target:
+                self.errors.append(f"자기 자신으로의 엣지는 허용되지 않습니다: {source}")
+
+    def _validate_connectivity(
+        self,
+        node_map: Dict[str, Dict],
+        adjacency_list: Dict[str, List[str]]
+    ):
+        """노드 연결성 검증"""
+        # Start 노드가 다른 노드와 연결되어 있는지 확인
+        start_nodes = [node_id for node_id, node in node_map.items()
+                      if node.get("type") == NodeType.START.value]
+
+        for start_node in start_nodes:
+            if start_node not in adjacency_list or not adjacency_list[start_node]:
+                self.errors.append(f"Start 노드 {start_node}가 다른 노드와 연결되어 있지 않습니다")
+
+        # End 노드로 들어오는 연결이 있는지 확인
+        end_nodes = [node_id for node_id, node in node_map.items()
+                    if node.get("type") == NodeType.END.value]
+
+        incoming = defaultdict(list)
+        for source, targets in adjacency_list.items():
+            for target in targets:
+                incoming[target].append(source)
+
+        for end_node in end_nodes:
+            if end_node not in incoming or not incoming[end_node]:
+                self.errors.append(f"End 노드 {end_node}로 들어오는 연결이 없습니다")
+
+    def _validate_no_cycles(self, adjacency_list: Dict[str, List[str]]):
+        """순환 참조 검증 (DFS 사용)"""
+        visited = set()
+        rec_stack = set()
+
+        def has_cycle(node: str) -> bool:
+            visited.add(node)
+            rec_stack.add(node)
+
+            for neighbor in adjacency_list.get(node, []):
+                if neighbor not in visited:
+                    if has_cycle(neighbor):
+                        return True
+                elif neighbor in rec_stack:
+                    return True
+
+            rec_stack.remove(node)
+            return False
+
+        for node in adjacency_list:
+            if node not in visited:
+                if has_cycle(node):
+                    self.errors.append("워크플로우에 순환 참조가 있습니다")
+                    break
+
+    def _validate_isolated_nodes(
+        self,
+        node_map: Dict[str, Dict],
+        adjacency_list: Dict[str, List[str]]
+    ):
+        """고립된 노드 검증"""
+        # 모든 연결된 노드 수집
+        connected_nodes = set()
+
+        # 출발 노드들
+        connected_nodes.update(adjacency_list.keys())
+
+        # 도착 노드들
+        for targets in adjacency_list.values():
+            connected_nodes.update(targets)
+
+        # Start 노드는 출발만 하므로 예외
+        start_nodes = {node_id for node_id, node in node_map.items()
+                      if node.get("type") == NodeType.START.value}
+        connected_nodes.update(start_nodes)
+
+        # 모든 노드 확인
+        for node_id in node_map:
+            if node_id not in connected_nodes:
+                node_type = node_map[node_id].get("type")
+                self.warnings.append(f"노드 {node_id} ({node_type})가 고립되어 있습니다")
+
+    def _validate_node_constraints(
+        self,
+        nodes: List[Dict[str, Any]],
+        adjacency_list: Dict[str, List[str]]
+    ):
+        """노드별 제약 조건 검증"""
+        for node in nodes:
+            node_id = node.get("id")
+            node_type = node.get("type")
+
+            # Start 노드는 입력이 없어야 함
+            if node_type == NodeType.START.value:
+                incoming = [source for source, targets in adjacency_list.items()
+                           if node_id in targets]
+                if incoming:
+                    self.errors.append(f"Start 노드 {node_id}는 입력을 가질 수 없습니다")
+
+            # End 노드는 출력이 없어야 함
+            if node_type == NodeType.END.value:
+                if node_id in adjacency_list and adjacency_list[node_id]:
+                    self.errors.append(f"End 노드 {node_id}는 출력을 가질 수 없습니다")
+
+            # Knowledge/LLM 노드는 입출력이 있어야 함
+            if node_type in [NodeType.KNOWLEDGE_RETRIEVAL.value, NodeType.LLM.value]:
+                # 입력 확인
+                incoming = [source for source, targets in adjacency_list.items()
+                           if node_id in targets]
+                if not incoming:
+                    self.errors.append(f"{node_type} 노드 {node_id}는 최소 하나의 입력이 필요합니다")
+
+                # 출력 확인
+                if node_id not in adjacency_list or not adjacency_list[node_id]:
+                    self.errors.append(f"{node_type} 노드 {node_id}는 최소 하나의 출력이 필요합니다")
+
+    def _validate_execution_order(self, adjacency_list: Dict[str, List[str]]):
+        """실행 순서 검증 (토폴로지 정렬 가능 여부)"""
+        in_degree = defaultdict(int)
+        for targets in adjacency_list.values():
+            for target in targets:
+                in_degree[target] += 1
+
+        queue = deque([node for node in adjacency_list if in_degree[node] == 0])
+        sorted_count = 0
+
+        while queue:
+            node = queue.popleft()
+            sorted_count += 1
+
+            for neighbor in adjacency_list.get(node, []):
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+
+        # 모든 노드가 정렬되지 않았다면 순환 참조가 있거나 문제가 있음
+        total_nodes = len(set(adjacency_list.keys()) | set(in_degree.keys()))
+        if sorted_count < total_nodes:
+            self.warnings.append("일부 노드의 실행 순서를 결정할 수 없습니다")
+
+    def get_execution_order(
+        self,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]]
+    ) -> Optional[List[str]]:
+        """
+        실행 순서 계산 (토폴로지 정렬)
+
+        Args:
+            nodes: 노드 리스트
+            edges: 엣지 리스트
+
+        Returns:
+            실행 순서 또는 None (순환 참조 시)
+        """
+        node_map = {node["id"]: node for node in nodes}
+        adjacency_list = self._build_adjacency_list(edges, node_map)
+
+        in_degree = defaultdict(int)
+        for node_id in node_map:
+            if node_id not in in_degree:
+                in_degree[node_id] = 0
+
+        for targets in adjacency_list.values():
+            for target in targets:
+                in_degree[target] += 1
+
+        queue = deque([node for node in node_map if in_degree[node] == 0])
+        execution_order = []
+
+        while queue:
+            node = queue.popleft()
+            execution_order.append(node)
+
+            for neighbor in adjacency_list.get(node, []):
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+
+        if len(execution_order) != len(node_map):
+            return None
+
+        return execution_order

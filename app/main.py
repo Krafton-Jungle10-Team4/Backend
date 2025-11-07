@@ -14,7 +14,7 @@ from app.core.middleware.rate_limit import (
     custom_rate_limit_handler
 )
 from app.core.middleware.audit_logging import AuditLoggingMiddleware
-from app.api.v1.endpoints import upload, chat, auth, teams, bots
+from app.api.v1.endpoints import upload, chat, auth, teams, bots, workflows
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
     base_app_exception_handler,
@@ -81,7 +81,8 @@ app.add_middleware(AuditLoggingMiddleware)
 # API 라우터 등록
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
 app.include_router(teams.router, prefix="/api/v1/teams", tags=["팀 관리"])
-app.include_router(bots.router, prefix="/api/v1/workflows", tags=["워크플로우 관리"])
+app.include_router(bots.router, prefix="/api/v1/bots", tags=["봇 관리"])
+app.include_router(workflows.router, prefix="/api/v1", tags=["워크플로우"])
 app.include_router(upload.router, prefix="/api/v1/documents", tags=["문서"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["챗봇"])
 
@@ -92,6 +93,11 @@ async def startup_event():
     logger.info(f"{settings.app_name} v{settings.app_version} 시작")
     logger.info(f"디버그 모드: {settings.debug}")
     logger.info(f"임베딩 모델: {settings.embedding_model}")
+
+    # 워크플로우 노드 등록
+    logger.info("워크플로우 노드 등록 중...")
+    from app.core.workflow.nodes import StartNode, EndNode, KnowledgeNode, LLMNode
+    logger.info("✅ 워크플로우 노드 등록 완료")
 
     # Redis 연결
     try:
