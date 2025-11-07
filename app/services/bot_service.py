@@ -4,7 +4,7 @@
 import logging
 import time
 import secrets
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 from sqlalchemy.exc import SQLAlchemyError
@@ -552,6 +552,43 @@ class BotService:
                     "error": str(e)
                 }
             )
+
+    async def update_bot_workflow(
+        self,
+        bot_id: str,
+        team_id: int,
+        workflow: Dict[str, Any],
+        db: AsyncSession
+    ) -> bool:
+        """
+        봇의 워크플로우 업데이트
+
+        Args:
+            bot_id: 봇 ID
+            team_id: 팀 ID
+            workflow: 워크플로우 정의
+            db: 데이터베이스 세션
+
+        Returns:
+            bool: 성공 여부
+        """
+        try:
+            # 봇 조회
+            bot = await self.get_bot_by_id(bot_id, team_id, db)
+            if not bot:
+                return False
+
+            # 워크플로우 업데이트
+            bot.workflow = workflow
+            await db.commit()
+
+            logger.info(f"Updated workflow for bot {bot_id}")
+            return True
+
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Failed to update bot workflow: {str(e)}")
+            raise
 
 
 # 싱글톤 인스턴스
