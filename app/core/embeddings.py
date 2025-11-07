@@ -2,7 +2,10 @@
 임베딩 서비스
 """
 import logging
+import asyncio
+import threading
 from typing import List
+from concurrent.futures import ThreadPoolExecutor
 from sentence_transformers import SentenceTransformer
 from app.config import settings
 
@@ -10,51 +13,96 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    """임베딩 생성 서비스"""
-    
+    """임베딩 생성 서비스 (비동기 지원)"""
+
     def __init__(self):
         self.model = None
         self.model_name = settings.embedding_model
         self.device = settings.embedding_device
         self.batch_size = settings.batch_size
-        
+        # 임베딩 작업용 스레드 풀 (CPU 코어 수에 맞춰 조정)
+        self.executor = ThreadPoolExecutor(max_workers=2)
+        self._lock = threading.Lock()  # 스레드 안전성을 위한 락
+
     def load_model(self):
         """임베딩 모델 로드"""
         if self.model is None:
             logger.info(f"임베딩 모델 로딩 중: {self.model_name}")
             self.model = SentenceTransformer(self.model_name, device=self.device)
             logger.info("임베딩 모델 로딩 완료")
-            
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """문서 텍스트를 임베딩으로 변환"""
+
+    def _encode_sync(self, texts: List[str], is_query: bool = False) -> List[List[float]]:
+        """동기 방식 인코딩 (내부 사용)"""
         if self.model is None:
-            self.load_model()
-            
-        embeddings = self.model.encode(
+            with self._lock:  # 모델 로딩 시 동시성 제어
+                if self.model is None:
+                    self.load_model()
+
+        if is_query:
+            # 단일 쿼리 인코딩
+            embedding = self.model.encode(texts[0], convert_to_numpy=True)
+            return [embedding.tolist()]
+        else:
+            # 배치 문서 인코딩
+            embeddings = self.model.encode(
+                texts,
+                batch_size=self.batch_size,
+                show_progress_bar=False,  # 비동기 실행 시 progress bar 비활성화
+                convert_to_numpy=True
+            )
+            return embeddings.tolist()
+
+    async def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """문서 텍스트를 임베딩으로 변환 (비동기)"""
+        loop = asyncio.get_event_loop()
+        embeddings = await loop.run_in_executor(
+            self.executor,
+            self._encode_sync,
             texts,
-            batch_size=self.batch_size,
-            show_progress_bar=True,
-            convert_to_numpy=True
+            False  # is_query=False
         )
-        
-        return embeddings.tolist()
-    
-    def embed_query(self, text: str) -> List[float]:
-        """검색 쿼리를 임베딩으로 변환"""
-        if self.model is None:
-            self.load_model()
-            
-        embedding = self.model.encode(text, convert_to_numpy=True)
-        return embedding.tolist()
+        return embeddings
+
+    async def embed_query(self, text: str) -> List[float]:
+        """검색 쿼리를 임베딩으로 변환 (비동기)"""
+        loop = asyncio.get_event_loop()
+        embeddings = await loop.run_in_executor(
+            self.executor,
+            self._encode_sync,
+            [text],  # 리스트로 래핑
+            True  # is_query=True
+        )
+        return embeddings[0]  # 첫 번째 결과 반환
+
+    # 기존 동기 메서드 유지 (하위 호환성)
+    def embed_documents_sync(self, texts: List[str]) -> List[List[float]]:
+        """문서 텍스트를 임베딩으로 변환 (동기)"""
+        return self._encode_sync(texts, False)
+
+    def embed_query_sync(self, text: str) -> List[float]:
+        """검색 쿼리를 임베딩으로 변환 (동기)"""
+        return self._encode_sync([text], True)[0]
+
+    def shutdown(self):
+        """리소스 정리"""
+        self.executor.shutdown(wait=True)
 
 
 # 싱글톤 인스턴스
 _embedding_service = None
+_service_lock = threading.Lock()
 
-# 현재는 싱글톤이지만, 나중에 여러 요청을 처리할 때에는 비동기나 배치 처리 도입
+
 def get_embedding_service() -> EmbeddingService:
-    """임베딩 서비스 싱글톤 인스턴스 반환"""
+    """임베딩 서비스 싱글톤 인스턴스 반환 (스레드 안전)"""
     global _embedding_service
-    if _embedding_service is None:
-        _embedding_service = EmbeddingService()
-    return _embedding_service
+
+    # Fast path: 이미 생성된 경우
+    if _embedding_service is not None:
+        return _embedding_service
+
+    # Slow path: Lock 획득 후 생성 (Double-checked locking)
+    with _service_lock:
+        if _embedding_service is None:
+            _embedding_service = EmbeddingService()
+        return _embedding_service
