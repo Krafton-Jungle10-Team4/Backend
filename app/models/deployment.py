@@ -87,7 +87,7 @@ class WidgetSession(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
     # 메타데이터
-    metadata = Column(JSON, nullable=True)
+    session_metadata = Column(JSON, nullable=True)
 
     # 관계
     deployment = relationship("BotDeployment", back_populates="sessions")
@@ -126,7 +126,7 @@ class WidgetMessage(Base):
     sources = Column(JSON, nullable=True)
 
     # 메타데이터 (컨텍스트, 의도 등)
-    metadata = Column(JSON, nullable=True)
+    message_metadata = Column(JSON, nullable=True)
 
     # 피드백
     feedback_rating = Column(Integer, nullable=True)
