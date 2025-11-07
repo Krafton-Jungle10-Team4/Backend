@@ -42,9 +42,9 @@ class Settings(BaseSettings):
     chroma_collection_name: str = "documents"
     
     # 임베딩
-    embedding_model: str = "BAAI/bge-small-en-v1.5"  # EC2 무료 티어 대응 (~100MB)
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"  # t3.medium 최적화 (~80MB, 2-3배 빠름): str = "BAAI/bge-small-en-v1.5"  # EC2 무료 티어 대응 (~100MB)
     embedding_device: str = "cpu"
-    batch_size: int = 32
+    batch_size: int = 16  # CPU 최적화 (작은 배치가 CPU에서 더 빠름)
     
     # 문서 처리
     max_file_size: int = 10485760  # 10MB
