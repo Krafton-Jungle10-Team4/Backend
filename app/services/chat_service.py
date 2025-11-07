@@ -89,9 +89,19 @@ class ChatService:
 
         executor = WorkflowExecutor()
 
+        # 런타임 모델 오버라이드 처리
+        workflow_data = bot.workflow.copy() if bot.workflow else {}
+        if request.model and workflow_data.get("nodes"):
+            logger.info(f"[ChatService] 런타임 모델 오버라이드: {request.model}")
+            for node in workflow_data["nodes"]:
+                if node.get("type") == "llm" and node.get("data"):
+                    original_model = node["data"].get("model")
+                    node["data"]["model"] = request.model
+                    logger.info(f"[ChatService] LLM 노드 모델 변경: {original_model} → {request.model}")
+
         # 워크플로우 실행
         response_text = await executor.execute(
-            workflow_data=bot.workflow,
+            workflow_data=workflow_data,
             session_id=request.session_id or "default",
             user_message=request.message,
             vector_service=vector_service,

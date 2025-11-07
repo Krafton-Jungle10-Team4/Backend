@@ -12,6 +12,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="대화 세션 ID")
     top_k: int = Field(5, description="검색할 문서 개수", ge=1, le=20)
     include_sources: bool = Field(False, description="출처 정보 포함 여부")
+    model: Optional[str] = Field(None, description="사용할 LLM 모델 (런타임 오버라이드)")
 
     # Pydantic 모델 설정
     # ConfigDict: 타입 안정성을 가진 설정 객체(딕셔너리)
@@ -24,7 +25,8 @@ class ChatRequest(BaseModel):
                 "message": "FastAPI의 주요 특징은 무엇인가요?",
                 "session_id": "user_123",
                 "top_k": 5,
-                "include_sources": True
+                "include_sources": True,
+                "model": "gpt-4"
             }
         }
     )

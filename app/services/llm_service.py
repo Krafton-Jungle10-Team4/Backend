@@ -16,6 +16,41 @@ class LLMService:
     def __init__(self):
         self.llm_client = get_llm_client()
 
+    async def generate(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> str:
+        """
+        워크플로우용 LLM 생성 (단순 프롬프트 전달)
+
+        Args:
+            prompt: 프롬프트 텍스트
+            model: 모델 이름 (현재는 사용되지 않음, 향후 동적 모델 선택 지원)
+            temperature: Temperature 설정
+            max_tokens: 최대 토큰 수
+
+        Returns:
+            LLM 응답
+        """
+        logger.info(f"[LLMService] LLM generate 호출: model={model}, temp={temperature}")
+
+        messages = [
+            {"role": "user", "content": prompt}
+        ]
+
+        # LLM 호출
+        response = await self.llm_client.generate(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+
+        logger.info(f"[LLMService] LLM 응답 생성 완료: {len(response)}자")
+        return response
+
     async def generate_response(
         self,
         query: str,
@@ -24,7 +59,7 @@ class LLMService:
         max_tokens: int = 2000
     ) -> str:
         """
-        LLM 응답 생성
+        LLM 응답 생성 (RAG 파이프라인용)
 
         Args:
             query: 사용자 질문
