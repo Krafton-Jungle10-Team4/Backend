@@ -16,7 +16,7 @@ from app.core.exceptions import NotFoundException, ForbiddenException
 router = APIRouter()
 
 
-@router.post("/bots/{bot_id}/deploy", response_model=DeploymentResponse)
+@router.post("/{bot_id}/deploy", response_model=DeploymentResponse)
 async def create_or_update_deployment(
     bot_id: str,
     deployment_data: DeploymentCreate,
@@ -58,7 +58,7 @@ async def create_or_update_deployment(
         raise HTTPException(status_code=403, detail=str(e))
 
 
-@router.get("/bots/{bot_id}/deployment", response_model=DeploymentResponse)
+@router.get("/{bot_id}/deployment", response_model=DeploymentResponse)
 async def get_deployment(
     bot_id: str,
     db: AsyncSession = Depends(get_db),
@@ -92,7 +92,7 @@ async def get_deployment(
     )
 
 
-@router.patch("/bots/{bot_id}/deployment/status")
+@router.patch("/{bot_id}/deployment/status")
 async def update_deployment_status(
     bot_id: str,
     status_update: DeploymentStatusUpdate,
@@ -114,7 +114,7 @@ async def update_deployment_status(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.delete("/bots/{bot_id}/deployment")
+@router.delete("/{bot_id}/deployment")
 async def delete_deployment(
     bot_id: str,
     db: AsyncSession = Depends(get_db),
