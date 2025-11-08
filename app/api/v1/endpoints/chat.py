@@ -51,7 +51,7 @@ async def chat(
     logger.info(f"[Chat] 요청: '{chat_request.message[:50]}...' (session: {chat_request.session_id}, user: {user.uuid}, bot_id: {chat_request.bot_id})")
 
     try:
-        response = await chat_service.generate_response(chat_request, user_uuid=user.uuid, db=db)
+        response = await chat_service.generate_response(chat_request, user_uuid=str(user.uuid), db=db)
 
         logger.info(
             f"[Chat] 응답 생성 완료: {response.retrieved_chunks}개 청크 참조, "
