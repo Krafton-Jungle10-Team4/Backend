@@ -58,7 +58,7 @@ async def upload_document(
 
     # 문서 처리 (사용자 UUID 전달)
     try:
-        result = await doc_service.process_and_store_document(file, user_uuid=user.uuid)
+        result = await doc_service.process_and_store_document(file, user_uuid=str(user.uuid))
         return result
     except ValueError as e:
         logger.error(f"문서 처리 검증 실패: {e}")
@@ -87,7 +87,7 @@ async def search_documents(
     logger.info(f"검색 요청: query='{query}', top_k={top_k} (User: {user.email}, UUID: {user.uuid})")
 
     try:
-        results = doc_service.search_documents(query=query, top_k=top_k, user_uuid=user.uuid)
+        results = doc_service.search_documents(query=query, top_k=top_k, user_uuid=str(user.uuid))
 
         # 결과 개수 계산
         count = len(results.get("ids", [[]])[0]) if results.get("ids") else 0
@@ -117,7 +117,7 @@ async def get_document_info(
         Authorization: Bearer <token>
     """
     try:
-        info = doc_service.get_document_info(document_id, user_uuid=user.uuid)
+        info = doc_service.get_document_info(document_id, user_uuid=str(user.uuid))
         return info
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -141,7 +141,7 @@ async def delete_document(
         Authorization: Bearer <token>
     """
     try:
-        doc_service.delete_document(document_id, user_uuid=user.uuid)
+        doc_service.delete_document(document_id, user_uuid=str(user.uuid))
         return {"status": "success", "message": f"문서가 삭제되었습니다: {document_id}"}
     except Exception as e:
         logger.error(f"문서 삭제 실패: {e}", exc_info=True)
