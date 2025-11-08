@@ -1,13 +1,13 @@
 """
-ChromaDB 벡터 스토어 관리
+PostgreSQL + pgvector 벡터 스토어 관리
 """
 import logging
-import time
 from typing import List, Dict, Optional
-import chromadb
-from chromadb.errors import ChromaError
-# Settings 임포트 제거 - 0.5.x에서는 필요없음
-from app.config import settings
+from sqlalchemy.orm import Session
+from sqlalchemy import select, delete as sql_delete, func
+
+from app.core.database import get_db
+from app.models.document_embeddings import DocumentEmbedding
 from app.core.exceptions import (
     VectorStoreConnectionError,
     VectorStoreQueryError,
@@ -18,113 +18,52 @@ logger = logging.getLogger(__name__)
 
 
 class VectorStore:
-    """ChromaDB 벡터 스토어 클래스"""
+    """PostgreSQL + pgvector 벡터 스토어 클래스"""
 
-    def __init__(self, user_uuid: Optional[str] = None):
+    def __init__(
+        self,
+        bot_id: Optional[int] = None,
+        user_uuid: Optional[str] = None,
+        db: Optional[Session] = None
+    ):
         """
         Args:
-            user_uuid: 사용자 UUID (사용자별 컬렉션 분리용)
-                      None이면 기본 컬렉션 사용 (하위 호환성)
+            bot_id: 봇 ID (봇별 임베딩 분리용, 우선순위 높음)
+            user_uuid: 사용자 UUID (ChromaDB 호환성 유지, 레거시)
+            db: 데이터베이스 세션 (외부 주입)
+
+        Note:
+            - bot_id가 제공되면 해당 봇의 임베딩 사용
+            - bot_id가 없고 user_uuid만 있으면 해당 사용자의 첫 번째 봇 사용
+            - db 세션은 외부에서 주입받음 (의존성 주입 패턴)
         """
-        self.client = None
-        self.collection = None
+        if not bot_id and not user_uuid:
+            raise ValueError("bot_id 또는 user_uuid 중 하나는 필수입니다")
+
+        self.bot_id = bot_id
         self.user_uuid = user_uuid
+        self.db = db
 
-    def connect(self, max_retries: int = 5, retry_delay: int = 5):
-        """
-        ChromaDB 연결 (재시도 로직 포함)
+        # user_uuid만 제공된 경우 경고
+        if not self.bot_id and self.user_uuid:
+            logger.warning(
+                f"user_uuid만 제공됨 ({self.user_uuid}). "
+                f"bot_id를 제공하는 것을 권장합니다. "
+                f"임시로 user_uuid 기반 bot_id를 사용합니다."
+            )
+            # 임시: user_uuid를 해시해서 임시 bot_id 생성
+            import hashlib
+            hash_value = int(hashlib.md5(user_uuid.encode()).hexdigest()[:8], 16)
+            self.bot_id = hash_value % 1000000
 
-        Args:
-            max_retries: 최대 재시도 횟수
-            retry_delay: 재시도 간 대기 시간(초)
-        """
-        if self.client is None:
-            logger.info(f"ChromaDB 연결 중: {settings.chroma_host}:{settings.chroma_port}")
+    def _get_session(self) -> Session:
+        """세션 확보 (없으면 새로 생성)"""
+        if self.db is None:
+            # 세션이 없으면 get_db()에서 생성
+            self.db = next(get_db())
+            logger.debug(f"새 데이터베이스 세션 생성 (bot_id={self.bot_id})")
+        return self.db
 
-            last_error = None
-            for attempt in range(1, max_retries + 1):
-                try:
-                    # 0.5.x에서는 Settings 객체 없이 직접 파라미터 전달
-                    self.client = chromadb.HttpClient(
-                        host=settings.chroma_host,
-                        port=settings.chroma_port,
-                        # 0.5.x에서는 settings 파라미터가 없음
-                        # 대신 필요한 설정을 직접 파라미터로 전달
-                    )
-
-                    # 연결 테스트 (heartbeat)
-                    self.client.heartbeat()
-
-                    # 0.5.x에서는 tenant/database 관리가 더 명확해짐
-                    # 기본적으로 "default_tenant"와 "default_database"를 사용
-                    # 명시적으로 생성하지 않아도 자동으로 처리됨
-
-                    # 사용자별 컬렉션 이름 생성
-                    if self.user_uuid:
-                        collection_name = f"user_{self.user_uuid}"
-                    else:
-                        collection_name = settings.chroma_collection_name
-
-                    # 컬렉션 생성 또는 가져오기
-                    self.collection = self.client.get_or_create_collection(
-                        name=collection_name,
-                        metadata={
-                            "description": "Document embeddings for RAG",
-                            "user_uuid": self.user_uuid or "default"
-                        }
-                    )
-
-                    logger.info(f"ChromaDB 초기화 완료 (시도 {attempt}/{max_retries})")
-                    return
-
-                except ChromaError as e:
-                    last_error = e
-                    logger.warning(
-                        f"ChromaDB 연결 실패 (시도 {attempt}/{max_retries}): {str(e)}"
-                    )
-
-                    if attempt < max_retries:
-                        logger.info(f"{retry_delay}초 후 재시도...")
-                        time.sleep(retry_delay)
-                    else:
-                        logger.error(
-                            f"ChromaDB 연결 최종 실패 ({max_retries}회 시도). "
-                            f"ChromaDB 서비스가 실행 중인지 확인하세요: "
-                            f"{settings.chroma_host}:{settings.chroma_port}"
-                        )
-                        raise VectorStoreConnectionError(
-                            message=f"ChromaDB 연결에 {max_retries}회 실패했습니다",
-                            details={
-                                "host": settings.chroma_host,
-                                "port": settings.chroma_port,
-                                "attempts": max_retries,
-                                "last_error": str(last_error)
-                            }
-                        )
-                except Exception as e:
-                    last_error = e
-                    logger.warning(
-                        f"예기치 않은 오류 (시도 {attempt}/{max_retries}): {str(e)}"
-                    )
-
-                    if attempt < max_retries:
-                        logger.info(f"{retry_delay}초 후 재시도...")
-                        time.sleep(retry_delay)
-                    else:
-                        logger.error(
-                            f"ChromaDB 연결 중 예기치 않은 오류 발생 ({max_retries}회 시도)"
-                        )
-                        raise VectorStoreConnectionError(
-                            message=f"ChromaDB 연결 중 예기치 않은 오류가 발생했습니다",
-                            details={
-                                "host": settings.chroma_host,
-                                "port": settings.chroma_port,
-                                "attempts": max_retries,
-                                "error_type": type(last_error).__name__,
-                                "last_error": str(last_error)
-                            }
-                        )
-    
     def add_documents(
         self,
         ids: List[str],
@@ -134,22 +73,46 @@ class VectorStore:
     ):
         """
         문서와 임베딩을 벡터 스토어에 추가
-        
-        0.5.x에서도 동일한 방식으로 작동하지만,
-        내부적으로 더 효율적인 배치 처리가 이루어집니다.
+
+        Args:
+            ids: 문서 ID 리스트 (ChromaDB 호환성)
+            embeddings: 임베딩 벡터 리스트
+            documents: 문서 텍스트 리스트
+            metadatas: 메타데이터 리스트
         """
-        if self.collection is None:
-            self.connect()
-            
-        self.collection.add(
-            ids=ids,
-            embeddings=embeddings,
-            documents=documents,
-            metadatas=metadatas
-        )
-        
-        logger.info(f"벡터 스토어에 {len(ids)}개 문서 추가 완료")
-    
+        db = self._get_session()
+
+        try:
+            for idx, (doc_id, embedding, document, metadata) in enumerate(
+                zip(ids, embeddings, documents, metadatas)
+            ):
+                metadata_copy = metadata.copy()
+                metadata_copy["document_id"] = doc_id
+
+                doc_embedding = DocumentEmbedding(
+                    bot_id=self.bot_id,
+                    chunk_text=document,
+                    chunk_index=idx,
+                    embedding=embedding,
+                    metadata=metadata_copy
+                )
+                db.add(doc_embedding)
+
+            db.commit()
+            logger.info(f"벡터 스토어에 {len(ids)}개 문서 추가 완료 (bot_id={self.bot_id})")
+
+        except Exception as e:
+            db.rollback()
+            logger.error(f"문서 추가 실패: {e}")
+            raise VectorStoreDocumentError(
+                message="문서 추가 중 오류가 발생했습니다",
+                details={
+                    "bot_id": self.bot_id,
+                    "document_count": len(ids),
+                    "error": str(e)
+                }
+            )
+
     def search(
         self,
         query_embedding: List[float],
@@ -157,146 +120,206 @@ class VectorStore:
         filter_dict: Optional[Dict] = None
     ) -> Dict:
         """
-        유사도 검색
-        
-        0.5.x에서는 query 메서드의 반환 형식이 조금 더 명확해졌습니다.
+        pgvector 코사인 유사도 검색
+
+        Args:
+            query_embedding: 쿼리 임베딩 벡터
+            top_k: 반환할 결과 개수
+            filter_dict: 메타데이터 필터
+
+        Returns:
+            ChromaDB 호환 형식의 결과
         """
-        if self.collection is None:
-            self.connect()
-            
-        # 0.5.x에서도 동일하게 작동
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            where=filter_dict
-        )
-        
-        return results
-    
+        db = self._get_session()
+
+        try:
+            # 코사인 거리를 직접 계산하는 쿼리 구성
+            # <=> 연산자: 코사인 거리 (0에 가까울수록 유사)
+            distance_expr = DocumentEmbedding.embedding.cosine_distance(query_embedding)
+
+            query = select(
+                DocumentEmbedding,
+                distance_expr.label('distance')
+            ).where(
+                DocumentEmbedding.bot_id == self.bot_id
+            )
+
+            # 메타데이터 필터 적용
+            if filter_dict:
+                for key, value in filter_dict.items():
+                    query = query.where(
+                        DocumentEmbedding.metadata[key].astext == str(value)
+                    )
+
+            # 거리순 정렬 및 top_k 제한
+            query = query.order_by(distance_expr).limit(top_k)
+
+            # 쿼리 실행
+            results = db.execute(query).all()
+
+            # ChromaDB 호환 형식으로 변환
+            ids = []
+            documents = []
+            metadatas = []
+            distances = []
+
+            for result, distance in results:
+                doc_id = result.metadata.get("document_id", str(result.id))
+                ids.append(doc_id)
+                documents.append(result.chunk_text)
+                metadatas.append(result.metadata)
+                distances.append(float(distance))
+
+            return {
+                "ids": [ids],
+                "documents": [documents],
+                "metadatas": [metadatas],
+                "distances": [distances]
+            }
+
+        except Exception as e:
+            logger.error(f"벡터 검색 실패: {e}")
+            raise VectorStoreQueryError(
+                message="벡터 검색 중 오류가 발생했습니다",
+                details={
+                    "bot_id": self.bot_id,
+                    "top_k": top_k,
+                    "error": str(e)
+                }
+            )
+
     def get_document(self, document_id: str) -> Optional[Dict]:
         """
         문서 ID로 문서 조회
 
-        0.5.x에서도 get 메서드는 동일하게 작동합니다.
-
         Args:
-            document_id: 조회할 문서 ID
+            document_id: 조회할 문서 ID (metadata.document_id)
 
         Returns:
             문서 정보 딕셔너리 또는 None
-
-        Raises:
-            VectorStoreQueryError: 문서 조회 중 오류 발생 시
         """
-        if self.collection is None:
-            self.connect()
+        db = self._get_session()
 
         try:
-            results = self.collection.get(
-                ids=[document_id],
-                include=["documents", "metadatas", "embeddings"]
-            )
+            result = db.execute(
+                select(DocumentEmbedding).where(
+                    DocumentEmbedding.bot_id == self.bot_id,
+                    DocumentEmbedding.metadata["document_id"].astext == document_id
+                )
+            ).scalars().first()
 
-            if results and results["ids"]:
+            if result:
                 return {
-                    "id": results["ids"][0],
-                    "document": results["documents"][0],
-                    "metadata": results["metadatas"][0]
+                    "id": result.metadata.get("document_id", str(result.id)),
+                    "document": result.chunk_text,
+                    "metadata": result.metadata
                 }
             return None
-        except ChromaError as e:
+
+        except Exception as e:
             logger.error(f"문서 조회 실패: {e}")
             raise VectorStoreQueryError(
-                message=f"문서 조회 중 오류가 발생했습니다",
+                message="문서 조회 중 오류가 발생했습니다",
                 details={
+                    "bot_id": self.bot_id,
                     "document_id": document_id,
                     "error": str(e)
                 }
             )
-        except Exception as e:
-            logger.error(f"문서 조회 중 예기치 않은 오류: {e}")
-            raise VectorStoreQueryError(
-                message=f"문서 조회 중 예기치 않은 오류가 발생했습니다",
-                details={
-                    "document_id": document_id,
-                    "error_type": type(e).__name__,
-                    "error": str(e)
-                }
-            )
-    
+
     def delete_document(self, document_id: str):
         """
-        문서 삭제
-
-        0.5.x에서도 동일한 방식으로 작동합니다.
+        문서 삭제 (해당 document_id의 모든 청크 삭제)
 
         Args:
-            document_id: 삭제할 문서 ID
-
-        Raises:
-            VectorStoreDocumentError: 문서 삭제 중 오류 발생 시
+            document_id: 삭제할 문서 ID (metadata.document_id)
         """
-        if self.collection is None:
-            self.connect()
+        db = self._get_session()
 
-        # document_id로 시작하는 모든 청크 삭제
         try:
-            results = self.collection.get(
-                where={"document_id": document_id}
+            result = db.execute(
+                sql_delete(DocumentEmbedding).where(
+                    DocumentEmbedding.bot_id == self.bot_id,
+                    DocumentEmbedding.metadata["document_id"].astext == document_id
+                )
             )
 
-            if results and results["ids"]:
-                self.collection.delete(ids=results["ids"])
-                logger.info(f"문서 삭제 완료: {document_id} ({len(results['ids'])}개 청크)")
-        except ChromaError as e:
+            deleted_count = result.rowcount
+            db.commit()
+
+            logger.info(f"문서 삭제 완료: {document_id} ({deleted_count}개 청크)")
+
+        except Exception as e:
+            db.rollback()
             logger.error(f"문서 삭제 실패: {e}")
             raise VectorStoreDocumentError(
-                message=f"문서 삭제 중 오류가 발생했습니다",
+                message="문서 삭제 중 오류가 발생했습니다",
                 details={
+                    "bot_id": self.bot_id,
                     "document_id": document_id,
                     "error": str(e)
                 }
             )
-        except Exception as e:
-            logger.error(f"문서 삭제 중 예기치 않은 오류: {e}")
-            raise VectorStoreDocumentError(
-                message=f"문서 삭제 중 예기치 않은 오류가 발생했습니다",
-                details={
-                    "document_id": document_id,
-                    "error_type": type(e).__name__,
-                    "error": str(e)
-                }
-            )
-    
+
     def count_documents(self) -> int:
         """
-        컬렉션 내 문서 개수 반환
-        
-        0.5.x에서도 동일하게 작동합니다.
+        봇의 임베딩 개수 반환
+
+        Returns:
+            임베딩 개수
         """
-        if self.collection is None:
-            self.connect()
-            
-        return self.collection.count()
+        db = self._get_session()
+
+        try:
+            count = db.query(func.count(DocumentEmbedding.id)).filter(
+                DocumentEmbedding.bot_id == self.bot_id
+            ).scalar()
+
+            return count or 0
+
+        except Exception as e:
+            logger.error(f"문서 개수 조회 실패: {e}")
+            raise VectorStoreQueryError(
+                message="문서 개수 조회 중 오류가 발생했습니다",
+                details={
+                    "bot_id": self.bot_id,
+                    "error": str(e)
+                }
+            )
 
 
-# 사용자별 벡터 스토어 캐시
+# 봇별/사용자별 벡터 스토어 캐시
 _vector_stores: Dict[str, VectorStore] = {}
 
 
-def get_vector_store(user_uuid: Optional[str] = None) -> VectorStore:
+def get_vector_store(
+    bot_id: Optional[int] = None,
+    user_uuid: Optional[str] = None,
+    db: Optional[Session] = None
+) -> VectorStore:
     """
-    사용자별 벡터 스토어 인스턴스 반환
+    봇별 또는 사용자별 벡터 스토어 인스턴스 반환
 
     Args:
-        user_uuid: 사용자 UUID (None이면 기본 컬렉션)
+        bot_id: 봇 ID (우선순위 높음)
+        user_uuid: 사용자 UUID (ChromaDB 호환성, 레거시)
+        db: 데이터베이스 세션 (선택적)
 
     Returns:
-        VectorStore 인스턴스 (사용자별로 캐싱됨)
+        VectorStore 인스턴스
+
+    Note:
+        - 세션을 제공하면 캐싱하지 않고 새 인스턴스 생성
+        - 세션 없이 호출하면 캐싱된 인스턴스 반환
     """
-    cache_key = user_uuid or "default"
+    # 세션이 제공되면 캐싱 없이 새 인스턴스 생성
+    if db is not None:
+        return VectorStore(bot_id=bot_id, user_uuid=user_uuid, db=db)
+
+    # 캐시 키 생성
+    cache_key = f"bot_{bot_id}" if bot_id else f"user_{user_uuid}"
 
     if cache_key not in _vector_stores:
-        _vector_stores[cache_key] = VectorStore(user_uuid=user_uuid)
+        _vector_stores[cache_key] = VectorStore(bot_id=bot_id, user_uuid=user_uuid, db=None)
 
     return _vector_stores[cache_key]

@@ -10,23 +10,19 @@ python-dotenv==1.0.0
 pypdf==3.17.4
 python-docx==1.1.0
 
-# PyTorch (ARM64/x86_64 호환)
-torch==2.1.2
-transformers==4.36.2
-sentence-transformers==2.3.1
+# AWS SDK (Bedrock 임베딩)
+boto3==1.35.0
 
-# Vector DB (다운그레이드)
-chromadb==0.5.3
-# LangChain (경량화: 텍스트 분할만 사용)
+# Vector DB
+chromadb==0.5.3  # 레거시 (로컬 개발용)
+pgvector==0.2.4  # PostgreSQL 벡터 확장 (AWS 프로덕션용)
+
+# LangChain (텍스트 분할 전용)
 langchain==0.1.0
-langchain-community==0.0.13
-tiktoken==0.5.2
 
 # LLM 클라이언트
 openai==1.54.0
 anthropic==0.39.0
-httpx==0.27.2
-langchain-openai==0.0.5
 
 # 유틸리티
 aiofiles==23.2.1

@@ -12,9 +12,18 @@ class WidgetConfigRequest(BaseModel):
 class WidgetConfigResponse(BaseModel):
     """Widget 설정 응답"""
     config: Dict[str, Any]
+    widget_key: str
     signature: str
     expires_at: str
     nonce: str
+
+
+class WidgetSignatureData(BaseModel):
+    """Widget 서명 데이터"""
+    signature: str
+    expires_at: str
+    nonce: str
+    widget_key: str
 
 
 class UserInfo(BaseModel):
@@ -46,7 +55,7 @@ class SessionContext(BaseModel):
 class SessionCreateRequest(BaseModel):
     """Widget 세션 생성 요청"""
     widget_key: str
-    widget_signature: str
+    widget_signature: WidgetSignatureData
     user_info: Optional[UserInfo] = None
     fingerprint: Fingerprint
     context: SessionContext

@@ -89,7 +89,7 @@ claude_history/
 .claude/
 
 *.txt
-*.md
+# *.md
 # 로그
 *.log
 *.csv

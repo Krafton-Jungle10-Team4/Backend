@@ -66,7 +66,7 @@ def run_migrations_online() -> None:
         configuration = {}
 
     # Replace async driver with sync driver for Alembic
-    configuration["sqlalchemy.url"] = settings.database_url.replace(
+    configuration["sqlalchemy.url"] = settings.get_database_url().replace(
         "postgresql+asyncpg://", "postgresql+psycopg2://"
     )
 

@@ -484,19 +484,7 @@ async def delete_bot(
                 }
             )
 
-        # 활성화된 봇은 삭제 불가
-        if bot.status == BotStatus.ACTIVE:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "error": {
-                        "code": "BOT_ACTIVE",
-                        "message": "활성화된 Bot은 삭제할 수 없습니다. 먼저 비활성화해주세요."
-                    }
-                }
-            )
-
-        # 봇 삭제
+        # 3. 봇 삭제 (활성화 상태와 무관하게 삭제 허용)
         await bot_service.delete_bot(bot_id, user.id, db)
 
         # 204 No Content는 응답 본문이 없어야 함

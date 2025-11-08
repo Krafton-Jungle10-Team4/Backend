@@ -45,6 +45,7 @@ class Bot(Base):
     user = relationship("User", back_populates="bots")
     knowledge_items = relationship("BotKnowledge", back_populates="bot", cascade="all, delete-orphan")
     deployments = relationship("BotDeployment", back_populates="bot", cascade="all, delete-orphan")
+    document_embeddings = relationship("DocumentEmbedding", back_populates="bot", cascade="all, delete-orphan")
 
 
 class BotKnowledge(Base):

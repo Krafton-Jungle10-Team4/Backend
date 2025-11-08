@@ -26,19 +26,18 @@ async def get_widget_config(
     request: Request,
     widget_key: str,
     origin: Optional[str] = Header(None),
+    referer: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Widget 설정 조회 (공개 API, 인증 불필요)
 
     - **widget_key**: Widget Key
-    - **origin**: 요청 출처 (헤더)
+    - **origin**: 요청 출처 (헤더, 선택사항)
+    - **referer**: Referer URL (헤더, 선택사항)
     """
-    if not origin:
-        raise HTTPException(status_code=400, detail="Origin header required")
-
     try:
-        config = await WidgetService.get_widget_config(db, widget_key, origin)
+        config = await WidgetService.get_widget_config(db, widget_key, origin, referer)
         return config
     except NotFoundException as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -52,21 +51,23 @@ async def create_session(
     request: Request,
     session_data: SessionCreateRequest,
     origin: Optional[str] = Header(None),
+    referer: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Widget 세션 생성 (공개 API, 인증 불필요)
 
     - **session_data**: 세션 생성 데이터
+    - **origin**: 요청 출처 (헤더, 선택사항)
+    - **referer**: Referer URL (헤더, 선택사항)
     """
-    if not origin:
-        raise HTTPException(status_code=400, detail="Origin header required")
-
     try:
-        session = await WidgetService.create_session(db, session_data)
+        session = await WidgetService.create_session(db, session_data, origin, referer)
         return session
     except NotFoundException as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ForbiddenException as e:
+        raise HTTPException(status_code=403, detail=str(e))
 
 
 @router.post("/chat", response_model=ChatMessageResponse)
@@ -112,3 +113,25 @@ async def submit_feedback(
     """
     # TODO: 구현
     return {"message": "Feedback submitted successfully"}
+
+
+@router.post("/config/{widget_key}/track")
+@public_limiter.limit("1000 per hour")
+async def track_widget_usage(
+    request: Request,
+    widget_key: str,
+    track_data: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Widget 사용 통계 수집 (선택적 구현)
+
+    - **widget_key**: Widget Key
+    - **track_data**: 추적 데이터 (event, metadata 등)
+    """
+    try:
+        await WidgetService.track_usage(db, widget_key, track_data)
+        return {"status": "tracked", "message": "Event recorded successfully"}
+    except NotFoundException:
+        # 404 에러를 반환하지 않고 성공으로 처리 (보안상)
+        return {"status": "tracked"}

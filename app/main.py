@@ -2,7 +2,6 @@
 FastAPI RAG Backend - 메인 애플리케이션
 """
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -63,17 +62,14 @@ app.add_middleware(
     https_only=settings.is_production  # 프로덕션: HTTPS only, 개발: HTTP 허용
 )
 
-# CORS 설정 (환경별 보안 정책)
+# CORS 설정 (경로별 분리)
 cors_origins = settings.cors_origins
-logger.info(f"CORS 허용 출처: {cors_origins}")
+logger.info(f"CORS 허용 출처 (일반 API): {cors_origins}")
+logger.info(f"CORS 허용 출처 (위젯 API): * (모든 도메인)")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 커스텀 CORS 미들웨어 적용
+from app.core.middleware.widget_cors import WidgetCORSMiddleware
+app.add_middleware(WidgetCORSMiddleware)
 
 # 감사 로깅 미들웨어
 app.add_middleware(AuditLoggingMiddleware)
@@ -126,11 +122,11 @@ async def startup_event():
     logger.info(f"🤖 LLM 제공자: {settings.llm_provider}")
 
     # 임베딩 모델 미리 로드 (Eager Loading)
-    logger.info("임베딩 모델 로딩 시작...")
-    from app.core.embeddings import get_embedding_service
-    embedding_service = get_embedding_service()
-    embedding_service.load_model()
-    logger.info("✅ 임베딩 모델 로딩 완료 - API 요청 처리 준비됨")
+    # logger.info("임베딩 모델 로딩 시작...")
+    # from app.core.embeddings import get_embedding_service
+    # embedding_service = get_embedding_service()
+    # embedding_service.load_model()  # AWS Bedrock 사용으로 로컬 모델 로딩 불필요
+    logger.info("✅ 임베딩 서비스 준비 완료 (AWS Bedrock 사용)")
 
 
 @app.on_event("shutdown")
