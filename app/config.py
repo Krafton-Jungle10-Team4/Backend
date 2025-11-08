@@ -2,6 +2,7 @@
 애플리케이션 설정 관리
 """
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 from typing import List, Optional
 import os
 
@@ -157,12 +158,15 @@ class Settings(BaseSettings):
             dev_origins = ["http://localhost:5173", "http://localhost:3000"]
             return list(set(frontend_urls + dev_origins)) if frontend_urls else ["*"]
 
-    class Config:
+    model_config = ConfigDict(
         # 환경에 따라 다른 .env 파일 로드
         # 로컬: .env.local (기본값)
         # 서버: ENV_FILE=.env.production 환경 변수 설정
-        env_file = os.getenv("ENV_FILE", ".env.local")
-        case_sensitive = False
+        env_file=os.getenv("ENV_FILE", ".env.local"),
+        case_sensitive=False,
+        # 정의되지 않은 환경변수 무시 (Pydantic v2)
+        extra="ignore"
+    )
 
 
 settings = Settings()
