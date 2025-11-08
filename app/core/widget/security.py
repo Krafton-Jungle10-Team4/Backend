@@ -59,6 +59,7 @@ class WidgetSecurity:
 
         return {
             "config": config,
+            "widget_key": widget_key,
             "signature": signature,
             "expires_at": expires_at.isoformat(),
             "nonce": nonce

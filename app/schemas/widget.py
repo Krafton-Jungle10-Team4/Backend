@@ -12,6 +12,7 @@ class WidgetConfigRequest(BaseModel):
 class WidgetConfigResponse(BaseModel):
     """Widget 설정 응답"""
     config: Dict[str, Any]
+    widget_key: str
     signature: str
     expires_at: str
     nonce: str

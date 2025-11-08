@@ -67,16 +67,19 @@ class WidgetService:
         Returns:
             서명된 Widget 설정
         """
-        # 배포 조회
+        # 배포 조회 (status 필터 제거 - 존재 여부와 게시 상태를 분리 검증)
         stmt = select(BotDeployment).where(
-            BotDeployment.widget_key == widget_key,
-            BotDeployment.status == "published"
+            BotDeployment.widget_key == widget_key
         )
         result = await db.execute(stmt)
         deployment = result.scalar_one_or_none()
 
         if not deployment:
-            raise NotFoundException("Widget not found or not published")
+            raise NotFoundException("Widget not found")
+
+        # 게시 상태 검증 (명세 255-259: 존재하지만 미게시 시 403)
+        if deployment.status != "published":
+            raise ForbiddenException(f"Widget is not published (status: {deployment.status})")
 
         # 도메인 검증 강화 (allowed_domains 설정 시 반드시 검증)
         if deployment.allowed_domains:
@@ -125,6 +128,7 @@ class WidgetService:
                 "session": "/api/v1/widget/sessions",
                 "chat": "/api/v1/widget/chat",
                 "feedback": "/api/v1/widget/feedback",
+                "upload": "/api/v1/widget/upload",
                 "track": f"/api/v1/widget/config/{widget_key}/track"
             }
         }
@@ -205,6 +209,7 @@ class WidgetService:
                     "session": "/api/v1/widget/sessions",
                     "chat": "/api/v1/widget/chat",
                     "feedback": "/api/v1/widget/feedback",
+                    "upload": "/api/v1/widget/upload",
                     "track": f"/api/v1/widget/config/{session_data.widget_key}/track"
                 }
             }
@@ -271,12 +276,12 @@ class WidgetService:
         await db.commit()
         await db.refresh(session)
 
-        # WebSocket URL 구성 (frontend_url 기반)
+        # WebSocket URL 구성 (명세 355: 백엔드 API URL 기반)
         from urllib.parse import urlparse
-        frontend_url = settings.frontend_url.split(",")[0].strip()
-        parsed_url = urlparse(frontend_url)
+        api_url = settings.api_public_url
+        parsed_url = urlparse(api_url)
         ws_protocol = "wss" if parsed_url.scheme == "https" else "ws"
-        ws_host = parsed_url.netloc if parsed_url.netloc else "localhost:5173"
+        ws_host = parsed_url.netloc if parsed_url.netloc else "localhost:8001"
         ws_url = f"{ws_protocol}://{ws_host}/ws/widget/chat/{session.session_id}"
 
         return {

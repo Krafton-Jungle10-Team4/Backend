@@ -126,8 +126,12 @@ class Settings(BaseSettings):
     # 여러 URL을 쉼표로 구분 가능: "https://snapagent.shop,http://localhost:5173"
     frontend_url: str = ""
 
-    # Widget 설정
-    widget_session_expire_hours: int = 24  # Widget 세션 유효 시간
+    # 백엔드 API 공개 URL (Widget WebSocket 등에서 사용)
+    # 프로덕션: "https://api.example.com", 개발: "http://localhost:8001"
+    api_public_url: str = "http://localhost:8001"
+
+    # Widget 설정 (명세 WIDGET_EMBEDDING_API_SPECIFICATION.md:144 준수)
+    widget_session_expire_hours: int = 1  # Widget 세션 유효 시간 (1시간)
     widget_refresh_token_expire_days: int = 7  # Refresh Token 유효 시간
 
     def get_frontend_urls(self) -> List[str]:
