@@ -107,7 +107,6 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         """민감한 경로 확인"""
         sensitive_paths = [
             "/api/v1/auth/",
-            "/api/v1/teams/",
             "/api/v1/widget/sessions",
             "/api/v1/bots/",
         ]
@@ -228,7 +227,6 @@ security_logger = logging.getLogger("security")
 def log_security_event(
     event_type: str,
     user_id: str = None,
-    team_id: str = None,
     details: dict = None
 ):
     """
@@ -238,7 +236,6 @@ def log_security_event(
         log_security_event(
             "api_key_created",
             user_id="user_123",
-            team_id="team_456",
             details={"key_id": "key_789"}
         )
     """
@@ -246,7 +243,6 @@ def log_security_event(
         "timestamp": time.time(),
         "event_type": event_type,
         "user_id": user_id,
-        "team_id": team_id,
         "details": details or {}
     }
     security_logger.info(json.dumps(event, ensure_ascii=False))

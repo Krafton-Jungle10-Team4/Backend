@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.chat_service import get_chat_service, ChatService
 from app.models.chat import ChatRequest, ChatResponse
-from app.core.auth.dependencies import get_current_user_or_team_from_jwt_or_apikey
+from app.core.auth.dependencies import get_current_user_from_jwt_or_apikey
+from app.models.user import User
 from app.core.database import get_db
 from app.core.middleware.rate_limit import limiter
 
@@ -22,7 +23,7 @@ router = APIRouter()
 async def chat(
     request: Request,
     chat_request: ChatRequest,
-    user_team: tuple = Depends(get_current_user_or_team_from_jwt_or_apikey),
+    user: User = Depends(get_current_user_from_jwt_or_apikey),
     chat_service: ChatService = Depends(get_chat_service),
     db: AsyncSession = Depends(get_db)
 ):
@@ -47,12 +48,10 @@ async def chat(
     - 400: 잘못된 요청 (메시지 길이 초과 등)
     - 500: 서버 오류 (LLM API 실패, 검색 실패 등)
     """
-    user, team = user_team
-    auth_method = "JWT" if user else "API_KEY"
-    logger.info(f"[Chat] 요청: '{chat_request.message[:50]}...' (session: {chat_request.session_id}, team: {team.uuid}, auth: {auth_method}, bot_id: {chat_request.bot_id})")
+    logger.info(f"[Chat] 요청: '{chat_request.message[:50]}...' (session: {chat_request.session_id}, user: {user.uuid}, bot_id: {chat_request.bot_id})")
 
     try:
-        response = await chat_service.generate_response(chat_request, team_uuid=team.uuid, db=db)
+        response = await chat_service.generate_response(chat_request, user_uuid=user.uuid, db=db)
 
         logger.info(
             f"[Chat] 응답 생성 완료: {response.retrieved_chunks}개 청크 참조, "

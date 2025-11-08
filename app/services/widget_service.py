@@ -198,11 +198,11 @@ class WidgetService:
         )
         db.add(user_message)
 
-        # 배포 및 봇 정보 로드 (team relationship을 eager loading)
+        # 배포 및 봇 정보 로드 (user relationship을 eager loading)
         deployment = await db.get(BotDeployment, session.deployment_id)
 
-        # Bot 조회 시 team도 함께 로드 (lazy loading 방지)
-        stmt = select(Bot).where(Bot.id == deployment.bot_id).options(selectinload(Bot.team))
+        # Bot 조회 시 user도 함께 로드 (lazy loading 방지)
+        stmt = select(Bot).where(Bot.id == deployment.bot_id).options(selectinload(Bot.user))
         result = await db.execute(stmt)
         bot = result.scalar_one_or_none()
 
@@ -219,13 +219,13 @@ class WidgetService:
             top_k=settings.chat_default_top_k
         )
 
-        # Team UUID 가져오기
-        team_uuid = str(bot.team.uuid) if bot and bot.team else None
+        # User UUID 가져오기
+        user_uuid = str(bot.user.uuid) if bot and bot.user else None
 
         # 응답 생성
         chat_response = await chat_service.generate_response(
             request=chat_request,
-            team_uuid=team_uuid,
+            user_uuid=user_uuid,
             db=db
         )
 

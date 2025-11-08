@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.core.auth.oauth import oauth, get_google_user_info
 from app.core.auth.jwt import create_access_token, create_token_pair
 from app.core.auth.dependencies import get_current_user_from_jwt
-from app.models.user import User, Team, TeamMember, UserRole, AuthType, RefreshToken
+from app.models.user import User, AuthType, RefreshToken
 from app.schemas.auth import TokenResponse, UserResponse, LoginRequest, RegisterRequest
 from app.config import settings
 from app.core.middleware.rate_limit import limiter
@@ -122,22 +122,6 @@ async def google_callback(request: Request, state: str = None, db: AsyncSession 
         )
         db.add(user)
         await db.flush()  # user.id 생성
-
-        # 신규 사용자는 자동으로 팀 생성 (팀장으로)
-        team = Team(
-            name=f"{name}'s Team" if name else f"Team {user.id}",
-            description="기본 팀"
-        )
-        db.add(team)
-        await db.flush()  # team.id 생성
-
-        # 팀 멤버십 생성
-        membership = TeamMember(
-            user_id=user.id,
-            team_id=team.id,
-            role=UserRole.OWNER
-        )
-        db.add(membership)
 
     # Access Token + Refresh Token 생성
     tokens = create_token_pair(user.id, user.email)
@@ -325,22 +309,6 @@ async def register(
     db.add(user)
     await db.flush()
 
-    # 자동으로 팀 생성 (팀장으로)
-    team = Team(
-        name=f"{register_data.name}'s Team",
-        description="기본 팀"
-    )
-    db.add(team)
-    await db.flush()
-
-    # 팀 멤버십 생성
-    membership = TeamMember(
-        user_id=user.id,
-        team_id=team.id,
-        role=UserRole.OWNER
-    )
-    db.add(membership)
-    
     # Access Token + Refresh Token 생성
     tokens = create_token_pair(user.id, user.email)
 

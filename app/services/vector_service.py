@@ -19,7 +19,7 @@ class VectorService:
 
     async def search_similar_chunks(
         self,
-        team_uuid: str,
+        user_uuid: str,
         query: str,
         top_k: int,
         db: AsyncSession
@@ -28,7 +28,7 @@ class VectorService:
         유사 문서 검색
 
         Args:
-            team_uuid: 팀 UUID
+            user_uuid: 사용자 UUID
             query: 검색 쿼리
             top_k: 검색할 문서 개수
             db: 데이터베이스 세션
@@ -42,7 +42,7 @@ class VectorService:
         query_embedding = self.embedding_service.embed_query(query)
 
         # 2. 벡터 스토어에서 검색
-        vector_store = get_vector_store(team_uuid=team_uuid)
+        vector_store = get_vector_store(user_uuid=user_uuid)
         search_results = vector_store.search(
             query_embedding=query_embedding,
             top_k=top_k

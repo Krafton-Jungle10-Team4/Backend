@@ -7,7 +7,7 @@ from typing import Optional
 
 from app.core.database import get_db
 from app.core.auth.dependencies import get_current_user_from_jwt
-from app.models.user import User, TeamMember
+from app.models.user import User
 from app.models.bot import Bot, BotStatus
 from app.schemas.bot import (
     CreateBotRequest, BotResponse, BotListResponse, ErrorResponse,
@@ -22,39 +22,6 @@ from app.services.bot_service import get_bot_service, BotService
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-async def get_user_team(user: User, db: AsyncSession):
-    """
-    사용자의 팀 조회
-
-    Args:
-        user: 현재 사용자
-        db: 데이터베이스 세션
-
-    Returns:
-        사용자가 속한 팀
-
-    Raises:
-        HTTPException: 팀을 찾을 수 없는 경우
-    """
-    result = await db.execute(
-        select(TeamMember).where(TeamMember.user_id == user.id)
-    )
-    membership = result.scalar_one_or_none()
-
-    if not membership:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="사용자가 속한 팀을 찾을 수 없습니다"
-        )
-
-    result = await db.execute(
-        select(TeamMember.team_id).where(TeamMember.id == membership.id)
-    )
-    team_id = result.scalar_one()
-
-    return team_id
 
 
 @router.post(
@@ -102,13 +69,10 @@ async def create_bot(
     logger.info(f"봇 생성 API 호출: user={user.email}, name={request.name}")
 
     try:
-        # 1. 사용자의 팀 ID 조회
-        team_id = await get_user_team(user, db)
+        # 봇 생성 (사용자 ID로 소유권 설정)
+        bot = await bot_service.create_bot(request, user.id, db)
 
-        # 2. 봇 생성
-        bot = await bot_service.create_bot(request, team_id, db)
-
-        # 3. 명세서 준수 응답 변환
+        # 명세서 준수 응답 변환
         return BotDetailResponse.from_bot(bot)
 
     except ValueError as e:
@@ -156,7 +120,7 @@ async def create_bot(
     status_code=status.HTTP_200_OK,
     summary="봇 목록 조회 (명세서 준수)",
     description="""
-    팀의 봇 목록을 페이지네이션과 함께 조회합니다.
+    사용자의 봇 목록을 페이지네이션과 함께 조회합니다.
 
     **인증:**
     - JWT Bearer 토큰 필요 (Authorization: Bearer {token})
@@ -181,16 +145,13 @@ async def get_bots(
     db: AsyncSession = Depends(get_db),
     bot_service: BotService = Depends(get_bot_service)
 ):
-    """팀의 봇 목록 조회 (페이지네이션 지원)"""
+    """사용자의 봇 목록 조회 (페이지네이션 지원)"""
     logger.info(f"봇 목록 조회: user={user.email}, page={page}, limit={limit}, search={search}")
 
     try:
-        # 1. 사용자의 팀 ID 조회
-        team_id = await get_user_team(user, db)
-
-        # 2. 페이지네이션과 검색을 적용한 봇 목록 조회
+        # 페이지네이션과 검색을 적용한 봇 목록 조회
         bots, total = await bot_service.get_bots_with_pagination(
-            team_id=team_id,
+            user_id=user.id,
             db=db,
             page=page,
             limit=limit,
@@ -198,10 +159,10 @@ async def get_bots(
             search=search
         )
 
-        # 3. 응답 생성
+        # 응답 생성
         bot_items = [BotListItemResponse.from_bot(bot) for bot in bots]
 
-        # 4. 총 페이지 수 계산
+        # 총 페이지 수 계산
         total_pages = (total + limit - 1) // limit if total > 0 else 1
 
         return BotListResponseV2(
@@ -247,11 +208,8 @@ async def get_bot(
     logger.info(f"봇 조회: bot_id={bot_id}, user={user.email}")
 
     try:
-        # 1. 사용자의 팀 ID 조회
-        team_id = await get_user_team(user, db)
-
-        # 2. 봇 조회 (workflow 포함)
-        bot = await bot_service.get_bot_by_id(bot_id, team_id, db, include_workflow=True)
+        # 봇 조회 (workflow 포함)
+        bot = await bot_service.get_bot_by_id(bot_id, user.id, db, include_workflow=True)
 
         if not bot:
             raise HTTPException(
@@ -264,7 +222,7 @@ async def get_bot(
                 }
             )
 
-        # 3. 명세서 준수 응답 변환
+        # 명세서 준수 응답 변환
         return BotDetailResponse.from_bot(bot)
 
     except HTTPException:
@@ -308,12 +266,9 @@ async def update_bot_put(
     logger.info(f"봇 수정 (PUT): bot_id={bot_id}, user={user.email}")
 
     try:
-        # 1. 사용자의 팀 ID 조회
-        team_id = await get_user_team(user, db)
-
-        # 2. workflow revision 체크 (있는 경우)
+        # workflow revision 체크 (있는 경우)
         if request.workflow:
-            bot = await bot_service.get_bot_by_id(bot_id, team_id, db)
+            bot = await bot_service.get_bot_by_id(bot_id, user.id, db)
             if not bot:
                 raise ValueError(f"봇을 찾을 수 없습니다: {bot_id}")
 
@@ -336,10 +291,10 @@ async def update_bot_put(
                         }
                     )
 
-        # 3. 봇 수정
-        bot = await bot_service.update_bot(bot_id, team_id, request, db)
+        # 봇 수정
+        bot = await bot_service.update_bot(bot_id, user.id, request, db)
 
-        # 4. 명세서 준수 응답 변환 (workflow 포함)
+        # 명세서 준수 응답 변환 (workflow 포함)
         return BotDetailResponse.from_bot(bot)
 
     except HTTPException:
@@ -394,13 +349,10 @@ async def update_bot_patch(
     logger.info(f"봇 수정 (PATCH): bot_id={bot_id}, user={user.email}")
 
     try:
-        # 1. 사용자의 팀 ID 조회
-        team_id = await get_user_team(user, db)
+        # 봇 수정
+        bot = await bot_service.update_bot(bot_id, user.id, request, db)
 
-        # 2. 봇 수정
-        bot = await bot_service.update_bot(bot_id, team_id, request, db)
-
-        # 3. 명세서 준수 응답 변환 (workflow 포함)
+        # 명세서 준수 응답 변환 (workflow 포함)
         return BotDetailResponse.from_bot(bot)
 
     except ValueError as e:
@@ -451,18 +403,15 @@ async def toggle_bot_status(
     logger.info(f"봇 상태 토글: bot_id={bot_id}, is_active={request.isActive}, user={user.email}")
 
     try:
-        # 1. 사용자의 팀 ID 조회
-        team_id = await get_user_team(user, db)
-
-        # 2. 봇 상태 토글
+        # 봇 상태 토글
         bot = await bot_service.toggle_bot_status(
             bot_id=bot_id,
-            team_id=team_id,
+            user_id=user.id,
             is_active=request.isActive,
             db=db
         )
 
-        # 3. 응답 생성
+        # 응답 생성
         return StatusToggleResponse.from_bot(bot)
 
     except ValueError as e:
@@ -521,11 +470,8 @@ async def delete_bot(
     logger.info(f"봇 삭제: bot_id={bot_id}, user={user.email}")
 
     try:
-        # 1. 사용자의 팀 ID 조회
-        team_id = await get_user_team(user, db)
-
-        # 2. 봇 조회 (활성화 상태 확인용)
-        bot = await bot_service.get_bot_by_id(bot_id, team_id, db)
+        # 봇 조회 (활성화 상태 확인용)
+        bot = await bot_service.get_bot_by_id(bot_id, user.id, db)
 
         if not bot:
             raise HTTPException(
@@ -538,7 +484,7 @@ async def delete_bot(
                 }
             )
 
-        # 3. 활성화된 봇은 삭제 불가
+        # 활성화된 봇은 삭제 불가
         if bot.status == BotStatus.ACTIVE:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -550,8 +496,8 @@ async def delete_bot(
                 }
             )
 
-        # 4. 봇 삭제
-        await bot_service.delete_bot(bot_id, team_id, db)
+        # 봇 삭제
+        await bot_service.delete_bot(bot_id, user.id, db)
 
         # 204 No Content는 응답 본문이 없어야 함
         return Response(status_code=status.HTTP_204_NO_CONTENT)

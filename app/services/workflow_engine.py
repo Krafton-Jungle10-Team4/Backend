@@ -44,7 +44,7 @@ class WorkflowEngine:
         self,
         workflow: Workflow,
         user_message: str,
-        team_uuid: str,
+        user_uuid: str,
         session_id: str,
         db: AsyncSession
     ) -> Dict[str, Any]:
@@ -54,7 +54,7 @@ class WorkflowEngine:
         Args:
             workflow: 실행할 Workflow 정의
             user_message: 사용자 메시지
-            team_uuid: 팀 UUID
+            user_uuid: 사용자 UUID
             session_id: 세션 ID
             db: 데이터베이스 세션
 
@@ -82,7 +82,7 @@ class WorkflowEngine:
             logger.info(f"[WorkflowEngine] 노드 실행: {node_id} (type: {node.type})")
 
             try:
-                await self._execute_node(node, context, team_uuid, db)
+                await self._execute_node(node, context, user_uuid, db)
             except (LLMServiceError, VectorStoreError) as e:
                 logger.error(f"[WorkflowEngine] 노드 실행 중 서비스 오류: {node_id}, error: {e}", exc_info=True)
                 raise WorkflowExecutionError(
@@ -119,7 +119,7 @@ class WorkflowEngine:
         self,
         node: WorkflowNode,
         context: WorkflowExecutionContext,
-        team_uuid: str,
+        user_uuid: str,
         db: AsyncSession
     ):
         """개별 노드 실행"""
@@ -131,11 +131,11 @@ class WorkflowEngine:
 
         elif node_type == "knowledge-retrieval":
             # Knowledge Retrieval 노드: 문서 검색
-            await self._execute_knowledge_retrieval(node, context, team_uuid, db)
+            await self._execute_knowledge_retrieval(node, context, user_uuid, db)
 
         elif node_type == "llm":
             # LLM 노드: AI 응답 생성
-            await self._execute_llm(node, context, team_uuid)
+            await self._execute_llm(node, context, user_uuid)
 
         elif node_type == "end":
             # End 노드: 완료 처리
@@ -148,7 +148,7 @@ class WorkflowEngine:
         self,
         node: WorkflowNode,
         context: WorkflowExecutionContext,
-        team_uuid: str,
+        user_uuid: str,
         db: AsyncSession
     ):
         """Knowledge Retrieval 노드 실행"""
@@ -158,7 +158,7 @@ class WorkflowEngine:
 
         # 벡터 검색 실행
         results = await self.vector_service.search_similar_chunks(
-            team_uuid=team_uuid,
+            user_uuid=user_uuid,
             query=context.user_message,
             top_k=top_k,
             db=db
@@ -182,7 +182,7 @@ class WorkflowEngine:
         self,
         node: WorkflowNode,
         context: WorkflowExecutionContext,
-        team_uuid: str
+        user_uuid: str
     ):
         """LLM 노드 실행"""
         model_info = node.data.get("model", {"provider": "openai", "name": "gpt-4"})

@@ -193,7 +193,7 @@ class BotListItemResponse(BaseModel):
     nodeCount: int = Field(..., description="Workflow 노드 개수")
     edgeCount: int = Field(..., description="Workflow 엣지 개수")
     createdAt: datetime = Field(..., description="생성 시간")
-    updatedAt: datetime = Field(..., description="수정 시간")
+    updatedAt: Optional[datetime] = Field(None, description="수정 시간")
 
     model_config = ConfigDict(
         from_attributes=True,
