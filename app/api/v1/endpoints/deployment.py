@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.auth.dependencies import get_current_user_from_jwt
 from app.models.user import User
+from app.config import settings
 from app.schemas.deployment import (
     DeploymentCreate,
     DeploymentUpdate,
@@ -38,13 +39,14 @@ async def create_or_update_deployment(
         await db.refresh(deployment, ["bot"])
 
         # 응답 구성
+        widget_url = settings.frontend_url.split(",")[0] if settings.frontend_url else "http://localhost:5173"
         return DeploymentResponse(
             deployment_id=deployment.deployment_id,
             bot_id=deployment.bot.bot_id,
             widget_key=deployment.widget_key,
             status=deployment.status,
             embed_script=deployment.embed_script,
-            widget_url=f"https://widget.yourdomain.com",  # 환경변수에서 로드
+            widget_url=widget_url,
             allowed_domains=deployment.allowed_domains,
             widget_config=deployment.widget_config,
             version=deployment.version,
@@ -76,13 +78,14 @@ async def get_deployment(
     # Bot 정보 로드
     await db.refresh(deployment, ["bot"])
 
+    widget_url = settings.frontend_url.split(",")[0] if settings.frontend_url else "http://localhost:5173"
     return DeploymentResponse(
         deployment_id=deployment.deployment_id,
         bot_id=deployment.bot.bot_id,
         widget_key=deployment.widget_key,
         status=deployment.status,
         embed_script=deployment.embed_script,
-        widget_url=f"https://widget.yourdomain.com",
+        widget_url=widget_url,
         allowed_domains=deployment.allowed_domains,
         widget_config=deployment.widget_config,
         version=deployment.version,
