@@ -39,7 +39,7 @@ class ChatService:
     async def generate_response(
         self,
         request: ChatRequest,
-        team_uuid: str,
+        user_uuid: str,
         db: Optional[AsyncSession] = None
     ) -> ChatResponse:
         """챗봇 응답 생성 (RAG 파이프라인 또는 Workflow 실행)"""
@@ -48,15 +48,15 @@ class ChatService:
 
         # bot_id가 있으면 Workflow 실행
         if request.bot_id and db:
-            return await self._execute_workflow(request, team_uuid, db)
+            return await self._execute_workflow(request, user_uuid, db)
 
         # 기본 RAG 파이프라인 실행
-        return await self._execute_rag_pipeline(request, team_uuid)
+        return await self._execute_rag_pipeline(request, user_uuid)
 
     async def _execute_workflow(
         self,
         request: ChatRequest,
-        team_uuid: str,
+        user_uuid: str,
         db: AsyncSession
     ) -> ChatResponse:
         """Workflow 기반 응답 생성"""
@@ -77,7 +77,7 @@ class ChatService:
         # Workflow가 없으면 기본 RAG 파이프라인으로 fallback
         if not bot.workflow:
             logger.info(f"[ChatService] Bot {request.bot_id}에 Workflow가 없어 기본 RAG 파이프라인 실행")
-            return await self._execute_rag_pipeline(request, team_uuid)
+            return await self._execute_rag_pipeline(request, user_uuid)
 
         # 새로운 Workflow Executor로 실행
         from app.core.workflow.executor import WorkflowExecutor
@@ -120,11 +120,11 @@ class ChatService:
     async def _execute_rag_pipeline(
         self,
         request: ChatRequest,
-        team_uuid: str
+        user_uuid: str
     ) -> ChatResponse:
         """기본 RAG 파이프라인 실행"""
-        # 팀별 벡터 스토어 가져오기
-        vector_store = get_vector_store(team_uuid=team_uuid)
+        # 사용자별 벡터 스토어 가져오기
+        vector_store = get_vector_store(user_uuid=user_uuid)
 
         try:
             # 0. 사용자 입력 검증 및 정제
@@ -210,7 +210,7 @@ class ChatService:
                 message="문서 검색 중 오류가 발생했습니다",
                 details={
                     "message": request.message[:100],
-                    "team_uuid": team_uuid,
+                    "user_uuid": user_uuid,
                     "error": str(e)
                 }
             )
@@ -235,7 +235,7 @@ class ChatService:
                 message="챗봇 응답 생성 중 예기치 않은 오류가 발생했습니다",
                 details={
                     "message": request.message[:100],
-                    "team_uuid": team_uuid,
+                    "user_uuid": user_uuid,
                     "error_type": type(e).__name__,
                     "error": str(e)
                 }

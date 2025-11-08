@@ -41,19 +41,19 @@ class DocumentService:
     async def process_and_store_document(
         self,
         file: UploadFile,
-        team_uuid: str
+        user_uuid: str
     ) -> DocumentUploadResponse:
         """
         문서 업로드 및 처리 전체 파이프라인
 
         Args:
             file: 업로드 파일
-            team_uuid: 팀 UUID (컬렉션 분리용)
+            user_uuid: 사용자 UUID (컬렉션 분리용)
         """
         start_time = time.time()
 
-        # 팀별 벡터 스토어 가져오기
-        vector_store = get_vector_store(team_uuid=team_uuid)
+        # 사용자별 벡터 스토어 가져오기
+        vector_store = get_vector_store(user_uuid=user_uuid)
         
         # 1. 파일 저장
         document_id = str(uuid.uuid4())
@@ -186,10 +186,10 @@ class DocumentService:
         except Exception as e:
             logger.warning(f"임시 파일 삭제 실패 (예기치 않은 오류): {file_path}, {e}")
     
-    def get_document_info(self, document_id: str, team_uuid: str) -> dict:
+    def get_document_info(self, document_id: str, user_uuid: str) -> dict:
         """문서 정보 조회"""
-        # 팀별 벡터 스토어 가져오기
-        vector_store = get_vector_store(team_uuid=team_uuid)
+        # 사용자별 벡터 스토어 가져오기
+        vector_store = get_vector_store(user_uuid=user_uuid)
 
         # 해당 document_id의 첫 번째 청크 메타데이터 조회
         doc = vector_store.get_document(f"{document_id}_chunk_0")
@@ -202,10 +202,10 @@ class DocumentService:
             "metadata": doc["metadata"]
         }
     
-    def delete_document(self, document_id: str, team_uuid: str):
+    def delete_document(self, document_id: str, user_uuid: str):
         """문서 삭제"""
-        # 팀별 벡터 스토어 가져오기
-        vector_store = get_vector_store(team_uuid=team_uuid)
+        # 사용자별 벡터 스토어 가져오기
+        vector_store = get_vector_store(user_uuid=user_uuid)
 
         logger.info(f"문서 삭제 요청: {document_id}")
         vector_store.delete_document(document_id)
@@ -213,12 +213,12 @@ class DocumentService:
     def search_documents(
         self,
         query: str,
-        team_uuid: str,
+        user_uuid: str,
         top_k: int = None
     ) -> dict:
         """문서 검색"""
-        # 팀별 벡터 스토어 가져오기
-        vector_store = get_vector_store(team_uuid=team_uuid)
+        # 사용자별 벡터 스토어 가져오기
+        vector_store = get_vector_store(user_uuid=user_uuid)
 
         if top_k is None:
             top_k = settings.default_top_k

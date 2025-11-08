@@ -23,7 +23,7 @@ class Bot(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     bot_id = Column(String(50), unique=True, index=True, nullable=False)
-    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
     name = Column(String(100), nullable=False)
     goal = Column(String(500), nullable=True)
@@ -42,7 +42,7 @@ class Bot(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # 관계
-    team = relationship("Team", back_populates="bots")
+    user = relationship("User", back_populates="bots")
     knowledge_items = relationship("BotKnowledge", back_populates="bot", cascade="all, delete-orphan")
     deployments = relationship("BotDeployment", back_populates="bot", cascade="all, delete-orphan")
 

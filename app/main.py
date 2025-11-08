@@ -14,7 +14,7 @@ from app.core.middleware.rate_limit import (
     custom_rate_limit_handler
 )
 from app.core.middleware.audit_logging import AuditLoggingMiddleware
-from app.api.v1.endpoints import upload, chat, auth, teams, bots, workflows, deployment, widget
+from app.api.v1.endpoints import upload, chat, auth, bots, workflows, deployment, widget
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
     base_app_exception_handler,
@@ -80,7 +80,6 @@ app.add_middleware(AuditLoggingMiddleware)
 
 # API 라우터 등록
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
-app.include_router(teams.router, prefix="/api/v1/teams", tags=["팀 관리"])
 app.include_router(bots.router, prefix="/api/v1/bots", tags=["봇 관리"])
 app.include_router(workflows.router, prefix="/api/v1", tags=["워크플로우"])
 app.include_router(upload.router, prefix="/api/v1/documents", tags=["문서"])

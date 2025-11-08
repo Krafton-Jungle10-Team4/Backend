@@ -5,8 +5,8 @@ import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Request
 from app.services.document_service import get_document_service, DocumentService
 from app.models.documents import DocumentUploadResponse, SearchResponse
-from app.core.auth.dependencies import get_current_user_from_jwt_only, get_user_team
-from app.models.user import User, Team
+from app.core.auth.dependencies import get_current_user_from_jwt_only
+from app.models.user import User
 from app.config import settings
 from app.core.middleware.rate_limit import limiter
 
@@ -21,7 +21,6 @@ async def upload_document(
     request: Request,
     file: UploadFile = File(..., description="업로드할 문서 파일"),
     user: User = Depends(get_current_user_from_jwt_only),
-    team: Team = Depends(get_user_team),
     doc_service: DocumentService = Depends(get_document_service)
 ):
     """
@@ -32,34 +31,34 @@ async def upload_document(
     Headers:
         Authorization: Bearer <token>
     """
-    logger.info(f"파일 업로드 요청: {file.filename} (User: {user.email}, Team: {team.uuid})")
-    
+    logger.info(f"파일 업로드 요청: {file.filename} (User: {user.email}, UUID: {user.uuid})")
+
     # 파일 크기 검증
     file.file.seek(0, 2)
     file_size = file.file.tell()
     file.file.seek(0)
-    
+
     if file_size > settings.max_file_size:
         raise HTTPException(
             status_code=413,
             detail=f"파일 크기가 너무 큽니다. 최대 {settings.max_file_size / 1024 / 1024:.0f}MB"
         )
-    
+
     if file_size == 0:
         raise HTTPException(status_code=400, detail="빈 파일은 업로드할 수 없습니다")
-    
+
     # 파일 확장자 검증
     file_extension = file.filename.split('.')[-1].lower()
-    
+
     if file_extension not in settings.allowed_extensions:
         raise HTTPException(
             status_code=400,
             detail=f"지원하지 않는 파일 형식입니다. 지원 형식: {', '.join(settings.allowed_extensions)}"
         )
-    
-    # 문서 처리 (팀 UUID 전달)
+
+    # 문서 처리 (사용자 UUID 전달)
     try:
-        result = await doc_service.process_and_store_document(file, team_uuid=team.uuid)
+        result = await doc_service.process_and_store_document(file, user_uuid=user.uuid)
         return result
     except ValueError as e:
         logger.error(f"문서 처리 검증 실패: {e}")
@@ -75,7 +74,6 @@ async def search_documents(
     query: str = Query(..., description="검색할 텍스트", min_length=1),
     top_k: int = Query(5, description="반환할 결과 개수", ge=1, le=50),
     user: User = Depends(get_current_user_from_jwt_only),
-    team: Team = Depends(get_user_team),
     doc_service: DocumentService = Depends(get_document_service)
 ):
     """
@@ -86,10 +84,10 @@ async def search_documents(
     Headers:
         Authorization: Bearer <token>
     """
-    logger.info(f"검색 요청: query='{query}', top_k={top_k} (User: {user.email}, Team: {team.uuid})")
+    logger.info(f"검색 요청: query='{query}', top_k={top_k} (User: {user.email}, UUID: {user.uuid})")
 
     try:
-        results = doc_service.search_documents(query=query, top_k=top_k, team_uuid=team.uuid)
+        results = doc_service.search_documents(query=query, top_k=top_k, user_uuid=user.uuid)
 
         # 결과 개수 계산
         count = len(results.get("ids", [[]])[0]) if results.get("ids") else 0
@@ -108,7 +106,6 @@ async def search_documents(
 async def get_document_info(
     document_id: str,
     user: User = Depends(get_current_user_from_jwt_only),
-    team: Team = Depends(get_user_team),
     doc_service: DocumentService = Depends(get_document_service)
 ):
     """
@@ -120,7 +117,7 @@ async def get_document_info(
         Authorization: Bearer <token>
     """
     try:
-        info = doc_service.get_document_info(document_id, team_uuid=team.uuid)
+        info = doc_service.get_document_info(document_id, user_uuid=user.uuid)
         return info
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -133,7 +130,6 @@ async def get_document_info(
 async def delete_document(
     document_id: str,
     user: User = Depends(get_current_user_from_jwt_only),
-    team: Team = Depends(get_user_team),
     doc_service: DocumentService = Depends(get_document_service)
 ):
     """
@@ -145,7 +141,7 @@ async def delete_document(
         Authorization: Bearer <token>
     """
     try:
-        doc_service.delete_document(document_id, team_uuid=team.uuid)
+        doc_service.delete_document(document_id, user_uuid=user.uuid)
         return {"status": "success", "message": f"문서가 삭제되었습니다: {document_id}"}
     except Exception as e:
         logger.error(f"문서 삭제 실패: {e}", exc_info=True)
