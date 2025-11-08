@@ -12,7 +12,7 @@ env:
   ECS_CLUSTER: rag-cluster
   ECS_SERVICE: rag-backend-service
   ECS_TASK_DEFINITION: rag-backend-task
-  CONTAINER_NAME: backend
+  CONTAINER_NAME: rag-backend
 
 jobs:
   deploy:
