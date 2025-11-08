@@ -11,7 +11,7 @@ from sqlalchemy import select
 from passlib.context import CryptContext
 
 from app.core.database import async_session_maker
-from app.models.user import User, Team, TeamMember, UserRole, AuthType
+from app.models.user import User, AuthType
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -40,30 +40,14 @@ async def create_test_user():
             password_hash=hashed_password
         )
         db.add(user)
-        await db.flush()
-
-        # 팀 생성
-        team = Team(
-            name="테스트 팀",
-            description="테스트용 기본 팀"
-        )
-        db.add(team)
-        await db.flush()
-
-        # 팀 멤버십 생성
-        membership = TeamMember(
-            user_id=user.id,
-            team_id=team.id,
-            role=UserRole.OWNER
-        )
-        db.add(membership)
         await db.commit()
+        await db.refresh(user)
 
         print("✅ 테스트 계정이 생성되었습니다!")
         print(f"   이메일: test@example.com")
         print(f"   비밀번호: test1234")
         print(f"   사용자 ID: {user.id}")
-        print(f"   팀 ID: {team.id}")
+        print(f"   사용자 UUID: {user.uuid}")
 
 
 if __name__ == "__main__":

@@ -235,7 +235,7 @@ async def update_bot_workflow(
         bot_service = BotService()
         success = await bot_service.update_bot_workflow(
             bot_id=bot_id,
-            team_id=current_user.team_id,
+            user_id=current_user.id,
             workflow=workflow.dict(),
             db=db
         )
@@ -288,7 +288,7 @@ async def validate_bot_workflow(
     try:
         # 봇 존재 여부 확인
         bot_service = BotService()
-        bot = await bot_service.get_bot_by_id(bot_id, current_user.team_id, db)
+        bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
         if not bot:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

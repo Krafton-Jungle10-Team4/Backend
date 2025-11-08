@@ -209,7 +209,7 @@ class BotService:
     async def create_bot(
         self,
         request: CreateBotRequest,
-        team_id: int,
+        user_id: int,
         db: AsyncSession
     ) -> Bot:
         """
@@ -217,7 +217,7 @@ class BotService:
 
         Args:
             request: 봇 생성 요청 데이터
-            team_id: 팀 ID
+            user_id: 사용자 ID
             db: 데이터베이스 세션
 
         Returns:
@@ -227,7 +227,7 @@ class BotService:
             ValueError: 봇 ID 중복 등의 유효성 검증 실패
             Exception: 데이터베이스 오류
         """
-        logger.info(f"봇 생성 요청: name={request.name}, team_id={team_id}")
+        logger.info(f"봇 생성 요청: name={request.name}, user_id={user_id}")
 
         try:
             # 1. 고유한 bot_id 생성 (중복 체크 포함)
@@ -262,7 +262,7 @@ class BotService:
             # 6. Bot 인스턴스 생성
             bot = Bot(
                 bot_id=bot_id,
-                team_id=team_id,
+                user_id=user_id,
                 name=request.name,
                 goal=goal_str,
                 personality=personality,
@@ -297,7 +297,7 @@ class BotService:
                 message="봇 생성 중 데이터베이스 오류가 발생했습니다",
                 details={
                     "bot_name": request.name,
-                    "team_id": team_id,
+                    "user_id": user_id,
                     "error": str(e)
                 }
             )
@@ -308,7 +308,7 @@ class BotService:
                 message=str(e),
                 details={
                     "bot_name": request.name,
-                    "team_id": team_id
+                    "user_id": user_id
                 }
             )
         except Exception as e:
@@ -318,7 +318,7 @@ class BotService:
                 message="봇 생성 중 예기치 않은 오류가 발생했습니다",
                 details={
                     "bot_name": request.name,
-                    "team_id": team_id,
+                    "user_id": user_id,
                     "error_type": type(e).__name__,
                     "error": str(e)
                 }
@@ -377,27 +377,27 @@ class BotService:
 
         logger.debug(f"{len(knowledge_list)}개 지식 항목 저장 완료")
 
-    async def get_bots_by_team(self, team_id: int, db: AsyncSession) -> list[Bot]:
+    async def get_bots_by_user(self, user_id: int, db: AsyncSession) -> list[Bot]:
         """
-        팀의 모든 봇 조회 (레거시 - 기존 호환성 유지용)
+        사용자의 모든 봇 조회
 
         Args:
-            team_id: 팀 ID
+            user_id: 사용자 ID
             db: 데이터베이스 세션
 
         Returns:
             봇 목록
         """
         result = await db.execute(
-            select(Bot).where(Bot.team_id == team_id).order_by(Bot.created_at.desc())
+            select(Bot).where(Bot.user_id == user_id).order_by(Bot.created_at.desc())
         )
         bots = result.scalars().all()
-        logger.info(f"팀 {team_id}의 봇 {len(bots)}개 조회")
+        logger.info(f"사용자 {user_id}의 봇 {len(bots)}개 조회")
         return list(bots)
 
     async def get_bots_with_pagination(
         self,
-        team_id: int,
+        user_id: int,
         db: AsyncSession,
         page: int = 1,
         limit: int = 10,
@@ -408,7 +408,7 @@ class BotService:
         페이지네이션과 검색을 지원하는 Bot 목록 조회
 
         Args:
-            team_id: 팀 ID
+            user_id: 사용자 ID
             db: 데이터베이스 세션
             page: 페이지 번호 (1부터 시작)
             limit: 페이지당 항목 수
@@ -419,7 +419,7 @@ class BotService:
             (봇 목록, 전체 개수) 튜플
         """
         # 기본 쿼리
-        query = select(Bot).where(Bot.team_id == team_id)
+        query = select(Bot).where(Bot.user_id == user_id)
 
         # 검색 필터 (이름과 설명으로 검색)
         if search:
@@ -432,7 +432,7 @@ class BotService:
 
         # 전체 개수 조회
         count_result = await db.execute(
-            select(func.count()).select_from(Bot).where(Bot.team_id == team_id).where(
+            select(func.count()).select_from(Bot).where(Bot.user_id == user_id).where(
                 or_(
                     Bot.name.ilike(f"%{search}%"),
                     Bot.description.ilike(f"%{search}%")
@@ -469,14 +469,14 @@ class BotService:
         result = await db.execute(query)
         bots = result.scalars().all()
 
-        logger.info(f"팀 {team_id}의 봇 페이지네이션 조회: page={page}, limit={limit}, total={total}")
+        logger.info(f"사용자 {user_id}의 봇 페이지네이션 조회: page={page}, limit={limit}, total={total}")
 
         return list(bots), total
 
     async def get_bot_by_id(
         self,
         bot_id: str,
-        team_id: Optional[int],
+        user_id: Optional[int],
         db: AsyncSession,
         include_workflow: bool = False
     ) -> Optional[Bot]:
@@ -485,7 +485,7 @@ class BotService:
 
         Args:
             bot_id: 봇 ID
-            team_id: 팀 ID (None이면 team_id 검증 생략)
+            user_id: 사용자 ID (None이면 user_id 검증 생략)
             db: 데이터베이스 세션
             include_workflow: workflow 포함 여부 (상세 조회용)
 
@@ -494,8 +494,8 @@ class BotService:
         """
         query = select(Bot).where(Bot.bot_id == bot_id)
 
-        if team_id is not None:
-            query = query.where(Bot.team_id == team_id)
+        if user_id is not None:
+            query = query.where(Bot.user_id == user_id)
 
         result = await db.execute(query)
         bot = result.scalar_one_or_none()
@@ -503,14 +503,14 @@ class BotService:
         if bot:
             logger.info(f"봇 조회 성공: bot_id={bot_id}, include_workflow={include_workflow}")
         else:
-            logger.warning(f"봇을 찾을 수 없음: bot_id={bot_id}, team_id={team_id}")
+            logger.warning(f"봇을 찾을 수 없음: bot_id={bot_id}, user_id={user_id}")
 
         return bot
 
     async def update_bot(
         self,
         bot_id: str,
-        team_id: int,
+        user_id: int,
         request: UpdateBotRequestPut | UpdateBotRequestPatch,
         db: AsyncSession
     ) -> Optional[Bot]:
@@ -519,7 +519,7 @@ class BotService:
 
         Args:
             bot_id: 봇 ID
-            team_id: 팀 ID
+            user_id: 사용자 ID
             request: 수정 요청 데이터
             db: 데이터베이스 세션
 
@@ -529,7 +529,7 @@ class BotService:
         Raises:
             ValueError: 봇을 찾을 수 없는 경우
         """
-        bot = await self.get_bot_by_id(bot_id, team_id, db)
+        bot = await self.get_bot_by_id(bot_id, user_id, db)
 
         if not bot:
             raise ValueError(f"봇을 찾을 수 없습니다: {bot_id}")
@@ -561,7 +561,7 @@ class BotService:
                 message="봇 수정 중 데이터베이스 오류가 발생했습니다",
                 details={
                     "bot_id": bot_id,
-                    "team_id": team_id,
+                    "user_id": user_id,
                     "update_fields": list(update_data.keys()),
                     "error": str(e)
                 }
@@ -573,7 +573,7 @@ class BotService:
                 message="봇 수정 중 예기치 않은 오류가 발생했습니다",
                 details={
                     "bot_id": bot_id,
-                    "team_id": team_id,
+                    "user_id": user_id,
                     "error_type": type(e).__name__,
                     "error": str(e)
                 }
@@ -582,7 +582,7 @@ class BotService:
     async def toggle_bot_status(
         self,
         bot_id: str,
-        team_id: int,
+        user_id: int,
         is_active: bool,
         db: AsyncSession
     ) -> Bot:
@@ -591,7 +591,7 @@ class BotService:
 
         Args:
             bot_id: 봇 ID
-            team_id: 팀 ID
+            user_id: 사용자 ID
             is_active: 활성화 여부
             db: 데이터베이스 세션
 
@@ -601,7 +601,7 @@ class BotService:
         Raises:
             ValueError: 봇을 찾을 수 없거나 workflow 검증 실패
         """
-        bot = await self.get_bot_by_id(bot_id, team_id, db)
+        bot = await self.get_bot_by_id(bot_id, user_id, db)
 
         if not bot:
             raise ValueError(f"봇을 찾을 수 없습니다: {bot_id}")
@@ -638,19 +638,19 @@ class BotService:
                 message="봇 상태 변경 중 데이터베이스 오류가 발생했습니다",
                 details={
                     "bot_id": bot_id,
-                    "team_id": team_id,
+                    "user_id": user_id,
                     "is_active": is_active,
                     "error": str(e)
                 }
             )
 
-    async def delete_bot(self, bot_id: str, team_id: int, db: AsyncSession) -> bool:
+    async def delete_bot(self, bot_id: str, user_id: int, db: AsyncSession) -> bool:
         """
         봇 삭제
 
         Args:
             bot_id: 봇 ID
-            team_id: 팀 ID
+            user_id: 사용자 ID
             db: 데이터베이스 세션
 
         Returns:
@@ -659,7 +659,7 @@ class BotService:
         Raises:
             ValueError: 봇을 찾을 수 없는 경우
         """
-        bot = await self.get_bot_by_id(bot_id, team_id, db)
+        bot = await self.get_bot_by_id(bot_id, user_id, db)
 
         if not bot:
             raise ValueError(f"봇을 찾을 수 없습니다: {bot_id}")
@@ -676,7 +676,7 @@ class BotService:
                 message="봇 삭제 중 데이터베이스 오류가 발생했습니다",
                 details={
                     "bot_id": bot_id,
-                    "team_id": team_id,
+                    "user_id": user_id,
                     "error": str(e)
                 }
             )
@@ -687,7 +687,7 @@ class BotService:
                 message="봇 삭제 중 예기치 않은 오류가 발생했습니다",
                 details={
                     "bot_id": bot_id,
-                    "team_id": team_id,
+                    "user_id": user_id,
                     "error_type": type(e).__name__,
                     "error": str(e)
                 }
@@ -696,7 +696,7 @@ class BotService:
     async def update_bot_workflow(
         self,
         bot_id: str,
-        team_id: int,
+        user_id: int,
         workflow: Dict[str, Any],
         db: AsyncSession
     ) -> bool:
@@ -705,7 +705,7 @@ class BotService:
 
         Args:
             bot_id: 봇 ID
-            team_id: 팀 ID
+            user_id: 사용자 ID
             workflow: 워크플로우 정의
             db: 데이터베이스 세션
 
@@ -714,7 +714,7 @@ class BotService:
         """
         try:
             # 봇 조회
-            bot = await self.get_bot_by_id(bot_id, team_id, db)
+            bot = await self.get_bot_by_id(bot_id, user_id, db)
             if not bot:
                 return False
 
