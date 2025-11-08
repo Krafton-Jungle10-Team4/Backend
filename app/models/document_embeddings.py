@@ -26,7 +26,7 @@ class DocumentEmbedding(Base):
     embedding = Column(Vector(1024), nullable=False, comment="1024차원 임베딩 벡터")
 
     # 메타데이터
-    metadata = Column(JSON, nullable=True, comment="소스 파일명, 페이지 번호 등")
+    doc_metadata = Column(JSON, nullable=True, comment="소스 파일명, 페이지 번호 등")
 
     # 타임스탬프
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
