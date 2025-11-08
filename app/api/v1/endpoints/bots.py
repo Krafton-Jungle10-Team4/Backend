@@ -485,7 +485,7 @@ async def delete_bot(
             )
 
         # 3. 봇 삭제 (활성화 상태와 무관하게 삭제 허용)
-        await bot_service.delete_bot(bot_id, team_id, db)
+        await bot_service.delete_bot(bot_id, user.id, db)
 
         # 204 No Content는 응답 본문이 없어야 함
         return Response(status_code=status.HTTP_204_NO_CONTENT)
