@@ -94,7 +94,7 @@ class VectorStore:
                     chunk_text=document,
                     chunk_index=idx,
                     embedding=embedding,
-                    metadata=metadata_copy
+                    doc_metadata=metadata_copy
                 )
                 db.add(doc_embedding)
 
@@ -148,7 +148,7 @@ class VectorStore:
             if filter_dict:
                 for key, value in filter_dict.items():
                     query = query.where(
-                        DocumentEmbedding.metadata[key].astext == str(value)
+                        DocumentEmbedding.doc_metadata[key].astext == str(value)
                     )
 
             # 거리순 정렬 및 top_k 제한
@@ -164,10 +164,10 @@ class VectorStore:
             distances = []
 
             for result, distance in results:
-                doc_id = result.metadata.get("document_id", str(result.id))
+                doc_id = result.doc_metadata.get("document_id", str(result.id))
                 ids.append(doc_id)
                 documents.append(result.chunk_text)
-                metadatas.append(result.metadata)
+                metadatas.append(result.doc_metadata)
                 distances.append(float(distance))
 
             return {
@@ -204,15 +204,15 @@ class VectorStore:
             result = db.execute(
                 select(DocumentEmbedding).where(
                     DocumentEmbedding.bot_id == self.bot_id,
-                    DocumentEmbedding.metadata["document_id"].astext == document_id
+                    DocumentEmbedding.doc_metadata["document_id"].astext == document_id
                 )
             ).scalars().first()
 
             if result:
                 return {
-                    "id": result.metadata.get("document_id", str(result.id)),
+                    "id": result.doc_metadata.get("document_id", str(result.id)),
                     "document": result.chunk_text,
-                    "metadata": result.metadata
+                    "metadata": result.doc_metadata
                 }
             return None
 
@@ -240,7 +240,7 @@ class VectorStore:
             result = db.execute(
                 sql_delete(DocumentEmbedding).where(
                     DocumentEmbedding.bot_id == self.bot_id,
-                    DocumentEmbedding.metadata["document_id"].astext == document_id
+                    DocumentEmbedding.doc_metadata["document_id"].astext == document_id
                 )
             )
 
