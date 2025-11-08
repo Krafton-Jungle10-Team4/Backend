@@ -23,18 +23,20 @@ class RedisClient:
         self._url = settings.get_redis_url()
 
     async def connect(self):
-        """Redis 연결 초기화"""
+        """Redis 연결 초기화 (TLS/SSL 지원)"""
         try:
+            # ElastiCache Redis TLS 연결 설정
             self.redis = await aioredis.from_url(
                 self._url,
                 encoding="utf-8",
                 decode_responses=True,
                 socket_connect_timeout=5,
                 socket_keepalive=True,
+                ssl_cert_reqs=None,  # 인증서 검증 안 함 (ElastiCache 자체 서명 인증서)
             )
             # 연결 테스트
             await self.redis.ping()
-            logger.info(f"Redis 연결 성공: {self._url.split('@')[-1]}")  # 비밀번호 숨김
+            logger.info(f"Redis 연결 성공 (TLS): {self._url.split('@')[-1].split('?')[0]}")  # 비밀번호 및 쿼리 파라미터 숨김
         except Exception as e:
             logger.error(f"Redis 연결 실패: {e}")
             raise

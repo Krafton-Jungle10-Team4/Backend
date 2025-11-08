@@ -1,6 +1,7 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector 지원을 위해 pgvector/pgvector 이미지 사용
+    image: pgvector/pgvector:pg16
     platform: linux/arm64
     container_name: postgres_db
     env_file:
@@ -9,6 +10,8 @@ services:
       - "5432:5432"
     volumes:
       - ./data/postgres_data:/var/lib/postgresql/data
+      # pgvector 초기화 스크립트 (자동 실행)
+      - ./scripts/init_pgvector.sql:/docker-entrypoint-initdb.d/init_pgvector.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s

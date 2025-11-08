@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     
     # Database
     database_url: str = ""
+    database_host: str = "localhost"
+    database_port: int = 5432
+    database_name: str = "ragdb"
+    database_user: str = "postgres"
+    database_password: str = ""
 
     # ChromaDB
     chroma_host: str = "localhost"
@@ -52,26 +57,40 @@ class Settings(BaseSettings):
 
     # 연결 문자열 생성 규칙을 한 곳에 모아 일관성 있게 관리하려는 목적
     # 비밀번호 포함/미포함, 기본값 처리 등을 캡슐화
+    def get_database_url(self) -> str:
+        """Database URL 반환 (우선순위: database_url > 개별 설정)"""
+        if self.database_url:
+            return self.database_url
+
+        # 개별 설정으로 PostgreSQL URL 구성
+        return f"postgresql+asyncpg://{self.database_user}:{self.database_password}@{self.database_host}:{self.database_port}/{self.database_name}"
+
     def get_redis_url(self) -> str:
         """Redis URL 반환 (우선순위: redis_url > 개별 설정)"""
         if self.redis_url:
             return self.redis_url
 
-        # 비밀번호가 있으면 포함
+        # ElastiCache Redis는 TLS 암호화 사용 (rediss://)
+        # ssl_cert_reqs는 storage_options에서 처리 (URL 쿼리 파라미터로 전달하면 충돌 발생)
         if self.redis_password:
-            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
+            return f"rediss://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
         else:
-            return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+            return f"rediss://{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
     # Rate Limiting
     rate_limit_enabled: bool = True
     rate_limit_per_minute: int = 100
     rate_limit_public_per_hour: int = 1000
 
-    # 임베딩
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"  # t3.medium 최적화 (~80MB, 2-3배 빠름): str = "BAAI/bge-small-en-v1.5"  # EC2 무료 티어 대응 (~100MB)
+    # 임베딩 (레거시 - 로컬 모델)
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"  # t3.medium 최적화 (~80MB, 2-3배 빠름)
     embedding_device: str = "cpu"
     batch_size: int = 16  # CPU 최적화 (작은 배치가 CPU에서 더 빠름)
+
+    # AWS Bedrock 임베딩 (현재 사용 중)
+    bedrock_model_id: str = "amazon.titan-embed-text-v2:0"  # Titan Embeddings v2
+    bedrock_dimensions: int = 1024  # 임베딩 차원 (256, 384, 1024 선택 가능)
+    bedrock_normalize: bool = True  # 벡터 정규화 (검색 성능 향상)
     
     # 문서 처리
     max_file_size: int = 10485760  # 10MB
@@ -162,11 +181,13 @@ class Settings(BaseSettings):
         # 환경에 따라 다른 .env 파일 로드
         # 로컬: .env.local (기본값)
         # 서버: ENV_FILE=.env.production 환경 변수 설정
-        env_file=os.getenv("ENV_FILE", ".env.local"),
-        case_sensitive=False,
-        # 정의되지 않은 환경변수 무시 (Pydantic v2)
-        extra="ignore"
+        env_file = os.getenv("ENV_FILE", ".env.local"),
+        env_file_encoding = 'utf-8',
+        case_sensitive = False,
+        # 환경 변수를 .env 파일보다 우선
+        env_prefix = "",
+        # .env 파일이 없어도 에러 발생하지 않음
+        extra = "ignore"
     )
-
 
 settings = Settings()

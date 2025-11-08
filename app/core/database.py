@@ -15,7 +15,7 @@ Base = declarative_base()
 
 # 비동기 엔진 생성
 engine = create_async_engine(
-    settings.database_url,
+    settings.get_database_url(),
     echo=settings.debug,
     pool_pre_ping=True,
     pool_size=10,

@@ -122,11 +122,11 @@ async def startup_event():
     logger.info(f"🤖 LLM 제공자: {settings.llm_provider}")
 
     # 임베딩 모델 미리 로드 (Eager Loading)
-    logger.info("임베딩 모델 로딩 시작...")
-    from app.core.embeddings import get_embedding_service
-    embedding_service = get_embedding_service()
-    embedding_service.load_model()
-    logger.info("✅ 임베딩 모델 로딩 완료 - API 요청 처리 준비됨")
+    # logger.info("임베딩 모델 로딩 시작...")
+    # from app.core.embeddings import get_embedding_service
+    # embedding_service = get_embedding_service()
+    # embedding_service.load_model()  # AWS Bedrock 사용으로 로컬 모델 로딩 불필요
+    logger.info("✅ 임베딩 서비스 준비 완료 (AWS Bedrock 사용)")
 
 
 @app.on_event("shutdown")

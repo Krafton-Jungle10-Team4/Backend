@@ -1,60 +1,144 @@
 """
-임베딩 서비스
+임베딩 서비스 - AWS Bedrock Titan Embeddings
 """
 import logging
 import asyncio
 import threading
+import json
 from typing import List
 from concurrent.futures import ThreadPoolExecutor
-from sentence_transformers import SentenceTransformer
+import boto3
+from botocore.exceptions import ClientError
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    """임베딩 생성 서비스 (비동기 지원)"""
+    """임베딩 생성 서비스 (AWS Bedrock Titan Embeddings 사용)"""
 
     def __init__(self):
-        self.model = None
-        self.model_name = settings.embedding_model
-        self.device = settings.embedding_device
+        self.client = None
+        self.model_id = settings.bedrock_model_id
+        self.region_name = settings.aws_region
+        self.dimensions = settings.bedrock_dimensions
+        self.normalize = settings.bedrock_normalize
         self.batch_size = settings.batch_size
         # 임베딩 작업용 스레드 풀 (병렬 처리 최적화)
         self.executor = ThreadPoolExecutor(max_workers=4)
         self._lock = threading.Lock()  # 스레드 안전성을 위한 락
 
-    def load_model(self):
-        """임베딩 모델 로드"""
-        if self.model is None:
-            logger.info(f"임베딩 모델 로딩 중: {self.model_name}")
-            self.model = SentenceTransformer(self.model_name, device=self.device)
-            logger.info("임베딩 모델 로딩 완료")
+    def _init_client(self):
+        """Bedrock 클라이언트 초기화"""
+        if self.client is None:
+            logger.info(f"Bedrock 클라이언트 초기화 중: {self.model_id} (Region: {self.region_name})")
+
+            # AWS credentials 설정 (ECS Task Role 사용 시 자동으로 인식)
+            if settings.aws_access_key_id and settings.aws_secret_access_key:
+                # 로컬 개발 환경: 명시적 credentials 사용
+                self.client = boto3.client(
+                    service_name='bedrock-runtime',
+                    region_name=self.region_name,
+                    aws_access_key_id=settings.aws_access_key_id,
+                    aws_secret_access_key=settings.aws_secret_access_key
+                )
+            else:
+                # 프로덕션 환경: ECS Task Role 자동 인식
+                self.client = boto3.client(
+                    service_name='bedrock-runtime',
+                    region_name=self.region_name
+                )
+
+            logger.info("Bedrock 클라이언트 초기화 완료")
+
+    def _invoke_bedrock(self, text: str) -> List[float]:
+        """Bedrock API 호출 (단일 텍스트 임베딩)
+
+        Args:
+            text: 임베딩할 텍스트
+
+        Returns:
+            임베딩 벡터 (List[float])
+
+        Raises:
+            ClientError: Bedrock API 호출 실패
+        """
+        if self.client is None:
+            with self._lock:  # 클라이언트 초기화 시 동시성 제어
+                if self.client is None:
+                    self._init_client()
+
+        # Bedrock API 요청 본문 구성
+        request_body = {
+            "inputText": text,
+            "dimensions": self.dimensions,
+            "normalize": self.normalize
+        }
+
+        try:
+            # Bedrock API 호출 (재시도 로직 포함)
+            response = self.client.invoke_model(
+                modelId=self.model_id,
+                body=json.dumps(request_body)
+            )
+
+            # 응답 파싱
+            result = json.loads(response['body'].read())
+            embedding = result['embedding']
+
+            return embedding
+
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            error_message = e.response['Error']['Message']
+
+            # 에러 로깅 및 재시도 가능한 에러 처리
+            logger.error(f"Bedrock API 호출 실패: {error_code} - {error_message}")
+
+            # 재시도 가능한 에러 (throttling, temporary failure)
+            if error_code in ['ThrottlingException', 'ServiceUnavailableException', 'TooManyRequestsException']:
+                logger.warning(f"재시도 가능한 에러 발생: {error_code}, 1초 후 재시도")
+                import time
+                time.sleep(1)
+                return self._invoke_bedrock(text)  # 재귀 호출 (1회 재시도)
+
+            # 재시도 불가능한 에러 (권한, 잘못된 요청)
+            raise
 
     def _encode_sync(self, texts: List[str], is_query: bool = False) -> List[List[float]]:
-        """동기 방식 인코딩 (내부 사용)"""
-        if self.model is None:
-            with self._lock:  # 모델 로딩 시 동시성 제어
-                if self.model is None:
-                    self.load_model()
+        """동기 방식 인코딩 (내부 사용)
 
-        if is_query:
-            # 단일 쿼리 인코딩
-            embedding = self.model.encode(texts[0], convert_to_numpy=True)
-            return [embedding.tolist()]
-        else:
-            # 배치 문서 인코딩 (서브배치로 분할하여 처리)
-            embeddings = self.model.encode(
-                texts,
-                batch_size=self.batch_size,
-                show_progress_bar=False,  # 비동기 실행 시 progress bar 비활성화
-                convert_to_numpy=True,
-                normalize_embeddings=True  # 정규화로 검색 성능 향상
-            )
-            return embeddings.tolist()
+        Args:
+            texts: 임베딩할 텍스트 리스트
+            is_query: 쿼리 모드 여부 (현재는 문서와 쿼리가 동일하게 처리됨)
+
+        Returns:
+            임베딩 벡터 리스트 (List[List[float]])
+        """
+        embeddings = []
+
+        # Bedrock은 배치 API를 제공하지 않으므로 순차 처리
+        # 향후 개선: 병렬 처리로 최적화 가능
+        for text in texts:
+            try:
+                embedding = self._invoke_bedrock(text)
+                embeddings.append(embedding)
+            except Exception as e:
+                logger.error(f"임베딩 생성 실패 (텍스트 길이: {len(text)}): {str(e)}")
+                # 실패한 텍스트는 제로 벡터로 대체 (옵션: 에러 발생 시키기)
+                embeddings.append([0.0] * self.dimensions)
+
+        return embeddings
 
     async def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """문서 텍스트를 임베딩으로 변환 (비동기, 서브배치 최적화)"""
+        """문서 텍스트를 임베딩으로 변환 (비동기, 서브배치 최적화)
+
+        Args:
+            texts: 임베딩할 문서 텍스트 리스트
+
+        Returns:
+            임베딩 벡터 리스트
+        """
         # 큰 배치는 서브배치로 분할하여 병렬 처리
         if len(texts) <= self.batch_size:
             # 작은 배치는 한 번에 처리
@@ -95,7 +179,14 @@ class EmbeddingService:
             return all_embeddings
 
     async def embed_query(self, text: str) -> List[float]:
-        """검색 쿼리를 임베딩으로 변환 (비동기)"""
+        """검색 쿼리를 임베딩으로 변환 (비동기)
+
+        Args:
+            text: 검색 쿼리 텍스트
+
+        Returns:
+            임베딩 벡터
+        """
         loop = asyncio.get_event_loop()
         embeddings = await loop.run_in_executor(
             self.executor,
@@ -107,16 +198,31 @@ class EmbeddingService:
 
     # 기존 동기 메서드 유지 (하위 호환성)
     def embed_documents_sync(self, texts: List[str]) -> List[List[float]]:
-        """문서 텍스트를 임베딩으로 변환 (동기)"""
+        """문서 텍스트를 임베딩으로 변환 (동기)
+
+        Args:
+            texts: 임베딩할 문서 텍스트 리스트
+
+        Returns:
+            임베딩 벡터 리스트
+        """
         return self._encode_sync(texts, False)
 
     def embed_query_sync(self, text: str) -> List[float]:
-        """검색 쿼리를 임베딩으로 변환 (동기)"""
+        """검색 쿼리를 임베딩으로 변환 (동기)
+
+        Args:
+            text: 검색 쿼리 텍스트
+
+        Returns:
+            임베딩 벡터
+        """
         return self._encode_sync([text], True)[0]
 
     def shutdown(self):
         """리소스 정리"""
         self.executor.shutdown(wait=True)
+        logger.info("임베딩 서비스 종료")
 
 
 # 싱글톤 인스턴스
