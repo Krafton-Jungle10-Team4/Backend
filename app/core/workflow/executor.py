@@ -41,6 +41,8 @@ class WorkflowExecutionContext:
         # 서비스 인스턴스
         self.vector_service: Optional[VectorService] = None
         self.llm_service: Optional[LLMService] = None
+        self.bot_id: Optional[int] = None
+        self.db: Optional[Any] = None
 
     def set_node_output(self, node_id: str, output: Any):
         """노드 출력 저장"""
@@ -58,7 +60,9 @@ class WorkflowExecutionContext:
             "node_outputs": self.node_outputs,
             "metadata": self.metadata,
             "vector_service": self.vector_service,
-            "llm_service": self.llm_service
+            "llm_service": self.llm_service,
+            "bot_id": self.bot_id,
+            "db": self.db
         }
 
 
@@ -80,6 +84,8 @@ class WorkflowExecutor:
         workflow_data: Dict[str, Any],
         session_id: str,
         user_message: str,
+        bot_id: int,
+        db: Any,
         vector_service: Optional[VectorService] = None,
         llm_service: Optional[LLMService] = None
     ) -> str:
@@ -90,6 +96,8 @@ class WorkflowExecutor:
             workflow_data: 워크플로우 정의
             session_id: 세션 ID
             user_message: 사용자 메시지
+            bot_id: 봇 ID
+            db: 데이터베이스 세션
             vector_service: 벡터 서비스 (옵셔널)
             llm_service: LLM 서비스 (옵셔널)
 
@@ -128,6 +136,8 @@ class WorkflowExecutor:
             context = WorkflowExecutionContext(session_id, user_message)
             context.vector_service = vector_service
             context.llm_service = llm_service
+            context.bot_id = bot_id
+            context.db = db
 
             # 노드 실행
             final_response = await self._execute_nodes(context)

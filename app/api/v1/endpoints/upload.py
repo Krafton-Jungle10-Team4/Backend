@@ -22,6 +22,7 @@ router = APIRouter()
 async def upload_document(
     request: Request,
     file: UploadFile = File(..., description="업로드할 문서 파일"),
+    bot_id: int = Query(..., description="봇 ID (필수)"),
     user: User = Depends(get_current_user_from_jwt_only),
     doc_service: DocumentService = Depends(get_document_service),
     db: AsyncSession = Depends(get_db)
@@ -33,8 +34,11 @@ async def upload_document(
 
     Headers:
         Authorization: Bearer <token>
+
+    Query Parameters:
+        bot_id: 문서를 저장할 봇 ID
     """
-    logger.info(f"파일 업로드 요청: {file.filename} (User: {user.email}, UUID: {user.uuid})")
+    logger.info(f"파일 업로드 요청: {file.filename} (User: {user.email}, UUID: {user.uuid}, Bot ID: {bot_id})")
 
     # 파일 크기 검증
     file.file.seek(0, 2)
@@ -59,9 +63,9 @@ async def upload_document(
             detail=f"지원하지 않는 파일 형식입니다. 지원 형식: {', '.join(settings.allowed_extensions)}"
         )
 
-    # 문서 처리 (사용자 UUID 전달)
+    # 문서 처리 (bot_id 전달)
     try:
-        result = await doc_service.process_and_store_document(file, user_uuid=str(user.uuid), db=db)
+        result = await doc_service.process_and_store_document(file, bot_id=bot_id, db=db)
         return result
     except ValueError as e:
         logger.error(f"문서 처리 검증 실패: {e}")
@@ -75,9 +79,11 @@ async def upload_document(
 @router.get("/search", response_model=SearchResponse)
 async def search_documents(
     query: str = Query(..., description="검색할 텍스트", min_length=1),
+    bot_id: int = Query(..., description="봇 ID (필수)"),
     top_k: int = Query(5, description="반환할 결과 개수", ge=1, le=50),
     user: User = Depends(get_current_user_from_jwt_only),
-    doc_service: DocumentService = Depends(get_document_service)
+    doc_service: DocumentService = Depends(get_document_service),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     문서 검색 (RAG 유사도 검색)
@@ -86,11 +92,16 @@ async def search_documents(
 
     Headers:
         Authorization: Bearer <token>
+
+    Query Parameters:
+        query: 검색 쿼리
+        bot_id: 검색할 봇 ID
+        top_k: 반환할 결과 개수
     """
-    logger.info(f"검색 요청: query='{query}', top_k={top_k} (User: {user.email}, UUID: {user.uuid})")
+    logger.info(f"검색 요청: query='{query}', bot_id={bot_id}, top_k={top_k} (User: {user.email})")
 
     try:
-        results = doc_service.search_documents(query=query, top_k=top_k, user_uuid=str(user.uuid))
+        results = await doc_service.search_documents(query=query, top_k=top_k, bot_id=bot_id, db=db)
 
         # 결과 개수 계산
         count = len(results.get("ids", [[]])[0]) if results.get("ids") else 0
@@ -108,8 +119,10 @@ async def search_documents(
 @router.get("/{document_id}")
 async def get_document_info(
     document_id: str,
+    bot_id: int = Query(..., description="봇 ID (필수)"),
     user: User = Depends(get_current_user_from_jwt_only),
-    doc_service: DocumentService = Depends(get_document_service)
+    doc_service: DocumentService = Depends(get_document_service),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     문서 정보 조회
@@ -118,9 +131,12 @@ async def get_document_info(
 
     Headers:
         Authorization: Bearer <token>
+
+    Query Parameters:
+        bot_id: 봇 ID
     """
     try:
-        info = doc_service.get_document_info(document_id, user_uuid=str(user.uuid))
+        info = await doc_service.get_document_info(document_id, bot_id=bot_id, db=db)
         return info
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -132,8 +148,10 @@ async def get_document_info(
 @router.delete("/{document_id}")
 async def delete_document(
     document_id: str,
+    bot_id: int = Query(..., description="봇 ID (필수)"),
     user: User = Depends(get_current_user_from_jwt_only),
-    doc_service: DocumentService = Depends(get_document_service)
+    doc_service: DocumentService = Depends(get_document_service),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     문서 삭제
@@ -142,9 +160,12 @@ async def delete_document(
 
     Headers:
         Authorization: Bearer <token>
+
+    Query Parameters:
+        bot_id: 봇 ID
     """
     try:
-        doc_service.delete_document(document_id, user_uuid=str(user.uuid))
+        await doc_service.delete_document(document_id, bot_id=bot_id, db=db)
         return {"status": "success", "message": f"문서가 삭제되었습니다: {document_id}"}
     except Exception as e:
         logger.error(f"문서 삭제 실패: {e}", exc_info=True)

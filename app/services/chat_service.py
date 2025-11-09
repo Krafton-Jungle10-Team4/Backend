@@ -46,12 +46,16 @@ class ChatService:
 
         logger.info(f"챗봇 요청: '{request.message[:50]}...'")
 
-        # bot_id가 있으면 Workflow 실행
-        if request.bot_id and db:
-            return await self._execute_workflow(request, user_uuid, db)
+        # bot_id 검증
+        if not request.bot_id:
+            raise ValueError("bot_id는 필수 파라미터입니다. 봇별 문서 관리를 위해 bot_id가 필요합니다.")
 
-        # 기본 RAG 파이프라인 실행
-        return await self._execute_rag_pipeline(request, user_uuid)
+        # db 세션 검증
+        if not db:
+            raise ValueError("데이터베이스 세션이 필요합니다. 봇 정보 및 문서 조회를 위해 db 세션이 필요합니다.")
+
+        # Workflow 실행
+        return await self._execute_workflow(request, user_uuid, db)
 
     async def _execute_workflow(
         self,
@@ -61,9 +65,6 @@ class ChatService:
     ) -> ChatResponse:
         """Workflow 기반 응답 생성"""
         from app.services.bot_service import get_bot_service
-        from app.services.workflow_engine import get_workflow_engine, WorkflowEngine
-        from app.services.vector_service import get_vector_service
-        from app.services.llm_service import get_llm_service
 
         logger.info(f"[ChatService] Workflow 실행: bot_id={request.bot_id}")
 
@@ -77,7 +78,7 @@ class ChatService:
         # Workflow가 없으면 기본 RAG 파이프라인으로 fallback
         if not bot.workflow:
             logger.info(f"[ChatService] Bot {request.bot_id}에 Workflow가 없어 기본 RAG 파이프라인 실행")
-            return await self._execute_rag_pipeline(request, user_uuid)
+            return await self._execute_rag_pipeline(request, bot.id, db)
 
         # 새로운 Workflow Executor로 실행
         from app.core.workflow.executor import WorkflowExecutor
@@ -104,6 +105,8 @@ class ChatService:
             workflow_data=workflow_data,
             session_id=request.session_id or "default",
             user_message=request.message,
+            bot_id=bot.id,
+            db=db,
             vector_service=vector_service,
             llm_service=llm_service
         )
@@ -120,11 +123,12 @@ class ChatService:
     async def _execute_rag_pipeline(
         self,
         request: ChatRequest,
-        user_uuid: str
+        bot_id: int,
+        db: AsyncSession
     ) -> ChatResponse:
         """기본 RAG 파이프라인 실행"""
-        # 사용자별 벡터 스토어 가져오기
-        vector_store = get_vector_store(user_uuid=user_uuid)
+        # 봇별 벡터 스토어 가져오기
+        vector_store = get_vector_store(bot_id=bot_id, db=db)
 
         try:
             # 0. 사용자 입력 검증 및 정제
@@ -147,8 +151,8 @@ class ChatService:
             query_embedding = await self.embedding_service.embed_query(sanitized_message)
 
             # 2. 벡터 검색
-            logger.debug(f"벡터 검색 중 (top_k={request.top_k})...")
-            search_results = vector_store.search(
+            logger.debug(f"벡터 검색 중 (bot_id={bot_id}, top_k={request.top_k})...")
+            search_results = await vector_store.search(
                 query_embedding=query_embedding,
                 top_k=request.top_k
             )
@@ -210,7 +214,7 @@ class ChatService:
                 message="문서 검색 중 오류가 발생했습니다",
                 details={
                     "message": request.message[:100],
-                    "user_uuid": user_uuid,
+                    "bot_id": bot_id,
                     "error": str(e)
                 }
             )
@@ -235,7 +239,7 @@ class ChatService:
                 message="챗봇 응답 생성 중 예기치 않은 오류가 발생했습니다",
                 details={
                     "message": request.message[:100],
-                    "user_uuid": user_uuid,
+                    "bot_id": bot_id,
                     "error_type": type(e).__name__,
                     "error": str(e)
                 }

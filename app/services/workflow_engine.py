@@ -1,5 +1,8 @@
 """
 Workflow 실행 엔진
+
+⚠️ DEPRECATED: 이 파일은 레거시 코드입니다.
+새로운 워크플로우 실행은 app.core.workflow.executor.WorkflowExecutor를 사용하세요.
 """
 import logging
 from typing import Dict, Any, List, Optional

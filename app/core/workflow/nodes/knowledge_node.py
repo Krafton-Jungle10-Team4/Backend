@@ -80,11 +80,21 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
             if not vector_service:
                 raise ValueError("Vector service not found in context")
 
+            # bot_id와 db 가져오기
+            bot_id = context.get("bot_id")
+            if not bot_id:
+                raise ValueError("bot_id not found in context")
+
+            db = context.get("db")
+            if not db:
+                raise ValueError("Database session not found in context")
+
             # 문서 검색 수행
             search_results = await self._perform_search(
                 vector_service,
                 user_message,
-                self.config.dataset_id,
+                bot_id,
+                db,
                 self.config.top_k,
                 self.config.mode
             )
@@ -122,7 +132,8 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
         self,
         vector_service,
         query: str,
-        dataset_id: str,
+        bot_id: int,
+        db: Any,
         top_k: int,
         mode: str
     ) -> List[Dict[str, Any]]:
@@ -132,7 +143,8 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
         Args:
             vector_service: 벡터 검색 서비스
             query: 검색 쿼리
-            dataset_id: 데이터셋 ID
+            bot_id: 봇 ID
+            db: 데이터베이스 세션
             top_k: 검색 결과 개수
             mode: 검색 모드
 
@@ -140,19 +152,18 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
             검색 결과 리스트
         """
         try:
-            # 벡터 검색 서비스의 search 메서드 호출
-            # 실제 구현은 VectorService와 연동
-            results = await vector_service.search(
+            # 벡터 검색 서비스의 search_similar_chunks 메서드 호출
+            results = await vector_service.search_similar_chunks(
+                bot_id=bot_id,
                 query=query,
-                dataset_id=dataset_id,
                 top_k=top_k,
-                search_mode=mode
+                db=db
             )
 
             return results
 
         except Exception as e:
-            logger.error(f"Search failed for dataset {dataset_id}: {str(e)}")
+            logger.error(f"Search failed for bot_id {bot_id}: {str(e)}")
             # 검색 실패 시 빈 리스트 반환
             return []
 
