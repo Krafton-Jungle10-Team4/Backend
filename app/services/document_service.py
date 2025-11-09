@@ -41,7 +41,7 @@ class DocumentService:
     async def process_and_store_document(
         self,
         file: UploadFile,
-        user_uuid: str,
+        bot_id: int,
         db = None
     ) -> DocumentUploadResponse:
         """
@@ -49,13 +49,13 @@ class DocumentService:
 
         Args:
             file: 업로드 파일
-            user_uuid: 사용자 UUID (컬렉션 분리용)
+            bot_id: 봇 ID (봇별 임베딩 분리용)
             db: 데이터베이스 세션 (AsyncSession)
         """
         start_time = time.time()
 
-        # 사용자별 벡터 스토어 가져오기 (DB 세션 주입)
-        vector_store = get_vector_store(user_uuid=user_uuid, db=db)
+        # 봇별 벡터 스토어 가져오기 (DB 세션 주입)
+        vector_store = get_vector_store(bot_id=bot_id, db=db)
         
         # 1. 파일 저장
         document_id = str(uuid.uuid4())
@@ -92,7 +92,7 @@ class DocumentService:
             metadata["chunk_count"] = len(chunks)
             
             # 7. 벡터 스토어에 저장
-            logger.info(f"벡터 스토어에 저장 시작")
+            logger.info(f"벡터 스토어에 저장 시작 (bot_id={bot_id})")
             chunk_ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
             chunk_metadatas = [
                 {
@@ -102,8 +102,8 @@ class DocumentService:
                 }
                 for i in range(len(chunks))
             ]
-            
-            vector_store.add_documents(
+
+            await vector_store.add_documents(
                 ids=chunk_ids,
                 embeddings=embeddings,
                 documents=chunks,
@@ -188,13 +188,13 @@ class DocumentService:
         except Exception as e:
             logger.warning(f"임시 파일 삭제 실패 (예기치 않은 오류): {file_path}, {e}")
     
-    def get_document_info(self, document_id: str, user_uuid: str) -> dict:
+    async def get_document_info(self, document_id: str, bot_id: int, db) -> dict:
         """문서 정보 조회"""
-        # 사용자별 벡터 스토어 가져오기
-        vector_store = get_vector_store(user_uuid=user_uuid)
+        # 봇별 벡터 스토어 가져오기
+        vector_store = get_vector_store(bot_id=bot_id, db=db)
 
         # 해당 document_id의 첫 번째 청크 메타데이터 조회
-        doc = vector_store.get_document(f"{document_id}_chunk_0")
+        doc = await vector_store.get_document(f"{document_id}_chunk_0")
 
         if not doc:
             raise ValueError(f"문서를 찾을 수 없습니다: {document_id}")
@@ -204,23 +204,24 @@ class DocumentService:
             "metadata": doc["metadata"]
         }
     
-    def delete_document(self, document_id: str, user_uuid: str):
+    async def delete_document(self, document_id: str, bot_id: int, db):
         """문서 삭제"""
-        # 사용자별 벡터 스토어 가져오기
-        vector_store = get_vector_store(user_uuid=user_uuid)
+        # 봇별 벡터 스토어 가져오기
+        vector_store = get_vector_store(bot_id=bot_id, db=db)
 
-        logger.info(f"문서 삭제 요청: {document_id}")
-        vector_store.delete_document(document_id)
+        logger.info(f"문서 삭제 요청: {document_id} (bot_id={bot_id})")
+        await vector_store.delete_document(document_id)
     
-    def search_documents(
+    async def search_documents(
         self,
         query: str,
-        user_uuid: str,
+        bot_id: int,
+        db,
         top_k: int = None
     ) -> dict:
         """문서 검색"""
-        # 사용자별 벡터 스토어 가져오기
-        vector_store = get_vector_store(user_uuid=user_uuid)
+        # 봇별 벡터 스토어 가져오기
+        vector_store = get_vector_store(bot_id=bot_id, db=db)
 
         if top_k is None:
             top_k = settings.default_top_k
@@ -229,10 +230,10 @@ class DocumentService:
             top_k = settings.max_top_k
 
         # 쿼리 임베딩 생성
-        query_embedding = self.embedding_service.embed_query(query)
+        query_embedding = await self.embedding_service.embed_query(query)
 
         # 벡터 검색
-        results = vector_store.search(
+        results = await vector_store.search(
             query_embedding=query_embedding,
             top_k=top_k
         )

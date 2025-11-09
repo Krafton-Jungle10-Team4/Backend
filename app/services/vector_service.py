@@ -19,7 +19,7 @@ class VectorService:
 
     async def search_similar_chunks(
         self,
-        user_uuid: str,
+        bot_id: int,
         query: str,
         top_k: int,
         db: AsyncSession
@@ -28,7 +28,7 @@ class VectorService:
         유사 문서 검색
 
         Args:
-            user_uuid: 사용자 UUID
+            bot_id: 봇 ID
             query: 검색 쿼리
             top_k: 검색할 문서 개수
             db: 데이터베이스 세션
@@ -36,14 +36,14 @@ class VectorService:
         Returns:
             검색 결과 리스트
         """
-        logger.info(f"[VectorService] 벡터 검색: query='{query[:50]}...', top_k={top_k}")
+        logger.info(f"[VectorService] 벡터 검색: bot_id={bot_id}, query='{query[:50]}...', top_k={top_k}")
 
         # 1. 쿼리 임베딩 생성
-        query_embedding = self.embedding_service.embed_query(query)
+        query_embedding = await self.embedding_service.embed_query(query)
 
         # 2. 벡터 스토어에서 검색
-        vector_store = get_vector_store(user_uuid=user_uuid)
-        search_results = vector_store.search(
+        vector_store = get_vector_store(bot_id=bot_id, db=db)
+        search_results = await vector_store.search(
             query_embedding=query_embedding,
             top_k=top_k
         )
