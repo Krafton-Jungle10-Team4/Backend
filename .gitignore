@@ -11,6 +11,7 @@ ENV/
 # 환경 변수
 .env
 .env.local
+.env.staging
 .env.production
 .env.*.local
 
@@ -43,7 +44,6 @@ coverage.xml
 .env/
 .env.local
 .env.*.local
-.env.example
 .mcp.json
 
 
