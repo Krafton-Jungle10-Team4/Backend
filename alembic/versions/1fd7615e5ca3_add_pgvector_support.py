@@ -30,7 +30,7 @@ def upgrade() -> None:
         sa.Column('chunk_text', sa.Text(), nullable=False, comment='분할된 텍스트 청크'),
         sa.Column('chunk_index', sa.Integer(), nullable=False, comment='청크 인덱스 (순서)'),
         sa.Column('embedding', postgresql.ARRAY(sa.Float()), nullable=False, comment='1024차원 임베딩 벡터'),
-        sa.Column('metadata', sa.JSON(), nullable=True, comment='소스 파일명, 페이지 번호 등'),
+        sa.Column('doc_metadata', sa.JSON(), nullable=True, comment='소스 파일명, 페이지 번호 등'),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.ForeignKeyConstraint(['bot_id'], ['bots.id'], ondelete='CASCADE'),

@@ -62,12 +62,10 @@ app.add_middleware(
     https_only=settings.is_production  # 프로덕션: HTTPS only, 개발: HTTP 허용
 )
 
-# CORS 설정 (경로별 분리)
+# CORS 설정 (커스텀 미들웨어)
 cors_origins = settings.cors_origins
-logger.info(f"CORS 허용 출처 (일반 API): {cors_origins}")
-logger.info(f"CORS 허용 출처 (위젯 API): * (모든 도메인)")
+logger.info(f"CORS 허용 출처: {cors_origins}")
 
-# 커스텀 CORS 미들웨어 적용
 from app.core.middleware.widget_cors import WidgetCORSMiddleware
 app.add_middleware(WidgetCORSMiddleware)
 

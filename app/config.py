@@ -147,7 +147,7 @@ class Settings(BaseSettings):
     frontend_url: str = ""
 
     # 백엔드 API 공개 URL (Widget 임베드 스크립트 등에서 사용)
-    backend_url: str = ""
+    backend_url: str = "https://api.snapagent.store"
 
     # 백엔드 API 공개 URL (Widget WebSocket 등에서 사용)
     # 프로덕션: "https://snapagent.store", 개발: "http://localhost:8001"

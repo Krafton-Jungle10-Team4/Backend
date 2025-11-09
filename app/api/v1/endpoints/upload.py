@@ -3,9 +3,11 @@
 """
 import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.document_service import get_document_service, DocumentService
 from app.models.documents import DocumentUploadResponse, SearchResponse
 from app.core.auth.dependencies import get_current_user_from_jwt_only
+from app.core.database import get_db
 from app.models.user import User
 from app.config import settings
 from app.core.middleware.rate_limit import limiter
@@ -21,7 +23,8 @@ async def upload_document(
     request: Request,
     file: UploadFile = File(..., description="업로드할 문서 파일"),
     user: User = Depends(get_current_user_from_jwt_only),
-    doc_service: DocumentService = Depends(get_document_service)
+    doc_service: DocumentService = Depends(get_document_service),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     문서 업로드 및 처리
@@ -58,7 +61,7 @@ async def upload_document(
 
     # 문서 처리 (사용자 UUID 전달)
     try:
-        result = await doc_service.process_and_store_document(file, user_uuid=str(user.uuid))
+        result = await doc_service.process_and_store_document(file, user_uuid=str(user.uuid), db=db)
         return result
     except ValueError as e:
         logger.error(f"문서 처리 검증 실패: {e}")

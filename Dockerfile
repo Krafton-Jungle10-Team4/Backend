@@ -32,6 +32,9 @@ COPY . .
 # 디렉토리 생성
 RUN mkdir -p /app/data/uploads /app/data/huggingface_cache
 
+# entrypoint 스크립트 실행 권한 부여 (파일이 COPY로 이미 복사됨)
+RUN chmod +x /app/entrypoint.sh || echo "Warning: entrypoint.sh not found, using inline script"
+
 # Python 패키지 경로 설정
 ENV PATH=/root/.local/bin:$PATH \
     PYTHONPATH=/app
@@ -41,5 +44,5 @@ EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8001/health || exit 1
 
-# 시작 스크립트: 마이그레이션 (실패해도 진행) → 서버 실행
-CMD sh -c "alembic upgrade head || true && uvicorn app.main:app --host 0.0.0.0 --port 8001"
+# entrypoint 스크립트 사용
+ENTRYPOINT ["/app/entrypoint.sh"]

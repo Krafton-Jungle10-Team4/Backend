@@ -18,6 +18,10 @@ class WidgetCORSMiddleware(BaseHTTPMiddleware):
         # 위젯 API 경로 확인
         is_widget_api = request.url.path.startswith("/api/v1/widget/")
 
+        # REQUEST 헤더에서 요청된 메서드와 헤더 가져오기 (에코 방식)
+        requested_method = request.headers.get("access-control-request-method", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+        requested_headers = request.headers.get("access-control-request-headers","Content-Type, Authorization, Origin, Referer")
+
         # OPTIONS 요청 (Preflight)
         if request.method == "OPTIONS":
             if is_widget_api:
@@ -26,8 +30,8 @@ class WidgetCORSMiddleware(BaseHTTPMiddleware):
                     status_code=200,
                     headers={
                         "Access-Control-Allow-Origin": "*",
-                        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                        "Access-Control-Allow-Headers": "Content-Type, Authorization, Origin, Referer",
+                        "Access-Control-Allow-Methods": requested_method,
+                        "Access-Control-Allow-Headers": requested_headers,
                     }
                 )
             else:
@@ -41,8 +45,8 @@ class WidgetCORSMiddleware(BaseHTTPMiddleware):
                         headers={
                             "Access-Control-Allow-Origin": origin or "*",
                             "Access-Control-Allow-Credentials": "true",
-                            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
-                            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With, Accept, Origin, Referer",
+                            "Access-Control-Allow-Methods": requested_method,
+                            "Access-Control-Allow-Headers": requested_headers,
                         }
                     )
                 elif origin in settings.cors_origins:
@@ -52,8 +56,8 @@ class WidgetCORSMiddleware(BaseHTTPMiddleware):
                         headers={
                             "Access-Control-Allow-Origin": origin,
                             "Access-Control-Allow-Credentials": "true",
-                            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
-                            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With, Accept, Origin, Referer",
+                            "Access-Control-Allow-Methods": requested_method,
+                            "Access-Control-Allow-Headers": requested_headers,
                         }
                     )
                 else:
@@ -66,8 +70,8 @@ class WidgetCORSMiddleware(BaseHTTPMiddleware):
         if is_widget_api:
             # 위젯 API: 모든 도메인 허용, Credentials 없음
             response.headers["Access-Control-Allow-Origin"] = "*"
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Origin, Referer"
+            response.headers["Access-Control-Allow-Methods"] = requested_method
+            response.headers["Access-Control-Allow-Headers"] = requested_headers
         else:
             # 일반 API: 설정된 도메인만 허용, Credentials 있음
             origin = request.headers.get("origin")
@@ -76,13 +80,13 @@ class WidgetCORSMiddleware(BaseHTTPMiddleware):
                 # 와일드카드가 설정된 경우 모든 Origin 허용
                 response.headers["Access-Control-Allow-Origin"] = origin or "*"
                 response.headers["Access-Control-Allow-Credentials"] = "true"
-                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept, Origin, Referer"
+                response.headers["Access-Control-Allow-Methods"] = requested_method
+                response.headers["Access-Control-Allow-Headers"] = requested_headers
             elif origin in settings.cors_origins:
                 # 특정 Origin이 허용 목록에 있는 경우
                 response.headers["Access-Control-Allow-Origin"] = origin
                 response.headers["Access-Control-Allow-Credentials"] = "true"
-                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept, Origin, Referer"
+                response.headers["Access-Control-Allow-Methods"] = requested_method
+                response.headers["Access-Control-Allow-Headers"] = requested_headers
 
         return response

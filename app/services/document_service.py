@@ -41,7 +41,8 @@ class DocumentService:
     async def process_and_store_document(
         self,
         file: UploadFile,
-        user_uuid: str
+        user_uuid: str,
+        db = None
     ) -> DocumentUploadResponse:
         """
         문서 업로드 및 처리 전체 파이프라인
@@ -49,11 +50,12 @@ class DocumentService:
         Args:
             file: 업로드 파일
             user_uuid: 사용자 UUID (컬렉션 분리용)
+            db: 데이터베이스 세션 (AsyncSession)
         """
         start_time = time.time()
 
-        # 사용자별 벡터 스토어 가져오기
-        vector_store = get_vector_store(user_uuid=user_uuid)
+        # 사용자별 벡터 스토어 가져오기 (DB 세션 주입)
+        vector_store = get_vector_store(user_uuid=user_uuid, db=db)
         
         # 1. 파일 저장
         document_id = str(uuid.uuid4())

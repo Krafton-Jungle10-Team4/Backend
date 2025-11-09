@@ -3,10 +3,8 @@ PostgreSQL + pgvector 벡터 스토어 관리
 """
 import logging
 from typing import List, Dict, Optional
-from sqlalchemy.orm import Session
 from sqlalchemy import select, delete as sql_delete, func
-
-from app.core.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.document_embeddings import DocumentEmbedding
 from app.core.exceptions import (
     VectorStoreConnectionError,
@@ -24,7 +22,7 @@ class VectorStore:
         self,
         bot_id: Optional[int] = None,
         user_uuid: Optional[str] = None,
-        db: Optional[Session] = None
+        db: Optional[AsyncSession] = None
     ):
         """
         Args:
@@ -56,15 +54,16 @@ class VectorStore:
             hash_value = int(hashlib.md5(user_uuid.encode()).hexdigest()[:8], 16)
             self.bot_id = hash_value % 1000000
 
-    def _get_session(self) -> Session:
-        """세션 확보 (없으면 새로 생성)"""
+    def _get_session(self) -> AsyncSession:
+        """주입된 비동기 세션 반환"""
         if self.db is None:
-            # 세션이 없으면 get_db()에서 생성
-            self.db = next(get_db())
-            logger.debug(f"새 데이터베이스 세션 생성 (bot_id={self.bot_id})")
+            raise VectorStoreConnectionError(
+                message="VectorStore requires an AsyncSession instance",
+                details={"bot_id": self.bot_id, "user_uuid": self.user_uuid}
+            )
         return self.db
 
-    def add_documents(
+    async def add_documents(
         self,
         ids: List[str],
         embeddings: List[List[float]],
@@ -98,11 +97,11 @@ class VectorStore:
                 )
                 db.add(doc_embedding)
 
-            db.commit()
+            await db.commit()
             logger.info(f"벡터 스토어에 {len(ids)}개 문서 추가 완료 (bot_id={self.bot_id})")
 
         except Exception as e:
-            db.rollback()
+            await db.rollback()
             logger.error(f"문서 추가 실패: {e}")
             raise VectorStoreDocumentError(
                 message="문서 추가 중 오류가 발생했습니다",
@@ -113,7 +112,7 @@ class VectorStore:
                 }
             )
 
-    def search(
+    async def search(
         self,
         query_embedding: List[float],
         top_k: int = 5,
@@ -155,7 +154,7 @@ class VectorStore:
             query = query.order_by(distance_expr).limit(top_k)
 
             # 쿼리 실행
-            results = db.execute(query).all()
+            results = (await db.execute(query)).all()
 
             # ChromaDB 호환 형식으로 변환
             ids = []
@@ -188,7 +187,7 @@ class VectorStore:
                 }
             )
 
-    def get_document(self, document_id: str) -> Optional[Dict]:
+    async def get_document(self, document_id: str) -> Optional[Dict]:
         """
         문서 ID로 문서 조회
 
@@ -201,10 +200,12 @@ class VectorStore:
         db = self._get_session()
 
         try:
-            result = db.execute(
-                select(DocumentEmbedding).where(
-                    DocumentEmbedding.bot_id == self.bot_id,
-                    DocumentEmbedding.doc_metadata["document_id"].astext == document_id
+            result = (
+                await db.execute(
+                    select(DocumentEmbedding).where(
+                        DocumentEmbedding.bot_id == self.bot_id,
+                        DocumentEmbedding.doc_metadata["document_id"].astext == document_id
+                    )
                 )
             ).scalars().first()
 
@@ -227,7 +228,7 @@ class VectorStore:
                 }
             )
 
-    def delete_document(self, document_id: str):
+    async def delete_document(self, document_id: str):
         """
         문서 삭제 (해당 document_id의 모든 청크 삭제)
 
@@ -237,7 +238,7 @@ class VectorStore:
         db = self._get_session()
 
         try:
-            result = db.execute(
+            result = await db.execute(
                 sql_delete(DocumentEmbedding).where(
                     DocumentEmbedding.bot_id == self.bot_id,
                     DocumentEmbedding.doc_metadata["document_id"].astext == document_id
@@ -245,12 +246,12 @@ class VectorStore:
             )
 
             deleted_count = result.rowcount
-            db.commit()
+            await db.commit()
 
             logger.info(f"문서 삭제 완료: {document_id} ({deleted_count}개 청크)")
 
         except Exception as e:
-            db.rollback()
+            await db.rollback()
             logger.error(f"문서 삭제 실패: {e}")
             raise VectorStoreDocumentError(
                 message="문서 삭제 중 오류가 발생했습니다",
@@ -261,7 +262,7 @@ class VectorStore:
                 }
             )
 
-    def count_documents(self) -> int:
+    async def count_documents(self) -> int:
         """
         봇의 임베딩 개수 반환
 
@@ -271,9 +272,12 @@ class VectorStore:
         db = self._get_session()
 
         try:
-            count = db.query(func.count(DocumentEmbedding.id)).filter(
-                DocumentEmbedding.bot_id == self.bot_id
-            ).scalar()
+            result = await db.execute(
+                select(func.count(DocumentEmbedding.id)).where(
+                    DocumentEmbedding.bot_id == self.bot_id
+                )
+            )
+            count = result.scalar_one_or_none()
 
             return count or 0
 
@@ -288,14 +292,10 @@ class VectorStore:
             )
 
 
-# 봇별/사용자별 벡터 스토어 캐시
-_vector_stores: Dict[str, VectorStore] = {}
-
-
 def get_vector_store(
     bot_id: Optional[int] = None,
     user_uuid: Optional[str] = None,
-    db: Optional[Session] = None
+    db: Optional[AsyncSession] = None
 ) -> VectorStore:
     """
     봇별 또는 사용자별 벡터 스토어 인스턴스 반환
@@ -312,14 +312,10 @@ def get_vector_store(
         - 세션을 제공하면 캐싱하지 않고 새 인스턴스 생성
         - 세션 없이 호출하면 캐싱된 인스턴스 반환
     """
-    # 세션이 제공되면 캐싱 없이 새 인스턴스 생성
-    if db is not None:
-        return VectorStore(bot_id=bot_id, user_uuid=user_uuid, db=db)
+    if db is None:
+        raise VectorStoreConnectionError(
+            message="get_vector_store requires an AsyncSession. Pass db=Depends(get_db)",
+            details={"bot_id": bot_id, "user_uuid": user_uuid}
+        )
 
-    # 캐시 키 생성
-    cache_key = f"bot_{bot_id}" if bot_id else f"user_{user_uuid}"
-
-    if cache_key not in _vector_stores:
-        _vector_stores[cache_key] = VectorStore(bot_id=bot_id, user_uuid=user_uuid, db=None)
-
-    return _vector_stores[cache_key]
+    return VectorStore(bot_id=bot_id, user_uuid=user_uuid, db=db)
