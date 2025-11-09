@@ -3,7 +3,7 @@
 """
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Dict
 import os
 
 
@@ -42,45 +42,99 @@ class Settings(BaseSettings):
     database_name: str = "ragdb"
     database_user: str = "postgres"
     database_password: str = ""
+    database_ssl_mode: str = "prefer"  # disable | prefer | require
 
     # ChromaDB
     chroma_host: str = "localhost"
     chroma_port: int = 8001
     chroma_collection_name: str = "documents"
 
-    # Redis 
+    # Redis
     redis_host: str = "localhost"
     redis_port: int = 6379
     redis_password: str = ""
     redis_db: int = 0
     redis_url: str = ""
+    redis_use_ssl: bool = False
 
     # 연결 문자열 생성 규칙을 한 곳에 모아 일관성 있게 관리하려는 목적
     # 비밀번호 포함/미포함, 기본값 처리 등을 캡슐화
     def get_database_url(self) -> str:
-        """Database URL 반환 (우선순위: database_url > 개별 설정)"""
+        """
+        환경에 맞는 Database URL 반환
+        - 로컬: SSL 없음
+        - 프로덕션: SSL 필수
+        """
+        # database_url이 명시되어 있으면 우선 사용
         if self.database_url:
-            return self.database_url
+            base_url = self.database_url
 
-        # 개별 설정으로 PostgreSQL URL 구성
-        return f"postgresql+asyncpg://{self.database_user}:{self.database_password}@{self.database_host}:{self.database_port}/{self.database_name}"
+            # 프로덕션: SSL 파라미터 추가
+            if self.is_production:
+                # 이미 SSL 파라미터가 있는지 확인
+                if "sslmode=" not in base_url:
+                    separator = "&" if "?" in base_url else "?"
+                    return f"{base_url}{separator}ssl=require&sslmode=require"
+                return base_url
+            else:
+                # 로컬: SSL 파라미터 제거 또는 그대로 사용
+                if "sslmode=disable" in base_url:
+                    return base_url
+                # SSL 파라미터가 있다면 제거
+                if "sslmode=" in base_url:
+                    import re
+                    # SSL 관련 파라미터 제거
+                    base_url = re.sub(r'[?&]ssl(mode)?=[^&]+', '', base_url)
+                    # 불필요한 ? 또는 & 정리
+                    base_url = base_url.replace("?&", "?").rstrip("?&")
+                return base_url
+
+        # database_url이 없으면 개별 설정으로 구성
+        user = self.database_user
+        password = self.database_password
+        host = self.database_host
+        port = self.database_port
+        name = self.database_name
+
+        base_url = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{name}"
+
+        if self.is_production:
+            return f"{base_url}?ssl=require&sslmode=require"
+        else:
+            return base_url
 
     def get_redis_url(self) -> str:
-        """Redis URL 반환 (우선순위: redis_url > 개별 설정)"""
+        """
+        환경에 맞는 Redis URL 반환
+        - 로컬: redis:// (비암호화)
+        - 프로덕션: rediss:// (TLS)
+        """
+        # redis_url이 명시되어 있으면 우선 사용
         if self.redis_url:
             return self.redis_url
 
-        # ElastiCache Redis는 TLS 암호화 사용 (rediss://)
-        # ssl_cert_reqs는 storage_options에서 처리 (URL 쿼리 파라미터로 전달하면 충돌 발생)
-        if self.redis_password:
-            return f"rediss://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        # 프로덕션: TLS 사용
+        if self.is_production or self.redis_use_ssl:
+            protocol = "rediss"
+            port = self.redis_port or 6379  # ElastiCache는 6379에서도 TLS 지원
         else:
-            return f"rediss://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+            # 로컬: 비암호화
+            protocol = "redis"
+            port = self.redis_port or 6379
+
+        # URL 구성
+        if self.redis_password:
+            return f"{protocol}://:{self.redis_password}@{self.redis_host}:{port}/{self.redis_db}"
+        else:
+            return f"{protocol}://{self.redis_host}:{port}/{self.redis_db}"
 
     # Rate Limiting
     rate_limit_enabled: bool = True
     rate_limit_per_minute: int = 100
     rate_limit_public_per_hour: int = 1000
+
+    # 임베딩 설정
+    use_mock_embeddings: bool = False  # 로컬 개발용 Mock 임베딩 사용 여부
 
     # 임베딩 (레거시 - 로컬 모델)
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"  # t3.medium 최적화 (~80MB, 2-3배 빠름)
@@ -165,8 +219,18 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        """프로덕션 환경 여부 확인"""
+        """프로덕션 환경 여부"""
         return self.environment.lower() == "production"
+
+    @property
+    def is_staging(self) -> bool:
+        """스테이징 환경 여부"""
+        return self.environment.lower() == "staging"
+
+    @property
+    def is_development(self) -> bool:
+        """개발 환경 여부"""
+        return self.environment.lower() in ["development", "local", "dev"]
 
     @property
     def cors_origins(self) -> List[str]:
@@ -179,6 +243,50 @@ class Settings(BaseSettings):
             # 개발/스테이징: 프론트엔드 URL + localhost 허용
             dev_origins = ["http://localhost:5173", "http://localhost:3000", "http://localhost:3001"]
             return list(set(frontend_urls + dev_origins)) if frontend_urls else ["*"]
+
+    @property
+    def redis_ssl_config(self) -> Dict:
+        """Redis SSL 설정 (redis-py용)"""
+        if self.is_production or self.redis_use_ssl:
+            return {
+                "ssl": True,
+                "ssl_cert_reqs": "none",  # AWS ElastiCache 자체 서명 인증서
+            }
+        return {}
+
+    @property
+    def should_use_mock_embeddings(self) -> bool:
+        """Mock 임베딩 사용 여부 결정"""
+        # 명시적으로 설정된 경우 우선
+        if self.use_mock_embeddings:
+            return True
+        # 개발 환경이고 AWS 자격증명이 없는 경우
+        if self.is_development and not (self.aws_access_key_id and self.aws_secret_access_key):
+            return True
+        return False
+
+    @property
+    def use_bedrock_embedding(self) -> bool:
+        """AWS Bedrock 사용 여부"""
+        return self.is_production or self.is_staging
+
+    @property
+    def embedding_config(self) -> Dict:
+        """환경별 임베딩 설정"""
+        if self.use_bedrock_embedding:
+            return {
+                "provider": "bedrock",
+                "model_id": self.bedrock_model_id,
+                "dimensions": self.bedrock_dimensions,
+                "normalize": self.bedrock_normalize,
+            }
+        else:
+            return {
+                "provider": "local",
+                "model": self.embedding_model,
+                "device": self.embedding_device,
+                "batch_size": self.batch_size,
+            }
 
     model_config = ConfigDict(
         # 환경에 따라 다른 .env 파일 로드
