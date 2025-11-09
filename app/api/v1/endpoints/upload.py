@@ -22,7 +22,7 @@ router = APIRouter()
 async def upload_document(
     request: Request,
     file: UploadFile = File(..., description="업로드할 문서 파일"),
-    bot_id: int = Query(..., description="봇 ID (필수)"),
+    bot_id: str = Query(..., description="봇 ID (필수, 형식: bot_{timestamp}_{random})"),
     user: User = Depends(get_current_user_from_jwt_only),
     doc_service: DocumentService = Depends(get_document_service),
     db: AsyncSession = Depends(get_db)
@@ -79,7 +79,7 @@ async def upload_document(
 @router.get("/search", response_model=SearchResponse)
 async def search_documents(
     query: str = Query(..., description="검색할 텍스트", min_length=1),
-    bot_id: int = Query(..., description="봇 ID (필수)"),
+    bot_id: str = Query(..., description="봇 ID (필수, 형식: bot_{timestamp}_{random})"),
     top_k: int = Query(5, description="반환할 결과 개수", ge=1, le=50),
     user: User = Depends(get_current_user_from_jwt_only),
     doc_service: DocumentService = Depends(get_document_service),
@@ -119,7 +119,7 @@ async def search_documents(
 @router.get("/{document_id}")
 async def get_document_info(
     document_id: str,
-    bot_id: int = Query(..., description="봇 ID (필수)"),
+    bot_id: str = Query(..., description="봇 ID (필수, 형식: bot_{timestamp}_{random})"),
     user: User = Depends(get_current_user_from_jwt_only),
     doc_service: DocumentService = Depends(get_document_service),
     db: AsyncSession = Depends(get_db)
@@ -148,7 +148,7 @@ async def get_document_info(
 @router.delete("/{document_id}")
 async def delete_document(
     document_id: str,
-    bot_id: int = Query(..., description="봇 ID (필수)"),
+    bot_id: str = Query(..., description="봇 ID (필수, 형식: bot_{timestamp}_{random})"),
     user: User = Depends(get_current_user_from_jwt_only),
     doc_service: DocumentService = Depends(get_document_service),
     db: AsyncSession = Depends(get_db)
