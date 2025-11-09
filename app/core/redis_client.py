@@ -23,20 +23,33 @@ class RedisClient:
         self._url = settings.get_redis_url()
 
     async def connect(self):
-        """Redis 연결 초기화 (TLS/SSL 지원)"""
+        """Redis 연결 초기화 (환경별 TLS/SSL 설정)"""
         try:
-            # ElastiCache Redis TLS 연결 설정
+            # 기본 클라이언트 옵션
+            client_kwargs = {
+                "encoding": "utf-8",
+                "decode_responses": True,
+                "socket_connect_timeout": 5,
+                "socket_keepalive": True,
+            }
+
+            # 프로덕션 환경: SSL/TLS 설정 추가
+            if settings.is_production or settings.redis_use_ssl:
+                ssl_config = settings.redis_ssl_config
+                client_kwargs.update(ssl_config)
+                logger.info("Redis: Production mode with TLS enabled")
+            else:
+                logger.info("Redis: Development mode without TLS")
+
+            # Redis 클라이언트 생성
             self.redis = await aioredis.from_url(
                 self._url,
-                encoding="utf-8",
-                decode_responses=True,
-                socket_connect_timeout=5,
-                socket_keepalive=True,
-                ssl_cert_reqs=None,  # 인증서 검증 안 함 (ElastiCache 자체 서명 인증서)
+                **client_kwargs
             )
+
             # 연결 테스트
             await self.redis.ping()
-            logger.info(f"Redis 연결 성공 (TLS): {self._url.split('@')[-1].split('?')[0]}")  # 비밀번호 및 쿼리 파라미터 숨김
+            logger.info(f"Redis 연결 성공: {self._url.split('@')[-1].split('?')[0]}")  # 비밀번호 및 쿼리 파라미터 숨김
         except Exception as e:
             logger.error(f"Redis 연결 실패: {e}")
             raise

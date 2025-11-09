@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    """임베딩 생성 서비스 (AWS Bedrock Titan Embeddings 사용)"""
+    """임베딩 생성 서비스 (AWS Bedrock Titan Embeddings 또는 Mock)"""
 
     def __init__(self):
         self.client = None
@@ -27,6 +27,25 @@ class EmbeddingService:
         # 임베딩 작업용 스레드 풀 (병렬 처리 최적화)
         self.executor = ThreadPoolExecutor(max_workers=4)
         self._lock = threading.Lock()  # 스레드 안전성을 위한 락
+
+        # Mock 임베딩 모드 설정
+        self.use_mock = False
+        if settings.should_use_mock_embeddings:
+            self.use_mock = True
+            logger.info("Using Mock embeddings for local development")
+        else:
+            # Bedrock 초기화 시도
+            try:
+                self._init_client()
+            except Exception as e:
+                if settings.is_development:
+                    # 개발 환경에서는 Mock으로 폴백
+                    self.use_mock = True
+                    logger.warning(f"Bedrock initialization failed, falling back to Mock: {e}")
+                else:
+                    # 프로덕션에서는 에러 발생
+                    logger.error(f"Failed to initialize Bedrock client: {e}")
+                    raise
 
     def _init_client(self):
         """Bedrock 클라이언트 초기화"""
@@ -105,6 +124,40 @@ class EmbeddingService:
             # 재시도 불가능한 에러 (권한, 잘못된 요청)
             raise
 
+    def _get_mock_embedding_sync(self, text: str) -> List[float]:
+        """로컬 개발용 Mock 임베딩 (동기 메서드)
+
+        텍스트 해시를 기반으로 일관된 임베딩 생성
+        """
+        import hashlib
+        import math
+
+        # 텍스트를 해시하여 일관된 시드 생성
+        hash_obj = hashlib.sha256(text.encode())
+        hash_hex = hash_obj.hexdigest()
+
+        # 해시를 기반으로 고정된 차원의 임베딩 생성
+        embedding = []
+        for i in range(0, self.dimensions * 2, 2):
+            # 해시의 각 2문자를 0-1 사이 값으로 변환
+            hex_pair = hash_hex[i % len(hash_hex):i % len(hash_hex) + 2]
+            value = int(hex_pair, 16) / 255.0
+            embedding.append(value)
+            if len(embedding) >= self.dimensions:
+                break
+
+        # 차원이 부족한 경우 패딩
+        while len(embedding) < self.dimensions:
+            embedding.append(0.5)
+
+        # 정규화 (옵션)
+        if self.normalize:
+            norm = math.sqrt(sum(x**2 for x in embedding))
+            if norm > 0:
+                embedding = [x / norm for x in embedding]
+
+        return embedding[:self.dimensions]
+
     def _encode_sync(self, texts: List[str], is_query: bool = False) -> List[List[float]]:
         """동기 방식 인코딩 (내부 사용)
 
@@ -115,6 +168,11 @@ class EmbeddingService:
         Returns:
             임베딩 벡터 리스트 (List[List[float]])
         """
+        # Mock 모드: 해시 기반 임베딩 생성
+        if self.use_mock:
+            return [self._get_mock_embedding_sync(text) for text in texts]
+
+        # Bedrock 모드
         embeddings = []
 
         # Bedrock은 배치 API를 제공하지 않으므로 순차 처리
@@ -125,8 +183,14 @@ class EmbeddingService:
                 embeddings.append(embedding)
             except Exception as e:
                 logger.error(f"임베딩 생성 실패 (텍스트 길이: {len(text)}): {str(e)}")
-                # 실패한 텍스트는 제로 벡터로 대체 (옵션: 에러 발생 시키기)
-                embeddings.append([0.0] * self.dimensions)
+
+                # 개발 환경: Mock으로 폴백
+                if settings.is_development:
+                    logger.warning("Falling back to mock embedding")
+                    embeddings.append(self._get_mock_embedding_sync(text))
+                else:
+                    # 프로덕션: 제로 벡터로 대체
+                    embeddings.append([0.0] * self.dimensions)
 
         return embeddings
 
