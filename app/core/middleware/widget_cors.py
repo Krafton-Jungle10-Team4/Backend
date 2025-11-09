@@ -41,8 +41,8 @@ class WidgetCORSMiddleware(BaseHTTPMiddleware):
                         headers={
                             "Access-Control-Allow-Origin": origin or "*",
                             "Access-Control-Allow-Credentials": "true",
-                            "Access-Control-Allow-Methods": "*",
-                            "Access-Control-Allow-Headers": "*",
+                            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+                            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With, Accept, Origin, Referer",
                         }
                     )
                 elif origin in settings.cors_origins:
@@ -52,8 +52,8 @@ class WidgetCORSMiddleware(BaseHTTPMiddleware):
                         headers={
                             "Access-Control-Allow-Origin": origin,
                             "Access-Control-Allow-Credentials": "true",
-                            "Access-Control-Allow-Methods": "*",
-                            "Access-Control-Allow-Headers": "*",
+                            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+                            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With, Accept, Origin, Referer",
                         }
                     )
                 else:
@@ -76,13 +76,13 @@ class WidgetCORSMiddleware(BaseHTTPMiddleware):
                 # 와일드카드가 설정된 경우 모든 Origin 허용
                 response.headers["Access-Control-Allow-Origin"] = origin or "*"
                 response.headers["Access-Control-Allow-Credentials"] = "true"
-                response.headers["Access-Control-Allow-Methods"] = "*"
-                response.headers["Access-Control-Allow-Headers"] = "*"
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept, Origin, Referer"
             elif origin in settings.cors_origins:
                 # 특정 Origin이 허용 목록에 있는 경우
                 response.headers["Access-Control-Allow-Origin"] = origin
                 response.headers["Access-Control-Allow-Credentials"] = "true"
-                response.headers["Access-Control-Allow-Methods"] = "*"
-                response.headers["Access-Control-Allow-Headers"] = "*"
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept, Origin, Referer"
 
         return response
