@@ -3,6 +3,7 @@ Anthropic Claude API 클라이언트 구현
 """
 from typing import List, Dict, Optional, AsyncGenerator
 import logging
+import httpx
 from anthropic import AsyncAnthropic
 from anthropic import APIError, RateLimitError, APITimeoutError
 from app.core.llm_client import BaseLLMClient
@@ -24,7 +25,12 @@ class AnthropicClient(BaseLLMClient):
         model: str = "claude-sonnet-4-5-20250929",
         system_prompt: Optional[str] = None,
     ):
-        self.client = AsyncAnthropic(api_key=api_key)
+        # httpx 클라이언트를 명시적으로 생성 (proxies 파라미터 제거)
+        http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        )
+        self.client = AsyncAnthropic(api_key=api_key, http_client=http_client)
         self.model = model
         self.system_prompt = system_prompt if system_prompt else "당신은 유능한 AI 어시스턴트입니다. 사용자에게 친절하고 명확하게 답변해야 합니다."
         logger.info(f"Anthropic Client 초기화: 모델={model}")
