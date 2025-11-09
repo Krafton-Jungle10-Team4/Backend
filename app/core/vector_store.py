@@ -6,6 +6,7 @@ from typing import List, Dict, Optional
 from sqlalchemy import select, delete as sql_delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.document_embeddings import DocumentEmbedding
+from app.models.bot import Bot, BotStatus
 from app.core.exceptions import (
     VectorStoreConnectionError,
     VectorStoreQueryError,
@@ -82,16 +83,36 @@ class VectorStore:
         db = self._get_session()
 
         try:
-            for idx, (doc_id, embedding, document, metadata) in enumerate(
-                zip(ids, embeddings, documents, metadatas)
-            ):
+            # session_으로 시작하는 bot_id인 경우 임시 봇이 없으면 자동 생성
+            if self.bot_id and self.bot_id.startswith("session_"):
+                result = await db.execute(
+                    select(Bot).where(Bot.bot_id == self.bot_id)
+                )
+                existing_bot = result.scalar_one_or_none()
+
+                if not existing_bot:
+                    logger.info(f"임시 봇이 존재하지 않음. 자동 생성: {self.bot_id}")
+                    # user_uuid 추출 (VectorStore 초기화 시 전달되어야 함)
+                    temp_bot = Bot(
+                        bot_id=self.bot_id,
+                        user_uuid=self.user_uuid if self.user_uuid else "anonymous",
+                        name=f"임시 봇 ({self.bot_id})",
+                        description="BotSetup 진행 중인 임시 봇",
+                        status=BotStatus.INACTIVE,  # 임시 봇은 INACTIVE 상태
+                        workflow={}
+                    )
+                    db.add(temp_bot)
+                    await db.flush()  # bot 생성 후 즉시 반영
+                    logger.info(f"임시 봇 자동 생성 완료: {self.bot_id}")
+
+            for doc_id, embedding, document, metadata in zip(ids, embeddings, documents, metadatas):
                 metadata_copy = metadata.copy()
                 metadata_copy["document_id"] = doc_id
 
                 doc_embedding = DocumentEmbedding(
                     bot_id=self.bot_id,
                     chunk_text=document,
-                    chunk_index=idx,
+                    chunk_index=metadata.get("chunk_index", 0),  # metadata에서 chunk_index 가져오기
                     embedding=embedding,
                     doc_metadata=metadata_copy
                 )

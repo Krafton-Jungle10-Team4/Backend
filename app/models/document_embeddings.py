@@ -15,8 +15,8 @@ class DocumentEmbedding(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # 봇 연결
-    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False, index=True)
+    # 봇 연결 (bot_id 문자열로 변경: "bot_xxx" 또는 "session_xxx" 형식 지원)
+    bot_id = Column(String(100), ForeignKey("bots.bot_id", ondelete="CASCADE"), nullable=False, index=True)
 
     # 문서 청크
     chunk_text = Column(Text, nullable=False, comment="분할된 텍스트 청크")
