@@ -2,7 +2,7 @@
 벡터 검색 서비스
 """
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embeddings import get_embedding_service
@@ -22,7 +22,7 @@ class VectorService:
         bot_id: int,
         query: str,
         top_k: int,
-        db: AsyncSession
+        db: Optional[AsyncSession] = None
     ) -> List[Dict[str, Any]]:
         """
         유사 문서 검색
@@ -66,6 +66,37 @@ class VectorService:
 
         logger.info(f"[VectorService] 검색 완료: {len(results)}개 문서")
         return results
+
+    async def search(
+        self,
+        query: str,
+        dataset_id: str,
+        top_k: int = 5,
+        search_mode: str = "semantic"
+    ) -> List[Dict[str, Any]]:
+        """
+        Workflow에서 사용하는 검색 메서드
+
+        내부적으로 search_similar_chunks를 재사용합니다.
+
+        Args:
+            query: 검색 쿼리
+            dataset_id: 데이터셋 ID (user_uuid와 동일)
+            top_k: 검색할 문서 개수
+            search_mode: 검색 모드 (semantic, keyword) - 현재는 semantic만 지원
+
+        Returns:
+            검색 결과 리스트
+        """
+        logger.info(f"[VectorService.search] Workflow 검색 호출: dataset_id={dataset_id}, mode={search_mode}")
+
+        # search_similar_chunks 재사용 (db는 Optional이므로 None 전달)
+        return await self.search_similar_chunks(
+            user_uuid=dataset_id,
+            query=query,
+            top_k=top_k,
+            db=None
+        )
 
 
 def get_vector_service() -> VectorService:
