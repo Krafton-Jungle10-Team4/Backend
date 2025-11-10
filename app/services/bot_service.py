@@ -6,7 +6,7 @@ import time
 import secrets
 from typing import Optional, Tuple, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func, update, delete
+from sqlalchemy import select, or_, func, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.bot import Bot, BotKnowledge, BotStatus
@@ -260,7 +260,7 @@ class BotService:
                 logger.info("기본 워크플로우 자동 생성 (workflow 없음)")
                 workflow_dict = self._create_default_workflow(request.knowledge)
 
-            # 6. Bot 인스턴스 생성 (기본 상태: DRAFT)
+            # 6. Bot 인스턴스 생성
             bot = Bot(
                 bot_id=bot_id,
                 user_id=user_id,
@@ -269,7 +269,7 @@ class BotService:
                 personality=personality,
                 description=description,
                 workflow=workflow_dict,
-                status=BotStatus.DRAFT.value,  # Setup 중이므로 draft로 시작
+                status=BotStatus.ACTIVE,
                 messages_count=0,
                 errors_count=0
             )
@@ -277,13 +277,14 @@ class BotService:
             db.add(bot)
             await db.flush()
 
-            logger.debug(f"봇 생성 완료 (DRAFT): bot.id={bot.id}, bot_id={bot_id}")
+            logger.debug(f"봇 생성 완료: bot.id={bot.id}, bot_id={bot_id}")
 
-            # session_id는 deprecated (경고만 출력)
+            migrated_vectors = 0
             if request.session_id:
-                logger.warning(
-                    f"session_id는 더 이상 사용되지 않습니다: session_id={request.session_id}, "
-                    f"bot_id={bot_id}"
+                migrated_vectors = await self._migrate_session_embeddings(
+                    session_bot_id=request.session_id,
+                    target_bot_id=bot.bot_id,
+                    db=db
                 )
 
             # 4. 지식 항목 저장
@@ -295,7 +296,8 @@ class BotService:
             await db.refresh(bot)
 
             logger.info(
-                f"봇 생성 성공 (DRAFT): bot_id={bot_id}, knowledge_count={len(request.knowledge or [])}"
+                f"봇 생성 성공: bot_id={bot_id}, knowledge_count={len(request.knowledge or [])}, "
+                f"migrated_vectors={migrated_vectors}"
             )
 
             return bot
@@ -374,7 +376,7 @@ class BotService:
 
         Args:
             session_bot_id: 임시 봇 ID (session_* 형식)
-            target_bot_id: 새로 생성된 봇의 bot_id
+            target_bot_id: 새로 생성된 봇의 bot_id 
             db: 데이터베이스 세션
 
         Returns:
@@ -597,9 +599,6 @@ class BotService:
         # 수정할 필드만 업데이트
         update_data = request.model_dump(exclude_unset=True)
 
-        # knowledge 필드는 별도 처리 (BotKnowledge 테이블 업데이트 필요)
-        knowledge_ids = update_data.pop("knowledge", None)
-
         for field, value in update_data.items():
             if field == "status":
                 setattr(bot, field, BotStatus(value))
@@ -613,21 +612,9 @@ class BotService:
                 setattr(bot, field, value)
 
         try:
-            # knowledge 업데이트: 기존 삭제 후 새로 추가
-            if knowledge_ids is not None:
-                # 기존 지식 항목 삭제
-                await db.execute(
-                    delete(BotKnowledge).where(BotKnowledge.bot_id == bot.id)
-                )
-                await db.flush()
-
-                # 새 지식 항목 추가
-                if knowledge_ids:
-                    await self._save_knowledge_items(bot.id, knowledge_ids, db)
-
             await db.commit()
             await db.refresh(bot)
-            logger.info(f"봇 수정 성공: bot_id={bot_id}, 수정 필드={list(update_data.keys())}, knowledge_updated={knowledge_ids is not None}")
+            logger.info(f"봇 수정 성공: bot_id={bot_id}, 수정 필드={list(update_data.keys())}")
             return bot
         except SQLAlchemyError as e:
             logger.error(f"봇 수정 DB 오류: {e}", exc_info=True)
@@ -699,7 +686,7 @@ class BotService:
                 raise ValueError("Workflow 검증 실패: End 노드가 필요합니다")
 
         # 상태 변경
-        bot.status = BotStatus.ACTIVE.value if is_active else BotStatus.INACTIVE.value
+        bot.status = BotStatus.ACTIVE if is_active else BotStatus.INACTIVE
 
         try:
             await db.commit()

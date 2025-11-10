@@ -497,6 +497,10 @@ Access: API Key via Secrets Manager
 
 ---
 
+주의사항
+  1. Docker 빌드를 --platform linux/amd64 없이 했을 수도 있음
+  2. 또는 이미지 push가 제대로 안 되었을 수도 있음
+
 ## 5. 배포 프로세스
 
 ### 5.1 수동 배포 (현재 방식)
@@ -515,10 +519,7 @@ git commit -m "refactor: bot_id 기반 문서 관리로 전환
 🤖 Generated with Claude Code
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-# 2. Docker 이미지 빌드 (⚠️⚠️⚠️ 플랫폼 명시 필수! ⚠️⚠️⚠️)
-# M1/M2 Mac에서는 MUST USE --platform linux/amd64
-# 이 플래그 없이 빌드하면 ARM64로 빌드되어 ECS Fargate(x86_64)에서 실행 불가!
-# Error: exec format error
+# 2. Docker 이미지 빌드 (⚠️ 플랫폼 명시 필수!)
 docker build --platform linux/amd64 -t rag-backend:latest .
 
 # 3. ECR 로그인
@@ -572,8 +573,7 @@ aws logs tail /ecs/rag-backend --follow --region ap-northeast-2
 - [ ] 로컬에서 테스트 완료
 - [ ] DB 마이그레이션 필요 여부 확인
 - [ ] Breaking Changes 있는지 확인 (API 스펙 변경)
-- [ ] ⚠️ **M1/M2 Mac: `--platform linux/amd64` 플래그 필수 확인** ⚠️
-- [ ] `.dockerignore` 파일에서 `entrypoint.sh` 제외되지 않았는지 확인
+- [ ] `--platform linux/amd64` 플래그 확인
 
 **배포 중**:
 - [ ] ECR 푸시 성공 확인
