@@ -76,8 +76,6 @@ docker-compose*.yml
 
 # 스크립트 (배포 후 불필요)
 scripts/
-*.sh
-!entrypoint.sh
 
 # 로그
 logs/

@@ -269,7 +269,7 @@ class BotService:
                 personality=personality,
                 description=description,
                 workflow=workflow_dict,
-                status=BotStatus.DRAFT,  # Setup 중이므로 DRAFT로 시작
+                status=BotStatus.DRAFT.value,  # Setup 중이므로 draft로 시작
                 messages_count=0,
                 errors_count=0
             )
@@ -699,7 +699,7 @@ class BotService:
                 raise ValueError("Workflow 검증 실패: End 노드가 필요합니다")
 
         # 상태 변경
-        bot.status = BotStatus.ACTIVE if is_active else BotStatus.INACTIVE
+        bot.status = BotStatus.ACTIVE.value if is_active else BotStatus.INACTIVE.value
 
         try:
             await db.commit()
