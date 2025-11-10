@@ -243,6 +243,16 @@ def setup_logging(log_level: str = "INFO", use_structured: bool = True):
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 
+    # 외부 라이브러리 로거 레벨 조정 (과도한 DEBUG 로그 방지)
+    logging.getLogger("boto3").setLevel(logging.WARNING)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("s3transfer").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)  # 자동 리로드 관련 로그
+
 
 def get_logger(name: str) -> logging.Logger:
     """

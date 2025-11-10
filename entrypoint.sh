@@ -98,4 +98,12 @@ fi
 
 # 4. 애플리케이션 시작
 echo "🚀 Starting FastAPI application..."
-exec uvicorn app.main:app --host 0.0.0.0 --port 8001
+
+# 환경에 따라 reload 옵션 설정
+if [ "$ENVIRONMENT" = "development" ] || [ "$DEBUG" = "true" ]; then
+    echo "🔄 Development mode: Auto-reload enabled"
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+else
+    echo "🚀 Production mode: Auto-reload disabled"
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8001
+fi

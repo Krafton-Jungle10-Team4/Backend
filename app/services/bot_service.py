@@ -1,12 +1,13 @@
 """
 봇 관리 서비스
 """
+import copy
 import logging
 import time
 import secrets
 from typing import Optional, Tuple, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func, update
+from sqlalchemy import select, or_, func, update, delete
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.bot import Bot, BotKnowledge, BotStatus
@@ -36,12 +37,17 @@ def generate_bot_id() -> str:
 class BotService:
     """봇 비즈니스 로직"""
 
-    def _create_default_workflow(self, knowledge_list: Optional[List[str]] = None) -> Dict[str, Any]:
+    def _create_default_workflow(
+        self,
+        knowledge_list: Optional[List[str]] = None,
+        bot_identifier: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         기본 워크플로우 생성
 
         Args:
             knowledge_list: 지식 문서 ID 리스트
+            bot_identifier: workflow에서 dataset_id로 사용할 값 (bot_id 권장)
 
         Returns:
             기본 워크플로우 딕셔너리 (START → KNOWLEDGE → LLM → ANSWER)
@@ -62,84 +68,41 @@ class BotService:
         }
         nodes.append(start_node)
 
-        current_x = 100
-        last_node_id = "start-1"
-
-        # 2. KNOWLEDGE RETRIEVAL 노드 (knowledge가 있는 경우에만)
-        if knowledge_list and len(knowledge_list) > 0:
-            current_x += 300
-
-            knowledge_node = {
-                "id": "knowledge-1",
-                "type": "knowledge-retrieval",
-                "position": {"x": current_x, "y": 150},
-                "data": {
-                    "title": "KNOWLEDGE RETRIEVAL",
-                    "desc": "지식 검색",
-                    "type": "knowledge-retrieval",
-                    "dataset": knowledge_list[0] if knowledge_list else None,
-                    "dataset_name": f"{len(knowledge_list)}개 문서",
-                    "mode": "semantic",
-                    "top_k": 5
-                }
-            }
-            nodes.append(knowledge_node)
-
-            # START → KNOWLEDGE 엣지
-            edge_1 = {
-                "id": f"e-{last_node_id}-knowledge-1",
-                "source": last_node_id,
-                "target": "knowledge-1",
-                "type": "custom",
-                "data": {
-                    "source_type": "start",
-                    "target_type": "knowledge-retrieval"
-                }
-            }
-            edges.append(edge_1)
-
-            last_node_id = "knowledge-1"
-
-        # 3. LLM 노드 (프론트엔드 호환 구조)
-        current_x += 300
+        # 2. LLM 노드 (프론트엔드 호환 구조)
         llm_node = {
             "id": "llm-1",
             "type": "llm",
-            "position": {"x": current_x, "y": 150},
+            "position": {"x": 400, "y": 150},
             "data": {
                 "title": "LLM",
                 "desc": "언어 모델",
                 "type": "llm",
-                "model": {
-                    "provider": "Anthropic",
-                    "name": "claude"
-                },
-                "prompt": "Context: {context}\nQuestion: {question}\nAnswer:",
+                "model": "anthropic/claude",
+                "prompt_template": "Context: {context}\\nQuestion: {question}\\nAnswer:",
                 "temperature": 0.7,
                 "max_tokens": 500
             }
         }
         nodes.append(llm_node)
 
-        # 이전 노드 → LLM 엣지
+        # START → LLM 엣지 (기본)
         edge_llm = {
-            "id": f"e-{last_node_id}-llm-1",
-            "source": last_node_id,
+            "id": "e-start-1-llm-1",
+            "source": "start-1",
             "target": "llm-1",
             "type": "custom",
             "data": {
-                "source_type": "knowledge-retrieval" if last_node_id == "knowledge-1" else "start",
+                "source_type": "start",
                 "target_type": "llm"
             }
         }
         edges.append(edge_llm)
 
-        # 4. END 노드
-        current_x += 300
+        # 3. END 노드
         end_node = {
             "id": "end-1",
             "type": "end",
-            "position": {"x": current_x, "y": 150},
+            "position": {"x": 700, "y": 150},
             "data": {
                 "title": "END",
                 "desc": "종료 노드",
@@ -161,10 +124,19 @@ class BotService:
         }
         edges.append(edge_end)
 
-        return {
+        workflow = {
             "nodes": nodes,
             "edges": edges
         }
+
+        if knowledge_list:
+            workflow = self._apply_knowledge_to_workflow_dict(
+                workflow,
+                knowledge_list,
+                bot_identifier
+            )
+
+        return workflow
 
     def _get_default_personality(self, goal: str) -> str:
         """
@@ -206,6 +178,111 @@ class BotService:
         }
 
         return personalities.get(goal, personalities["other"])
+
+    def _apply_knowledge_to_workflow_dict(
+        self,
+        workflow_dict: Dict[str, Any],
+        knowledge_list: List[str],
+        bot_identifier: Optional[str]
+    ) -> Dict[str, Any]:
+        """워크플로우에 지식 노드를 주입하거나 업데이트"""
+
+        if not workflow_dict:
+            workflow_dict = {"nodes": [], "edges": []}
+
+        workflow = copy.deepcopy(workflow_dict)
+        nodes = workflow.setdefault("nodes", [])
+        edges = workflow.setdefault("edges", [])
+
+        start_node = next((n for n in nodes if n.get("type") == "start"), None)
+        llm_node = next((n for n in nodes if n.get("type") == "llm"), None)
+
+        if not start_node or not llm_node:
+            # 필수 노드가 없다면 기본 구조를 재생성
+            return self._create_default_workflow(knowledge_list, bot_identifier)
+
+        knowledge_node = next((n for n in nodes if n.get("type") == "knowledge-retrieval"), None)
+
+        dataset_id = bot_identifier or (knowledge_list[0] if knowledge_list else "default-dataset")
+        dataset_name = f"{len(knowledge_list)}개 문서" if knowledge_list else None
+
+        if knowledge_list:
+            if not knowledge_node:
+                knowledge_node = {
+                    "id": "knowledge-1",
+                    "type": "knowledge-retrieval",
+                    "position": {
+                        "x": (start_node["position"]["x"] + llm_node["position"]["x"]) / 2,
+                        "y": start_node["position"].get("y", 150)
+                    },
+                    "data": {}
+                }
+                nodes.append(knowledge_node)
+
+            knowledge_node.setdefault("data", {})
+            knowledge_node["data"].update({
+                "title": knowledge_node["data"].get("title", "KNOWLEDGE"),
+                "desc": knowledge_node["data"].get("desc", "지식 검색"),
+                "type": "knowledge-retrieval",
+                "dataset_id": dataset_id,
+                "dataset_name": dataset_name,
+                "mode": knowledge_node["data"].get("mode", "semantic"),
+                "top_k": knowledge_node["data"].get("top_k", 5),
+                "document_ids": knowledge_list
+            })
+
+            # START → KNOWLEDGE, KNOWLEDGE → LLM 연결 보장
+            self._ensure_edge(edges, start_node["id"], knowledge_node["id"], "start", "knowledge-retrieval")
+            self._ensure_edge(edges, knowledge_node["id"], llm_node["id"], "knowledge-retrieval", "llm")
+
+            # 직접 연결 제거 (중복 방지)
+            edges[:] = [
+                edge for edge in edges
+                if not (edge.get("source") == start_node["id"] and edge.get("target") == llm_node["id"])
+            ]
+        else:
+            # 지식이 없으면 지식 노드 제거 (자동 생성된 노드만 해당)
+            knowledge_node_ids = [n["id"] for n in nodes if n.get("type") == "knowledge-retrieval"]
+            if knowledge_node_ids:
+                nodes[:] = [n for n in nodes if n.get("id") not in knowledge_node_ids]
+                edges[:] = [
+                    edge for edge in edges
+                    if edge.get("source") not in knowledge_node_ids and edge.get("target") not in knowledge_node_ids
+                ]
+
+            # START → LLM 경로 복구
+            self._ensure_edge(edges, start_node["id"], llm_node["id"], "start", "llm")
+
+        return workflow
+
+    @staticmethod
+    def _ensure_edge(
+        edges: List[Dict[str, Any]],
+        source: str,
+        target: str,
+        source_type: str,
+        target_type: str
+    ) -> None:
+        """엣지가 없으면 추가하고 존재하면 타입 정보를 보정"""
+        for edge in edges:
+            if edge.get("source") == source and edge.get("target") == target:
+                edge.setdefault("data", {})
+                edge["data"].update({
+                    "source_type": source_type,
+                    "target_type": target_type
+                })
+                return
+
+        edges.append({
+            "id": f"e-{source}-{target}",
+            "source": source,
+            "target": target,
+            "type": "custom",
+            "data": {
+                "source_type": source_type,
+                "target_type": target_type
+            }
+        })
 
     async def create_bot(
         self,
@@ -254,11 +331,11 @@ class BotService:
                 nodes = workflow_dict.get('nodes', [])
                 if len(nodes) <= 2:  # START와 END만 있는 경우
                     logger.info("기본 워크플로우 자동 생성 (START/END만 존재)")
-                    workflow_dict = self._create_default_workflow(request.knowledge)
+                    workflow_dict = self._create_default_workflow(request.knowledge, bot_id)
             else:
                 # workflow가 없으면 기본 워크플로우 생성
                 logger.info("기본 워크플로우 자동 생성 (workflow 없음)")
-                workflow_dict = self._create_default_workflow(request.knowledge)
+                workflow_dict = self._create_default_workflow(request.knowledge, bot_id)
 
             # 6. Bot 인스턴스 생성
             bot = Bot(
@@ -439,6 +516,20 @@ class BotService:
 
         logger.debug(f"{len(knowledge_list)}개 지식 항목 저장 완료")
 
+    async def _replace_knowledge_items(
+        self,
+        bot_id: int,
+        knowledge_list: list[str],
+        db: AsyncSession
+    ) -> None:
+        """기존 지식 항목을 모두 교체"""
+
+        await db.execute(delete(BotKnowledge).where(BotKnowledge.bot_id == bot_id))
+        await db.flush()
+
+        if knowledge_list:
+            await self._save_knowledge_items(bot_id, knowledge_list, db)
+
     async def get_bots_by_user(self, user_id: int, db: AsyncSession) -> list[Bot]:
         """
         사용자의 모든 봇 조회
@@ -598,6 +689,7 @@ class BotService:
 
         # 수정할 필드만 업데이트
         update_data = request.model_dump(exclude_unset=True)
+        knowledge_items = update_data.pop("knowledge", None)
 
         for field, value in update_data.items():
             if field == "status":
@@ -610,6 +702,17 @@ class BotService:
                 setattr(bot, field, workflow_dict)
             else:
                 setattr(bot, field, value)
+
+        if knowledge_items is not None:
+            knowledge_values = knowledge_items or []
+            await self._replace_knowledge_items(bot.id, knowledge_values, db)
+
+            current_workflow = bot.workflow if isinstance(bot.workflow, dict) else bot.workflow or {}
+            bot.workflow = self._apply_knowledge_to_workflow_dict(
+                current_workflow,
+                knowledge_values,
+                bot.bot_id
+            )
 
         try:
             await db.commit()

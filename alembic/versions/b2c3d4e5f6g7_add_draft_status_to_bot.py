@@ -18,6 +18,8 @@ depends_on = None
 
 def upgrade() -> None:
     # PostgreSQL enum에 'draft' 추가 (소문자)
+    # 참고: 초기 마이그레이션에서 이미 소문자로 생성되므로
+    # 이 마이그레이션은 기존 환경을 위한 것입니다.
     op.execute("ALTER TYPE botstatus ADD VALUE IF NOT EXISTS 'draft'")
 
 

@@ -67,7 +67,7 @@ def upgrade() -> None:
     sa.Column('personality', sa.Text(), nullable=True),
     sa.Column('description', sa.Text(), nullable=True),
     sa.Column('avatar', sa.String(length=500), nullable=True),
-    sa.Column('status', sa.Enum('ACTIVE', 'INACTIVE', 'ERROR', name='botstatus'), nullable=False),
+    sa.Column('status', sa.Enum('draft', 'active', 'inactive', 'error', name='botstatus'), nullable=False, server_default='draft'),
     sa.Column('messages_count', sa.Integer(), nullable=False),
     sa.Column('errors_count', sa.Integer(), nullable=False),
     sa.Column('workflow', sa.JSON(), nullable=True),

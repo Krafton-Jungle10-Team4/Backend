@@ -113,6 +113,8 @@ class WorkflowExecutor:
             nodes_data = workflow_data.get("nodes", [])
             edges_data = workflow_data.get("edges", [])
 
+            self._normalize_workflow_schema(nodes_data)
+
             is_valid, errors, warnings = self.validator.validate(nodes_data, edges_data)
             if not is_valid:
                 error_msg = "\n".join(errors)
@@ -147,6 +149,36 @@ class WorkflowExecutor:
         except Exception as e:
             logger.error(f"워크플로우 실행 실패: {str(e)}")
             raise RuntimeError(f"워크플로우 실행 실패: {str(e)}")
+
+    @staticmethod
+    def _normalize_workflow_schema(nodes_data: List[Dict[str, Any]]) -> None:
+        """레거시 워크플로우 데이터를 최신 스키마로 정규화"""
+
+        for node in nodes_data:
+            node_type = node.get("type")
+            data = node.setdefault("data", {})
+
+            if node_type == NodeType.LLM.value:
+                model_value = data.get("model")
+                if isinstance(model_value, dict):
+                    data["model"] = model_value.get("name") or model_value.get("id") or "gpt-4"
+                elif not isinstance(model_value, str) or not model_value:
+                    data["model"] = "gpt-4"
+
+                if "prompt_template" not in data and data.get("prompt"):
+                    data["prompt_template"] = data["prompt"]
+
+            if node_type == NodeType.KNOWLEDGE_RETRIEVAL.value:
+                if "dataset_id" not in data and data.get("dataset"):
+                    data["dataset_id"] = data["dataset"]
+                if not data.get("dataset_id"):
+                    data["dataset_id"] = "default-dataset"
+
+                if "top_k" not in data and data.get("topK") is not None:
+                    data["top_k"] = data["topK"]
+
+                if "document_ids" not in data and data.get("documentIds"):
+                    data["document_ids"] = data["documentIds"]
 
     def _create_nodes(self, nodes_data: List[Dict], edges_data: List[Dict]):
         """
