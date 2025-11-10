@@ -78,7 +78,7 @@ class ChatService:
         # Workflow가 없으면 기본 RAG 파이프라인으로 fallback
         if not bot.workflow:
             logger.info(f"[ChatService] Bot {request.bot_id}에 Workflow가 없어 기본 RAG 파이프라인 실행")
-            return await self._execute_rag_pipeline(request, bot.id, db)
+            return await self._execute_rag_pipeline(request, bot.bot_id, db)
 
         # 새로운 Workflow Executor로 실행
         from app.core.workflow.executor import WorkflowExecutor
@@ -105,7 +105,7 @@ class ChatService:
             workflow_data=workflow_data,
             session_id=request.session_id or "default",
             user_message=request.message,
-            bot_id=bot.id,
+            bot_id=bot.bot_id,
             db=db,
             vector_service=vector_service,
             llm_service=llm_service
@@ -123,7 +123,7 @@ class ChatService:
     async def _execute_rag_pipeline(
         self,
         request: ChatRequest,
-        bot_id: int,
+        bot_id: str,
         db: AsyncSession
     ) -> ChatResponse:
         """기본 RAG 파이프라인 실행"""

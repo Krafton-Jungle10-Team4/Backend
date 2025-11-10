@@ -41,7 +41,7 @@ class DocumentService:
     async def process_and_store_document(
         self,
         file: UploadFile,
-        bot_id: int,
+        bot_id: str,
         db = None
     ) -> DocumentUploadResponse:
         """
@@ -188,7 +188,7 @@ class DocumentService:
         except Exception as e:
             logger.warning(f"임시 파일 삭제 실패 (예기치 않은 오류): {file_path}, {e}")
     
-    async def get_document_info(self, document_id: str, bot_id: int, db) -> dict:
+    async def get_document_info(self, document_id: str, bot_id: str, db) -> dict:
         """문서 정보 조회"""
         # 봇별 벡터 스토어 가져오기
         vector_store = get_vector_store(bot_id=bot_id, db=db)
@@ -204,7 +204,7 @@ class DocumentService:
             "metadata": doc["metadata"]
         }
     
-    async def delete_document(self, document_id: str, bot_id: int, db):
+    async def delete_document(self, document_id: str, bot_id: str, db):
         """문서 삭제"""
         # 봇별 벡터 스토어 가져오기
         vector_store = get_vector_store(bot_id=bot_id, db=db)
@@ -215,7 +215,7 @@ class DocumentService:
     async def search_documents(
         self,
         query: str,
-        bot_id: int,
+        bot_id: str,
         db,
         top_k: int = None
     ) -> dict:

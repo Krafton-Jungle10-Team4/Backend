@@ -69,12 +69,12 @@ class Settings(BaseSettings):
         if self.database_url:
             base_url = self.database_url
 
-            # 프로덕션: SSL 파라미터 추가
+            # 프로덕션: SSL 파라미터 추가 (asyncpg, psycopg2 둘 다 호환)
             if self.is_production:
                 # 이미 SSL 파라미터가 있는지 확인
                 if "sslmode=" not in base_url:
                     separator = "&" if "?" in base_url else "?"
-                    return f"{base_url}{separator}ssl=require&sslmode=require"
+                    return f"{base_url}{separator}sslmode=require"
                 return base_url
             else:
                 # 로컬: SSL 파라미터 제거 또는 그대로 사용
@@ -99,7 +99,7 @@ class Settings(BaseSettings):
         base_url = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{name}"
 
         if self.is_production:
-            return f"{base_url}?ssl=require&sslmode=require"
+            return f"{base_url}?ssl=require"
         else:
             return base_url
 
@@ -248,9 +248,9 @@ class Settings(BaseSettings):
     def redis_ssl_config(self) -> Dict:
         """Redis SSL 설정 (redis-py용)"""
         if self.is_production or self.redis_use_ssl:
+            import ssl
             return {
-                "ssl": True,
-                "ssl_cert_reqs": "none",  # AWS ElastiCache 자체 서명 인증서
+                "ssl_cert_reqs": ssl.CERT_NONE,  # AWS ElastiCache 자체 서명 인증서
             }
         return {}
 

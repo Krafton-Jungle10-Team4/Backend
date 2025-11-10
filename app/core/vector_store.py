@@ -21,7 +21,7 @@ class VectorStore:
 
     def __init__(
         self,
-        bot_id: Optional[int] = None,
+        bot_id: Optional[str] = None,
         user_uuid: Optional[str] = None,
         db: Optional[AsyncSession] = None
     ):
@@ -43,17 +43,12 @@ class VectorStore:
         self.user_uuid = user_uuid
         self.db = db
 
-        # user_uuid만 제공된 경우 경고
+        # user_uuid만 제공된 경우 경고 (레거시 호환성)
         if not self.bot_id and self.user_uuid:
             logger.warning(
                 f"user_uuid만 제공됨 ({self.user_uuid}). "
-                f"bot_id를 제공하는 것을 권장합니다. "
-                f"임시로 user_uuid 기반 bot_id를 사용합니다."
+                f"bot_id를 제공하는 것을 권장합니다."
             )
-            # 임시: user_uuid를 해시해서 임시 bot_id 생성
-            import hashlib
-            hash_value = int(hashlib.md5(user_uuid.encode()).hexdigest()[:8], 16)
-            self.bot_id = hash_value % 1000000
 
     def _get_session(self) -> AsyncSession:
         """주입된 비동기 세션 반환"""
@@ -83,27 +78,18 @@ class VectorStore:
         db = self._get_session()
 
         try:
-            # session_으로 시작하는 bot_id인 경우 임시 봇이 없으면 자동 생성
-            if self.bot_id and self.bot_id.startswith("session_"):
-                result = await db.execute(
-                    select(Bot).where(Bot.bot_id == self.bot_id)
-                )
-                existing_bot = result.scalar_one_or_none()
+            # bot_id가 유효한지 확인 (실제 봇이 존재해야 함)
+            result = await db.execute(
+                select(Bot).where(Bot.bot_id == self.bot_id)
+            )
+            existing_bot = result.scalar_one_or_none()
 
-                if not existing_bot:
-                    logger.info(f"임시 봇이 존재하지 않음. 자동 생성: {self.bot_id}")
-                    # user_uuid 추출 (VectorStore 초기화 시 전달되어야 함)
-                    temp_bot = Bot(
-                        bot_id=self.bot_id,
-                        user_uuid=self.user_uuid if self.user_uuid else "anonymous",
-                        name=f"임시 봇 ({self.bot_id})",
-                        description="BotSetup 진행 중인 임시 봇",
-                        status=BotStatus.INACTIVE,  # 임시 봇은 INACTIVE 상태
-                        workflow={}
-                    )
-                    db.add(temp_bot)
-                    await db.flush()  # bot 생성 후 즉시 반영
-                    logger.info(f"임시 봇 자동 생성 완료: {self.bot_id}")
+            if not existing_bot:
+                logger.error(f"bot_id={self.bot_id}에 해당하는 봇이 없습니다")
+                raise VectorStoreDocumentError(
+                    message=f"봇이 존재하지 않습니다: {self.bot_id}",
+                    details={"bot_id": self.bot_id}
+                )
 
             for doc_id, embedding, document, metadata in zip(ids, embeddings, documents, metadatas):
                 metadata_copy = metadata.copy()
@@ -314,7 +300,7 @@ class VectorStore:
 
 
 def get_vector_store(
-    bot_id: Optional[int] = None,
+    bot_id: Optional[str] = None,
     user_uuid: Optional[str] = None,
     db: Optional[AsyncSession] = None
 ) -> VectorStore:

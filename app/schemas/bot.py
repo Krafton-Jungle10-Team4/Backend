@@ -22,6 +22,10 @@ class CreateBotRequest(BaseModel):
     goal: Optional[BotGoal] = Field(None, description="봇의 목표")
     personality: Optional[str] = Field(None, max_length=2000, description="봇의 성격/어조")
     knowledge: Optional[List[str]] = Field(default_factory=list, description="문서 ID 배열")
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Setup 단계에서 사용한 임시 봇/세션 ID (session_... 형식)"
+    )
     workflow: Optional[Workflow] = Field(None, description="Workflow 정의")
 
     model_config = ConfigDict(
@@ -31,6 +35,7 @@ class CreateBotRequest(BaseModel):
                 "goal": "customer-support",
                 "personality": "친절하고 전문적인 어조",
                 "knowledge": ["doc_abc123", "doc_def456"],
+                "session_id": "session_1730718000_ab12cd3",
                 "workflow": {
                     "nodes": [
                         {
@@ -53,7 +58,7 @@ class BotResponse(BaseModel):
     name: str = Field(..., description="봇 이름")
     description: Optional[str] = Field(None, description="봇 설명")
     avatar: Optional[str] = Field(None, description="봇 아바타 URL")
-    status: Literal["active", "inactive", "error"] = Field(..., description="봇 상태")
+    status: Literal["draft", "active", "inactive", "error"] = Field(..., description="봇 상태")
     messagesCount: int = Field(..., description="메시지 개수", serialization_alias="messagesCount")
     errorsCount: int = Field(..., description="오류 개수", serialization_alias="errorsCount")
     createdAt: datetime = Field(..., description="생성 시간", serialization_alias="createdAt")
@@ -153,6 +158,9 @@ class UpdateBotRequestPatch(BaseModel):
     """봇 수정 요청 (PATCH - 부분 업데이트, 모든 필드 선택)"""
     name: Optional[str] = Field(None, min_length=1, max_length=100, description="봇 이름")
     description: Optional[str] = Field(None, max_length=2000, description="봇 설명")
+    goal: Optional[BotGoal] = Field(None, description="봇의 목표")
+    personality: Optional[str] = Field(None, max_length=2000, description="봇의 성격/어조")
+    knowledge: Optional[List[str]] = Field(None, description="문서 ID 배열 (기존 지식 전체 대체)")
     workflow: Optional[Workflow] = Field(None, description="Workflow 정의")
 
     model_config = ConfigDict(
@@ -307,12 +315,17 @@ class CreateBotRequestV2(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="봇 이름")
     description: Optional[str] = Field(None, description="봇 설명")
     workflow: Dict[str, Any] = Field(..., description="Workflow 정의")
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Setup 단계에서 사용한 임시 봇/세션 ID (session_... 형식)"
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "name": "고객 문의 응답 봇",
                 "description": "RAG 기반 자동 응답 시스템",
+                "session_id": "session_1730718000_ab12cd3",
                 "workflow": {
                     "schemaVersion": "1.0.0",
                     "workflowRevision": 0,

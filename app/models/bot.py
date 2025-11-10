@@ -12,6 +12,7 @@ from app.core.database import Base
 
 class BotStatus(str, enum.Enum):
     """봇 상태"""
+    DRAFT = "draft"  # Setup 진행 중
     ACTIVE = "active"
     INACTIVE = "inactive"
     ERROR = "error"
@@ -31,7 +32,7 @@ class Bot(Base):
     description = Column(Text, nullable=True)
     avatar = Column(String(500), nullable=True)
 
-    status = Column(SQLEnum(BotStatus), nullable=False, default=BotStatus.ACTIVE)
+    status = Column(SQLEnum(BotStatus), nullable=False, default=BotStatus.DRAFT)
     messages_count = Column(Integer, default=0, nullable=False)
     errors_count = Column(Integer, default=0, nullable=False)
 

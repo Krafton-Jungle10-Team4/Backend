@@ -19,7 +19,7 @@ class VectorService:
 
     async def search_similar_chunks(
         self,
-        bot_id: int,
+        bot_id: str,
         query: str,
         top_k: int,
         db: Optional[AsyncSession] = None

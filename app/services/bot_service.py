@@ -6,10 +6,11 @@ import time
 import secrets
 from typing import Optional, Tuple, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, update, delete
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.bot import Bot, BotKnowledge, BotStatus
+from app.models.document_embeddings import DocumentEmbedding
 from app.schemas.bot import CreateBotRequest, UpdateBotRequestPut, UpdateBotRequestPatch
 from app.core.exceptions import (
     BotCreationError,
@@ -259,7 +260,7 @@ class BotService:
                 logger.info("기본 워크플로우 자동 생성 (workflow 없음)")
                 workflow_dict = self._create_default_workflow(request.knowledge)
 
-            # 6. Bot 인스턴스 생성
+            # 6. Bot 인스턴스 생성 (기본 상태: DRAFT)
             bot = Bot(
                 bot_id=bot_id,
                 user_id=user_id,
@@ -268,7 +269,7 @@ class BotService:
                 personality=personality,
                 description=description,
                 workflow=workflow_dict,
-                status=BotStatus.ACTIVE,
+                status=BotStatus.DRAFT,  # Setup 중이므로 DRAFT로 시작
                 messages_count=0,
                 errors_count=0
             )
@@ -276,7 +277,14 @@ class BotService:
             db.add(bot)
             await db.flush()
 
-            logger.debug(f"봇 생성 완료: bot.id={bot.id}, bot_id={bot_id}")
+            logger.debug(f"봇 생성 완료 (DRAFT): bot.id={bot.id}, bot_id={bot_id}")
+
+            # session_id는 deprecated (경고만 출력)
+            if request.session_id:
+                logger.warning(
+                    f"session_id는 더 이상 사용되지 않습니다: session_id={request.session_id}, "
+                    f"bot_id={bot_id}"
+                )
 
             # 4. 지식 항목 저장
             if request.knowledge:
@@ -286,7 +294,9 @@ class BotService:
             await db.commit()
             await db.refresh(bot)
 
-            logger.info(f"봇 생성 성공: bot_id={bot_id}, knowledge_count={len(request.knowledge or [])}")
+            logger.info(
+                f"봇 생성 성공 (DRAFT): bot_id={bot_id}, knowledge_count={len(request.knowledge or [])}"
+            )
 
             return bot
 
@@ -352,6 +362,56 @@ class BotService:
             logger.warning(f"bot_id 중복 감지: {bot_id}, 재시도 {attempt + 1}/{max_retries}")
 
         raise ValueError("고유한 bot_id 생성 실패: 최대 재시도 횟수 초과")
+
+    async def _migrate_session_embeddings(
+        self,
+        session_bot_id: str,
+        target_bot_id: str,
+        db: AsyncSession
+    ) -> int:
+        """
+        Setup 단계에서 사용된 임시 봇(session_*)의 벡터를 실제 봇으로 마이그레이션
+
+        Args:
+            session_bot_id: 임시 봇 ID (session_* 형식)
+            target_bot_id: 새로 생성된 봇의 bot_id
+            db: 데이터베이스 세션
+
+        Returns:
+            이동한 임베딩(청크) 개수
+        """
+        if not session_bot_id or session_bot_id == target_bot_id:
+            return 0
+
+        logger.info(
+            f"임시 봇 벡터 마이그레이션 시작: session_bot_id={session_bot_id}, target_bot_id={target_bot_id}"
+        )
+
+        # 1. 이동할 벡터 수 조회
+        count_result = await db.execute(
+            select(func.count(DocumentEmbedding.id)).where(
+                DocumentEmbedding.bot_id == session_bot_id
+            )
+        )
+        total_embeddings = count_result.scalar_one() or 0
+
+        if total_embeddings == 0:
+            logger.info(f"임시 봇 벡터 없음: session_bot_id={session_bot_id}")
+            return 0
+
+        # 2. bot_id 업데이트
+        await db.execute(
+            update(DocumentEmbedding)
+            .where(DocumentEmbedding.bot_id == session_bot_id)
+            .values(bot_id=target_bot_id)
+        )
+        await db.flush()
+
+        logger.info(
+            f"임시 봇 벡터 마이그레이션 완료: session_bot_id={session_bot_id}, "
+            f"target_bot_id={target_bot_id}, moved={total_embeddings}"
+        )
+        return total_embeddings
 
     async def _save_knowledge_items(
         self,
@@ -537,6 +597,9 @@ class BotService:
         # 수정할 필드만 업데이트
         update_data = request.model_dump(exclude_unset=True)
 
+        # knowledge 필드는 별도 처리 (BotKnowledge 테이블 업데이트 필요)
+        knowledge_ids = update_data.pop("knowledge", None)
+
         for field, value in update_data.items():
             if field == "status":
                 setattr(bot, field, BotStatus(value))
@@ -550,9 +613,21 @@ class BotService:
                 setattr(bot, field, value)
 
         try:
+            # knowledge 업데이트: 기존 삭제 후 새로 추가
+            if knowledge_ids is not None:
+                # 기존 지식 항목 삭제
+                await db.execute(
+                    delete(BotKnowledge).where(BotKnowledge.bot_id == bot.id)
+                )
+                await db.flush()
+
+                # 새 지식 항목 추가
+                if knowledge_ids:
+                    await self._save_knowledge_items(bot.id, knowledge_ids, db)
+
             await db.commit()
             await db.refresh(bot)
-            logger.info(f"봇 수정 성공: bot_id={bot_id}, 수정 필드={list(update_data.keys())}")
+            logger.info(f"봇 수정 성공: bot_id={bot_id}, 수정 필드={list(update_data.keys())}, knowledge_updated={knowledge_ids is not None}")
             return bot
         except SQLAlchemyError as e:
             logger.error(f"봇 수정 DB 오류: {e}", exc_info=True)

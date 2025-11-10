@@ -132,7 +132,7 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
         self,
         vector_service,
         query: str,
-        bot_id: int,
+        bot_id: str,
         db: Any,
         top_k: int,
         mode: str

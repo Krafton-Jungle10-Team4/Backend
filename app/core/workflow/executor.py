@@ -84,7 +84,7 @@ class WorkflowExecutor:
         workflow_data: Dict[str, Any],
         session_id: str,
         user_message: str,
-        bot_id: int,
+        bot_id: str,
         db: Any,
         vector_service: Optional[VectorService] = None,
         llm_service: Optional[LLMService] = None
