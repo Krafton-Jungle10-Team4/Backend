@@ -17,8 +17,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # PostgreSQL enum에 'draft' 추가
-    op.execute("ALTER TYPE botstatus ADD VALUE IF NOT EXISTS 'draft'")
+    # PostgreSQL enum에 'DRAFT' 추가 (대문자)
+    op.execute("ALTER TYPE botstatus ADD VALUE IF NOT EXISTS 'DRAFT'")
 
 
 def downgrade() -> None:

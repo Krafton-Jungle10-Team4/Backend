@@ -66,9 +66,11 @@ def run_migrations_online() -> None:
         configuration = {}
 
     # Replace async driver with sync driver for Alembic
-    configuration["sqlalchemy.url"] = settings.get_database_url().replace(
-        "postgresql+asyncpg://", "postgresql+psycopg2://"
-    )
+    # Also convert asyncpg SSL parameter (ssl=) to psycopg2 format (sslmode=)
+    url = settings.get_database_url()
+    url = url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+    url = url.replace("ssl=require", "sslmode=require")
+    configuration["sqlalchemy.url"] = url
 
     connectable = engine_from_config(
         configuration,
