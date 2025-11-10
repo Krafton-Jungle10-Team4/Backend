@@ -32,7 +32,11 @@ class Bot(Base):
     description = Column(Text, nullable=True)
     avatar = Column(String(500), nullable=True)
 
-    status = Column(SQLEnum(BotStatus), nullable=False, default=BotStatus.DRAFT)
+    status = Column(
+        SQLEnum(BotStatus, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=BotStatus.DRAFT.value  # .value 사용으로 소문자 전달
+    )
     messages_count = Column(Integer, default=0, nullable=False)
     errors_count = Column(Integer, default=0, nullable=False)
 

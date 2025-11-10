@@ -1,7 +1,7 @@
 # RAG Platform Backend - AWS 배포 종합 가이드
 
 **작성일**: 2025-11-09
-**최종 업데이트**: 2025-11-09 23:57 (bot_id 기반 리팩토링 배포 완료)
+**최종 업데이트**: 2025-11-10 20:20 (Enum 대소문자 불일치 및 Docker 이슈 해결)
 **프로젝트**: RAG Platform Backend
 **배포 환경**: AWS ECS Fargate (ap-northeast-2)
 **도메인**: https://api.snapagent.store
@@ -515,7 +515,10 @@ git commit -m "refactor: bot_id 기반 문서 관리로 전환
 🤖 Generated with Claude Code
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-# 2. Docker 이미지 빌드 (⚠️ 플랫폼 명시 필수!)
+# 2. Docker 이미지 빌드 (⚠️⚠️⚠️ 플랫폼 명시 필수! ⚠️⚠️⚠️)
+# M1/M2 Mac에서는 MUST USE --platform linux/amd64
+# 이 플래그 없이 빌드하면 ARM64로 빌드되어 ECS Fargate(x86_64)에서 실행 불가!
+# Error: exec format error
 docker build --platform linux/amd64 -t rag-backend:latest .
 
 # 3. ECR 로그인
@@ -569,7 +572,8 @@ aws logs tail /ecs/rag-backend --follow --region ap-northeast-2
 - [ ] 로컬에서 테스트 완료
 - [ ] DB 마이그레이션 필요 여부 확인
 - [ ] Breaking Changes 있는지 확인 (API 스펙 변경)
-- [ ] `--platform linux/amd64` 플래그 확인
+- [ ] ⚠️ **M1/M2 Mac: `--platform linux/amd64` 플래그 필수 확인** ⚠️
+- [ ] `.dockerignore` 파일에서 `entrypoint.sh` 제외되지 않았는지 확인
 
 **배포 중**:
 - [ ] ECR 푸시 성공 확인
@@ -675,6 +679,124 @@ aws ec2 authorize-security-group-egress \
   --group-id sg-0995b6046621c25f8 \
   --protocol tcp --port 5432 --cidr 10.0.0.0/16
 ```
+
+### 6.5 SQLAlchemy Enum 대소문자 불일치 ⭐️ (최신)
+
+**발생일**: 2025-11-10
+
+**증상**:
+```
+sqlalchemy.dialects.postgresql.asyncpg.Error: invalid input value for enum botstatus: "DRAFT"
+```
+
+**원인**:
+- PostgreSQL enum에는 lowercase 값 저장: `'draft', 'active', 'inactive', 'error'`
+- Python에서 `BotStatus.DRAFT` 사용 시 enum 이름(DRAFT)이 전달됨
+- SQLAlchemy가 `.value`를 자동으로 추출하지 않음
+
+**해결**:
+```python
+# ❌ 잘못된 코드 (대문자 "DRAFT" 전달)
+bot = Bot(
+    status=BotStatus.DRAFT,  # → "DRAFT" 전달
+)
+
+# ✅ 올바른 코드 (소문자 "draft" 전달)
+bot = Bot(
+    status=BotStatus.DRAFT.value,  # → "draft" 전달
+)
+
+# enum 정의는 그대로 유지
+class BotStatus(str, enum.Enum):
+    DRAFT = "draft"      # 값은 소문자
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ERROR = "error"
+```
+
+**마이그레이션 주의사항**:
+```sql
+-- Alembic 마이그레이션도 소문자로 추가
+ALTER TYPE botstatus ADD VALUE IF NOT EXISTS 'draft';  -- 소문자!
+```
+
+**교훈**:
+- SQLAlchemy enum 사용 시 `.value`를 명시적으로 사용해야 함
+- 마이그레이션과 Python 코드의 enum 값 일치 필수
+- DB enum 타입 변경은 되돌리기 어려우므로 신중히 설계
+
+### 6.6 .dockerignore 파일 제외 문제 ⭐️ (최신)
+
+**발생일**: 2025-11-10
+
+**증상**:
+```
+exec /app/entrypoint.sh: exec format error
+```
+또는
+```
+/app/entrypoint.sh: No such file or directory
+```
+
+**원인**:
+- `.dockerignore`에 `*.sh` 패턴으로 모든 셸 스크립트 제외
+- `!entrypoint.sh` negation 패턴이 예상대로 작동하지 않음
+- Docker 빌드 시 entrypoint.sh 파일이 컨텍스트에 포함되지 않음
+
+**잘못된 .dockerignore**:
+```
+# 스크립트 (배포 후 불필요)
+scripts/
+*.sh              # ❌ 모든 .sh 파일 제외
+!entrypoint.sh    # ❌ negation이 작동하지 않음
+```
+
+**해결**:
+```
+# 스크립트 (배포 후 불필요)
+scripts/          # ✅ scripts/ 디렉토리만 제외
+# *.sh 패턴 전체 제거
+```
+
+**검증 방법**:
+```bash
+# 1. Docker 이미지에서 파일 존재 여부 확인
+docker run --rm --entrypoint ls \
+  868651351239.dkr.ecr.ap-northeast-2.amazonaws.com/rag-backend:latest \
+  -la /app/entrypoint.sh
+
+# 2. 파일 내용 및 권한 확인
+docker run --rm --entrypoint cat \
+  868651351239.dkr.ecr.ap-northeast-2.amazonaws.com/rag-backend:latest \
+  /app/entrypoint.sh | head -5
+```
+
+**교훈**:
+- `.dockerignore`의 negation 패턴은 예측 불가능하게 동작할 수 있음
+- 중요 파일은 glob 패턴에서 명시적으로 제외하는 것이 안전
+- Docker 빌드 후 이미지 내부 파일 확인 필수
+
+### 6.7 entrypoint.sh 파일 인코딩 오해 (교훈)
+
+**발생일**: 2025-11-10
+
+**초기 진단** (잘못됨):
+```bash
+# CRLF vs LF line ending 문제로 추정
+sed -i '' 's/\r$//' entrypoint.sh
+```
+
+**실제 원인**:
+- macOS에서 작업하므로 line ending은 이미 LF (문제 없음)
+- 실제로는 .dockerignore가 파일을 제외한 것이 원인
+
+**교훈**:
+- `exec format error`는 여러 원인 가능:
+  1. **플랫폼 불일치** (ARM64 vs x86_64) → 가장 흔함
+  2. **파일 누락** (.dockerignore) → 두 번째로 흔함
+  3. Line ending (CRLF vs LF) → Windows에서만 문제
+- macOS/Linux에서는 line ending 문제 거의 없음
+- 문제 발생 시 원인 가설 검증 필수 (추측으로 수정 X)
 
 ---
 
@@ -853,10 +975,16 @@ GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 
 ---
 
-**문서 버전**: 3.0 (bot_id 기반 리팩토링 반영)
-**최종 업데이트**: 2025-11-09 23:57
+**문서 버전**: 3.1 (Enum 타입 및 Docker 트러블슈팅 보완)
+**최종 업데이트**: 2025-11-10 20:20
 **작성자**: Claude Code
-**주요 변경사항**:
+**주요 변경사항 (v3.1)**:
+- SQLAlchemy Enum 대소문자 불일치 트러블슈팅 추가 (6.5)
+- .dockerignore 파일 제외 문제 상세 가이드 추가 (6.6)
+- entrypoint.sh 인코딩 오해 교훈 추가 (6.7)
+- exec format error의 다양한 원인 분석 및 해결 방법
+
+**이전 변경사항 (v3.0)**:
 - 실제 사용 중인 기술 스택으로 정정 (pgvector, Bedrock Titan, Claude)
 - 미사용 기술 명시 (ChromaDB, Sentence Transformers)
 - bot_id 기반 데이터 격리 아키텍처 추가
