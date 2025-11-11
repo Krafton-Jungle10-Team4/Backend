@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class LLMNodeConfig(NodeConfig):
     """LLM 노드 설정"""
+    provider: str = Field(default="openai", description="LLM Provider")
     model: str = Field(..., description="사용할 LLM 모델")
     prompt_template: str = Field(
         default="Context: {context}\nQuestion: {question}\nAnswer:",
@@ -88,6 +89,7 @@ class LLMNode(BaseNode[LLMNodeConfig]):
             llm_service = context.get("llm_service")
             if not llm_service:
                 raise ValueError("LLM service not found in context")
+            provider = (self.config.provider or "openai").lower()
 
             # 프롬프트 생성
             prompt = self._create_prompt(user_message, combined_context)
@@ -100,6 +102,7 @@ class LLMNode(BaseNode[LLMNodeConfig]):
                 llm_service,
                 prompt,
                 self.config.model,
+                provider,
                 self.config.temperature,
                 self.config.max_tokens,
                 stream_handler=stream_handler,
@@ -118,6 +121,7 @@ class LLMNode(BaseNode[LLMNodeConfig]):
                     "node_id": self.node_id,
                     "node_type": self.node_type.value,
                     "model": self.config.model,
+                    "provider": provider,
                     "temperature": self.config.temperature
                 }
             )
@@ -197,6 +201,7 @@ class LLMNode(BaseNode[LLMNodeConfig]):
         llm_service,
         prompt: str,
         model: str,
+        provider: Optional[str],
         temperature: float,
         max_tokens: int,
         stream_handler=None,
@@ -224,6 +229,7 @@ class LLMNode(BaseNode[LLMNodeConfig]):
                 response = await llm_service.generate_stream(
                     prompt=prompt,
                     model=model,
+                    provider=provider,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     on_chunk=on_chunk
@@ -232,6 +238,7 @@ class LLMNode(BaseNode[LLMNodeConfig]):
                 response = await llm_service.generate(
                     prompt=prompt,
                     model=model,
+                    provider=provider,
                     temperature=temperature,
                     max_tokens=max_tokens
                 )
@@ -253,6 +260,9 @@ class LLMNode(BaseNode[LLMNodeConfig]):
         """
         if not self.config:
             return False, "LLM node requires configuration"
+
+        if not self.config.provider:
+            return False, "Provider is required"
 
         if not self.config.model:
             return False, "Model is required"
@@ -291,6 +301,12 @@ class LLMNode(BaseNode[LLMNodeConfig]):
                     "options": ["gpt-4", "gpt-3.5-turbo", "claude-3"],
                     "required": True,
                     "description": "사용할 LLM 모델"
+                },
+                "provider": {
+                    "type": "enum",
+                    "options": ["openai", "anthropic"],
+                    "required": False,
+                    "description": "LLM Provider"
                 },
                 "prompt_template": {
                     "type": "text",

@@ -18,6 +18,7 @@ from app.core.exceptions import (
     BotConfigurationError,
     DatabaseTransactionError
 )
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,13 @@ class BotService:
         }
         nodes.append(start_node)
 
+        default_provider = (settings.llm_provider or "openai").lower()
+        default_model = (
+            settings.openai_model
+            if default_provider == "openai"
+            else settings.anthropic_model
+        )
+
         # 2. LLM 노드 (프론트엔드 호환 구조)
         llm_node = {
             "id": "llm-1",
@@ -77,7 +85,8 @@ class BotService:
                 "title": "LLM",
                 "desc": "언어 모델",
                 "type": "llm",
-                "model": "anthropic/claude",
+                "provider": default_provider,
+                "model": default_model,
                 "prompt_template": "Context: {context}\\nQuestion: {question}\\nAnswer:",
                 "temperature": 0.7,
                 "max_tokens": 500

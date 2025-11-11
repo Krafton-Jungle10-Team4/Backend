@@ -36,6 +36,7 @@ class LLMNodeData(BaseModel):
     title: str = Field(default="LLM", description="노드 제목")
     desc: str = Field(default="언어 모델", description="노드 설명")
     type: Literal["llm"] = Field("llm", description="노드 타입")
+    provider: str = Field(default="openai", description="LLM Provider (slug)")
     model: str = Field(..., description="모델 이름")  # 단순화: Dict -> str
     prompt_template: str = Field(
         default="Context: {context}\nQuestion: {question}\nAnswer:",
@@ -224,7 +225,7 @@ class ModelInfo(BaseModel):
     """LLM 모델 정보"""
     id: str = Field(..., description="모델 ID")
     name: str = Field(..., description="모델 이름")
-    provider: str = Field(..., description="제공자")
+    provider: str = Field(..., description="제공자 식별자(slug)")
     description: Optional[str] = Field(None, description="모델 설명")
 
 
