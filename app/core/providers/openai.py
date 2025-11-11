@@ -47,8 +47,12 @@ class OpenAIClient(BaseLLMClient):
                 final_messages = list(messages)
             else:
                 final_messages = [{"role": "system", "content": self.system_prompt}, *messages]
+
+            # 런타임 모델 오버라이드 지원
+            model_name = kwargs.pop("model", None) or self.model
+
             response = await self.client.chat.completions.create(
-                model=self.model,
+                model=model_name,
                 messages=final_messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -105,8 +109,12 @@ class OpenAIClient(BaseLLMClient):
                 final_messages = list(messages)
             else:
                 final_messages = [{"role": "system", "content": self.system_prompt}, *messages]
+
+            # 런타임 모델 오버라이드 지원
+            model_name = kwargs.pop("model", None) or self.model
+
             stream = await self.client.chat.completions.create(
-                model=self.model,
+                model=model_name,
                 messages=final_messages,
                 stream=True,
                 **kwargs
