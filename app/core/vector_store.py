@@ -64,7 +64,8 @@ class VectorStore:
         ids: List[str],
         embeddings: List[List[float]],
         documents: List[str],
-        metadatas: List[Dict]
+        metadatas: List[Dict],
+        source_document_id: Optional[str] = None
     ):
         """
         문서와 임베딩을 벡터 스토어에 추가
@@ -74,6 +75,7 @@ class VectorStore:
             embeddings: 임베딩 벡터 리스트
             documents: 문서 텍스트 리스트
             metadatas: 메타데이터 리스트
+            source_document_id: 원본 문서 ID (documents 테이블의 document_id, Workflow 실행 시 설정)
         """
         db = self._get_session()
 
@@ -97,6 +99,7 @@ class VectorStore:
 
                 doc_embedding = DocumentEmbedding(
                     bot_id=self.bot_id,
+                    document_id=source_document_id,  # ← 중요: documents 테이블 연결
                     chunk_text=document,
                     chunk_index=metadata.get("chunk_index", 0),  # metadata에서 chunk_index 가져오기
                     embedding=embedding,
@@ -105,7 +108,10 @@ class VectorStore:
                 db.add(doc_embedding)
 
             await db.commit()
-            logger.info(f"벡터 스토어에 {len(ids)}개 문서 추가 완료 (bot_id={self.bot_id})")
+            logger.info(
+                f"벡터 스토어에 {len(ids)}개 문서 추가 완료 "
+                f"(bot_id={self.bot_id}, source_document_id={source_document_id})"
+            )
 
         except Exception as e:
             await db.rollback()
@@ -123,7 +129,8 @@ class VectorStore:
         self,
         query_embedding: List[float],
         top_k: int = 5,
-        filter_dict: Optional[Dict] = None
+        filter_dict: Optional[Dict] = None,
+        document_ids: Optional[List[str]] = None
     ) -> Dict:
         """
         pgvector 코사인 유사도 검색
@@ -132,6 +139,7 @@ class VectorStore:
             query_embedding: 쿼리 임베딩 벡터
             top_k: 반환할 결과 개수
             filter_dict: 메타데이터 필터
+            document_ids: 특정 문서만 검색 (document_id 리스트)
 
         Returns:
             ChromaDB 호환 형식의 결과
@@ -149,6 +157,10 @@ class VectorStore:
             ).where(
                 DocumentEmbedding.bot_id == self.bot_id
             )
+
+            # document_id 필터링 (특정 문서만 검색)
+            if document_ids:
+                query = query.where(DocumentEmbedding.document_id.in_(document_ids))
 
             # 메타데이터 필터 적용
             if filter_dict:

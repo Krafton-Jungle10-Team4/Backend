@@ -6,6 +6,7 @@
 
 from typing import Any, Dict, Optional, List
 from pydantic import Field
+from datetime import datetime
 from app.core.workflow.base_node import (
     BaseNode,
     NodeType,
@@ -15,6 +16,7 @@ from app.core.workflow.base_node import (
     NodeExecutionResult
 )
 from app.core.workflow.node_registry import register_node
+from app.models.document import Document, DocumentStatus
 import logging
 
 logger = logging.getLogger(__name__)
@@ -96,7 +98,8 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
                 bot_id,
                 db,
                 self.config.top_k,
-                self.config.mode
+                self.config.mode,
+                self.config.dataset_id
             )
 
             result = NodeExecutionResult(
@@ -135,7 +138,8 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
         bot_id: str,
         db: Any,
         top_k: int,
-        mode: str
+        mode: str,
+        dataset_id: str
     ) -> List[Dict[str, Any]]:
         """
         실제 검색 수행
@@ -147,17 +151,23 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
             db: 데이터베이스 세션
             top_k: 검색 결과 개수
             mode: 검색 모드
+            dataset_id: 데이터셋 ID (특정 문서 필터링용)
 
         Returns:
             검색 결과 리스트
         """
         try:
+            # dataset_id를 document_ids 리스트로 변환 (특정 문서만 검색)
+            document_ids = [dataset_id] if dataset_id else None
+
             # 벡터 검색 서비스의 search_similar_chunks 메서드 호출
+            # (문서는 이미 Worker에 의해 임베딩되어 있음)
             results = await vector_service.search_similar_chunks(
                 bot_id=bot_id,
                 query=query,
                 top_k=top_k,
-                db=db
+                db=db,
+                document_ids=document_ids
             )
 
             return results

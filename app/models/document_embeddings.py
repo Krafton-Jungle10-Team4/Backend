@@ -18,6 +18,9 @@ class DocumentEmbedding(Base):
     # 봇 연결 (bot_id 문자열로 변경: "bot_xxx" 또는 "session_xxx" 형식 지원)
     bot_id = Column(String(100), ForeignKey("bots.bot_id", ondelete="CASCADE"), nullable=False, index=True)
 
+    # 원본 문서 연결 (Phase 0 - Setup에서 업로드된 문서 추적)
+    document_id = Column(String(36), index=True, nullable=True, comment="documents 테이블의 document_id")
+
     # 문서 청크
     chunk_text = Column(Text, nullable=False, comment="분할된 텍스트 청크")
     chunk_index = Column(Integer, nullable=False, comment="청크 인덱스 (순서)")

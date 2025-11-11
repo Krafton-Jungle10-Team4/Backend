@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     s3_bucket_name: str = ""
+
+    # AWS SQS (비동기 문서 처리)
+    sqs_queue_url: str = ""  # 메인 큐 URL
+    sqs_queue_arn: str = ""  # 메인 큐 ARN
+    sqs_dlq_url: str = ""    # DLQ URL
+    sqs_dlq_arn: str = ""    # DLQ ARN
     
     # Database
     database_url: str = ""

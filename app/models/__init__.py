@@ -5,6 +5,7 @@ from app.models.user import User, RefreshToken, APIKey
 from app.models.bot import Bot, BotKnowledge, BotStatus
 from app.models.deployment import BotDeployment, WidgetSession, WidgetMessage, WidgetEvent
 from app.models.document_embeddings import DocumentEmbedding
+from app.models.document import Document, DocumentStatus
 
 __all__ = [
     "User",
@@ -18,4 +19,6 @@ __all__ = [
     "WidgetMessage",
     "WidgetEvent",
     "DocumentEmbedding",
+    "Document",
+    "DocumentStatus",
 ]

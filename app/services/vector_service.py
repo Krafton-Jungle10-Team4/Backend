@@ -22,7 +22,8 @@ class VectorService:
         bot_id: str,
         query: str,
         top_k: int,
-        db: Optional[AsyncSession] = None
+        db: Optional[AsyncSession] = None,
+        document_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
         유사 문서 검색
@@ -32,11 +33,15 @@ class VectorService:
             query: 검색 쿼리
             top_k: 검색할 문서 개수
             db: 데이터베이스 세션
+            document_ids: 특정 문서만 검색 (document_id 리스트)
 
         Returns:
             검색 결과 리스트
         """
-        logger.info(f"[VectorService] 벡터 검색: bot_id={bot_id}, query='{query[:50]}...', top_k={top_k}")
+        if document_ids:
+            logger.info(f"[VectorService] 벡터 검색: bot_id={bot_id}, query='{query[:50]}...', top_k={top_k}, document_ids={document_ids}")
+        else:
+            logger.info(f"[VectorService] 벡터 검색: bot_id={bot_id}, query='{query[:50]}...', top_k={top_k}")
 
         # 1. 쿼리 임베딩 생성
         query_embedding = await self.embedding_service.embed_query(query)
@@ -45,7 +50,8 @@ class VectorService:
         vector_store = get_vector_store(bot_id=bot_id, db=db)
         search_results = await vector_store.search(
             query_embedding=query_embedding,
-            top_k=top_k
+            top_k=top_k,
+            document_ids=document_ids
         )
 
         # 3. 결과 변환
