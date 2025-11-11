@@ -177,6 +177,18 @@ class ChatMessageError(ChatServiceError):
         super().__init__(message, error_code="CHAT_MESSAGE_ERROR", **kwargs)
 
 
+class StreamingError(ChatServiceError):
+    """스트리밍 관련 기본 예외"""
+    def __init__(self, message: str = "스트리밍 중 오류가 발생했습니다", **kwargs):
+        super().__init__(message, error_code="STREAM_ERROR", **kwargs)
+
+
+class StreamTimeoutError(StreamingError):
+    """스트리밍 타임아웃"""
+    def __init__(self, message: str = "스트리밍 응답 시간이 초과되었습니다", **kwargs):
+        super().__init__(message, error_code="TIMEOUT", **kwargs)
+
+
 # ============================================================================
 # 워크플로우 관련 예외
 # ============================================================================
