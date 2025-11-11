@@ -3,7 +3,7 @@ RAG 챗봇 서비스
 """
 import logging
 import threading
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embeddings import get_embedding_service
@@ -17,7 +17,8 @@ from app.core.exceptions import (
     ChatServiceError,
     ChatMessageError,
     LLMServiceError,
-    VectorStoreError
+    VectorStoreError,
+    LLMRateLimitError
 )
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,185 @@ class ChatService:
             retrieved_chunks=0,
             metadata={}
         )
+
+    async def generate_response_stream(
+        self,
+        request: ChatRequest,
+        user_uuid: str,
+        db: Optional[AsyncSession] = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        스트리밍 챗봇 응답 생성 (RAG 파이프라인만 지원)
+
+        SSE 이벤트 전송 순서:
+        1. ContentEvent (여러 번)
+        2. SourcesEvent (include_sources=True인 경우)
+        3. DoneEvent ("[DONE]")
+
+        Args:
+            request: 챗봇 요청
+            user_uuid: 사용자 UUID
+            db: 데이터베이스 세션
+
+        Yields:
+            str: SSE 형식 이벤트 ("data: {json}\\n\\n")
+
+        Raises:
+            ValueError: bot_id 누락 또는 입력 검증 실패
+            StreamingError: 스트리밍 중 오류 발생
+        """
+        from app.models.chat import ContentEvent, SourcesEvent, ErrorEvent, ErrorCode
+
+        logger.info(f"[ChatService] 스트리밍 요청: '{request.message[:50]}...' (bot_id={request.bot_id})")
+
+        # bot_id 검증
+        if not request.bot_id:
+            raise ValueError("bot_id는 필수 파라미터입니다")
+
+        # db 세션 검증
+        if not db:
+            raise ValueError("데이터베이스 세션이 필요합니다")
+
+        try:
+            # 1. 봇 조회 (Workflow 여부 확인)
+            from app.services.bot_service import get_bot_service
+            bot_service = get_bot_service()
+            bot = await bot_service.get_bot_by_id(request.bot_id, None, db, include_workflow=True)
+
+            if not bot:
+                error_event = ErrorEvent(
+                    code=ErrorCode.INVALID_REQUEST,
+                    message=f"Bot not found: {request.bot_id}"
+                )
+                yield error_event.model_dump_json(ensure_ascii=False)
+                return
+
+            # 2. Workflow가 있으면 기존 동기 응답을 SSE로 감싸서 전송 (Phase 1 호환 계층)
+            if bot.workflow:
+                logger.info(f"[ChatService] Workflow 감지. 동기 응답을 SSE로 변환합니다 (bot_id={request.bot_id})")
+                response = await self.generate_response(request, user_uuid, db)
+
+                # ContentEvent로 전체 응답 전송
+                yield ContentEvent(data=response.response).model_dump_json(ensure_ascii=False)
+
+                # SourcesEvent 전송 (include_sources=True인 경우)
+                if request.include_sources and response.sources:
+                    yield SourcesEvent(data=response.sources).model_dump_json(ensure_ascii=False)
+
+                return
+
+            # 3. Workflow가 없으면 RAG 스트리밍 파이프라인 실행
+            logger.info(f"[ChatService] RAG 스트리밍 파이프라인 실행 (bot_id={request.bot_id})")
+
+            # 벡터 스토어 가져오기
+            vector_store = get_vector_store(bot_id=request.bot_id, db=db)
+
+            # 입력 검증 및 정제
+            sanitized_message = sanitize_chat_query(request.message)
+            logger.debug(f"입력 검증 완료 (원본: {len(request.message)}자 → 정제: {len(sanitized_message)}자)")
+
+            # 쿼리 임베딩 생성
+            logger.debug("쿼리 임베딩 생성 중...")
+            query_embedding = await self.embedding_service.embed_query(sanitized_message)
+
+            # 벡터 검색
+            logger.debug(f"벡터 검색 중 (bot_id={request.bot_id}, top_k={request.top_k})...")
+            search_results = await vector_store.search(
+                query_embedding=query_embedding,
+                top_k=request.top_k,
+                # document_ids 필터링 (추가된 필드 사용)
+                filter_dict={"document_id": request.document_ids} if request.document_ids else None
+            )
+
+            # 검색 결과 추출
+            retrieved_chunks = self._extract_chunks(search_results)
+
+            if not retrieved_chunks:
+                logger.warning("검색 결과 없음")
+                error_event = ErrorEvent(
+                    code=ErrorCode.INVALID_REQUEST,
+                    message="관련 문서를 찾을 수 없습니다"
+                )
+                yield error_event.model_dump_json(ensure_ascii=False)
+                return
+
+            # 컨텍스트 구성
+            logger.debug(f"컨텍스트 구성 중 ({len(retrieved_chunks)}개 청크)...")
+            context = self.prompt_template.format_context(retrieved_chunks)
+
+            # 프롬프트 메시지 생성
+            messages = self.prompt_template.build_messages(
+                user_query=sanitized_message,
+                context=context
+            )
+
+            # LLM 스트리밍 호출
+            logger.info("LLM 스트리밍 API 호출 중...")
+
+            # temperature, max_tokens 우선순위: 요청 파라미터 > 설정 기본값
+            temperature = request.temperature if request.temperature is not None else settings.chat_temperature
+            max_tokens = request.max_tokens if request.max_tokens is not None else settings.chat_max_tokens
+
+            async for chunk in self.llm_client.generate_stream(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                model=request.model
+            ):
+                # ContentEvent 생성 및 전송
+                content_event = ContentEvent(data=chunk)
+                yield content_event.model_dump_json(ensure_ascii=False)
+
+            logger.info("LLM 스트리밍 완료")
+
+            # 출처 정보 전송 (선택적)
+            if request.include_sources:
+                sources = self._build_sources(retrieved_chunks, search_results)
+                sources_event = SourcesEvent(data=sources)
+                yield sources_event.model_dump_json(ensure_ascii=False)
+                logger.debug(f"출처 정보 전송 완료 ({len(sources)}개)")
+
+            return
+
+        except ValueError as e:
+            # 입력 검증 에러
+            logger.error(f"[ChatService] 입력 검증 실패: {e}")
+            error_event = ErrorEvent(
+                code=ErrorCode.INVALID_REQUEST,
+                message=str(e)
+            )
+            yield error_event.model_dump_json(ensure_ascii=False)
+            return
+
+        except VectorStoreError as e:
+            # 벡터 검색 에러
+            logger.error(f"[ChatService] 벡터 검색 오류: {e}", exc_info=True)
+            error_event = ErrorEvent(
+                code=ErrorCode.STREAM_ERROR,
+                message="문서 검색 중 오류가 발생했습니다"
+            )
+            yield error_event.model_dump_json(ensure_ascii=False)
+            return
+
+        except LLMRateLimitError as e:
+            # Rate Limit 에러
+            logger.error(f"[ChatService] LLM API 사용량 제한: {e}")
+            error_event = ErrorEvent(
+                code=ErrorCode.RATE_LIMIT_EXCEEDED,
+                message="API 사용량 제한을 초과했습니다. 잠시 후 다시 시도해주세요."
+            )
+            yield error_event.model_dump_json(ensure_ascii=False)
+            return
+
+        except Exception as e:
+            # 기타 예외
+            logger.error(f"[ChatService] 스트리밍 중 예기치 않은 오류: {e}", exc_info=True)
+            error_event = ErrorEvent(
+                code=ErrorCode.UNKNOWN_ERROR,
+                message="응답 생성 중 오류가 발생했습니다"
+            )
+            yield error_event.model_dump_json(ensure_ascii=False)
+            return
 
     async def _execute_rag_pipeline(
         self,
