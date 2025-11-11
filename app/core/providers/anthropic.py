@@ -73,9 +73,12 @@ class AnthropicClient(BaseLLMClient):
             # 메시지 형식 변환
             system_message, converted_messages = self._convert_messages(messages)
 
+            # 런타임 모델 오버라이드 지원
+            model_name = kwargs.pop("model", None) or self.model
+
             # Anthropic API 호출
             response = await self.client.messages.create(
-                model=self.model,
+                model=model_name,
                 system=system_message,
                 messages=converted_messages,
                 temperature=temperature,
@@ -136,9 +139,12 @@ class AnthropicClient(BaseLLMClient):
             # 메시지 형식 변환
             system_message, converted_messages = self._convert_messages(messages)
 
+            # 런타임 모델 오버라이드 지원
+            model_name = kwargs.pop("model", None) or self.model
+
             # Anthropic 스트리밍 API 호출
             async with self.client.messages.stream(
-                model=self.model,
+                model=model_name,
                 system=system_message,
                 messages=converted_messages,
                 temperature=temperature,
