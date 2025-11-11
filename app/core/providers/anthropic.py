@@ -65,7 +65,7 @@ class AnthropicClient(BaseLLMClient):
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
-        max_tokens: int = 1000,
+        max_tokens: int = 4000,
         **kwargs
     ) -> str:
         """비동기 완료 생성"""
@@ -131,7 +131,7 @@ class AnthropicClient(BaseLLMClient):
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
-        max_tokens: int = 1000,
+        max_tokens: int = 4000,
         **kwargs
     ) -> AsyncGenerator[str, None]:
         """스트리밍 응답"""

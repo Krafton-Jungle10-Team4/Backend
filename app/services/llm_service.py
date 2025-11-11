@@ -21,7 +21,7 @@ class LLMService:
         prompt: str,
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 1000
+        max_tokens: int = 4000
     ) -> str:
         """
         워크플로우용 LLM 생성 (단순 프롬프트 전달)
@@ -97,7 +97,7 @@ class LLMService:
         query: str,
         context: str,
         temperature: float = 0.7,
-        max_tokens: int = 2000
+        max_tokens: int = 4000
     ) -> str:
         """
         LLM 응답 생성 (RAG 파이프라인용)

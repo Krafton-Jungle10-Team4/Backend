@@ -28,7 +28,7 @@ class LLMNodeConfig(NodeConfig):
         description="프롬프트 템플릿"
     )
     temperature: float = Field(default=0.7, ge=0.0, le=1.0, description="Temperature")
-    max_tokens: int = Field(default=500, ge=1, le=4000, description="최대 토큰 수")
+    max_tokens: int = Field(default=4000, ge=1, le=8192, description="최대 토큰 수")
     use_context_from: Optional[List[str]] = Field(
         default=None,
         description="컨텍스트로 사용할 노드 ID 리스트"
@@ -260,8 +260,8 @@ class LLMNode(BaseNode[LLMNodeConfig]):
         if self.config.temperature < 0 or self.config.temperature > 1:
             return False, "Temperature must be between 0 and 1"
 
-        if self.config.max_tokens < 1 or self.config.max_tokens > 4000:
-            return False, "max_tokens must be between 1 and 4000"
+        if self.config.max_tokens < 1 or self.config.max_tokens > 8192:
+            return False, "max_tokens must be between 1 and 8192"
 
         if len(self.inputs) == 0:
             return False, "LLM node must have at least one input"
@@ -308,8 +308,8 @@ class LLMNode(BaseNode[LLMNodeConfig]):
                 "max_tokens": {
                     "type": "number",
                     "min": 1,
-                    "max": 4000,
-                    "default": 500,
+                    "max": 8192,
+                    "default": 4000,
                     "description": "최대 토큰 수"
                 },
                 "use_context_from": {

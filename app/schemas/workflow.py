@@ -43,7 +43,7 @@ class LLMNodeData(BaseModel):
         description="프롬프트 템플릿"
     )
     temperature: float = Field(0.7, description="Temperature", ge=0.0, le=1.0)
-    max_tokens: int = Field(500, description="최대 토큰 수", ge=1, le=4000)
+    max_tokens: int = Field(4000, description="최대 토큰 수", ge=1, le=8192)
     use_context_from: Optional[List[str]] = Field(None, description="컨텍스트로 사용할 노드 ID 리스트")
 
 
@@ -141,7 +141,7 @@ class Workflow(BaseModel):
                             "model": "gpt-4",
                             "prompt_template": "Context: {context}\nQuestion: {question}",
                             "temperature": 0.7,
-                            "max_tokens": 500
+                            "max_tokens": 4000
                         }
                     },
                     {

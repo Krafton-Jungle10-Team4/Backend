@@ -25,7 +25,7 @@ class BaseLLMClient(ABC):
         # 창의성 기본값
         temperature: float = 0.7,
         # 생성 답변 기본값
-        max_tokens: int = 1000,
+        max_tokens: int = 4000,
         # 추가 옵션들을 “이름=값” 형태로 무한히 더 받을 수 있는 가변 인자
         **kwargs
     ) -> str:
