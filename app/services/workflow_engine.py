@@ -188,12 +188,29 @@ class WorkflowEngine:
         user_uuid: str
     ):
         """LLM 노드 실행"""
-        model_info = node.data.get("model", {"provider": "openai", "name": "gpt-4"})
+        model_info = node.data.get("model")
+        provider = node.data.get("provider")
+        model_name = None
+
+        if isinstance(model_info, dict):
+            provider = provider or model_info.get("provider")
+            model_name = model_info.get("name") or model_info.get("id")
+        else:
+            model_name = model_info
+
+        if not provider:
+            provider = "openai" if (model_name or "").startswith("gpt") else "anthropic"
+        provider = provider.lower()
         prompt_template = node.data.get("prompt", "검색된 문서를 기반으로 답변하세요.")
         temperature = node.data.get("temperature", 0.7)
         max_tokens = node.data.get("max_tokens", 2000)
 
-        logger.info(f"[WorkflowEngine] LLM 호출: model={model_info['name']}, temp={temperature}")
+        logger.info(
+            "[WorkflowEngine] LLM 호출: provider=%s model=%s temp=%.2f",
+            provider,
+            model_name or "default",
+            temperature
+        )
 
         # 프롬프트 생성
         context_text = "\n\n".join([
@@ -206,7 +223,9 @@ class WorkflowEngine:
             query=context.user_message,
             context=context_text,
             temperature=temperature,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            provider=provider,
+            model=model_name
         )
 
         context.llm_response = response

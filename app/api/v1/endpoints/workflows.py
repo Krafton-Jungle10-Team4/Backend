@@ -23,6 +23,7 @@ from app.schemas.workflow import (
     ModelsResponse
 )
 from app.services.bot_service import BotService
+from app.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -231,6 +232,8 @@ async def update_bot_workflow(
                 }
             )
 
+        _log_llm_selection(bot_id, workflow)
+
         # 봇 서비스를 통해 워크플로우 업데이트
         bot_service = BotService()
         success = await bot_service.update_bot_workflow(
@@ -343,23 +346,29 @@ async def get_models(
         # 하드코딩된 모델 목록 (실제로는 설정이나 DB에서 가져와야 함)
         models = [
             ModelInfo(
-                id="gpt-4",
-                name="GPT-4",
-                provider="OpenAI",
-                description="OpenAI의 최신 대규모 언어 모델"
+                id="gpt-5-chat-latest",
+                name="GPT-5 chat",
+                provider="openai",
+                description="OpenAI의 최신 고효율 모델"
             ),
             ModelInfo(
-                id="gpt-3.5-turbo",
-                name="GPT-3.5 Turbo",
-                provider="OpenAI",
-                description="빠르고 효율적인 OpenAI 모델"
+                id="chatgpt-4o-latest",
+                name="GPT-4o",
+                provider="openai",
+                description="OpenAI의 경량 멀티 모델"
             ),
             ModelInfo(
-                id="claude-3",
-                name="Claude 3",
-                provider="Anthropic",
-                description="Anthropic의 최신 AI 모델"
-            )
+                id="claude-sonnet-4-5-20250929",
+                name="Claude 4.5 Sonnet",
+                provider="anthropic",
+                description="Anthropic의 범용 Sonnet 모델"
+            ),
+            ModelInfo(
+                id="claude-haiku-4-5-20251001",
+                name="Claude 4.5 Haiku",
+                provider="anthropic",
+                description="낮은 지연시간의 경량 Claude 모델"
+            ),
         ]
 
         return ModelsResponse(models=models)
@@ -370,3 +379,45 @@ async def get_models(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"모델 목록 조회 실패: {str(e)}"
         )
+
+
+def _log_llm_selection(bot_id: str, workflow: Workflow) -> None:
+    """저장 시 선택된 LLM Provider/Model 로그"""
+    for node in workflow.nodes:
+        if node.type != "llm":
+            continue
+        data = node.data or {}
+        provider = data.get("provider")
+        raw_model = data.get("model")
+
+        model_name = None
+        if isinstance(raw_model, dict):
+            provider = provider or raw_model.get("provider")
+            model_name = raw_model.get("name") or raw_model.get("id")
+        else:
+            model_name = raw_model
+
+        provider = _infer_provider(provider, model_name)
+        logger.info(
+            "[Workflow] Bot %s LLM node %s saved with provider=%s model=%s",
+            bot_id,
+            node.id,
+            provider,
+            model_name or "default"
+        )
+
+
+def _infer_provider(provider: Optional[str], model_name: Optional[str]) -> str:
+    """모델명 기반 provider 추론 (로그용)"""
+    if provider:
+        return provider
+    if not model_name:
+        return settings.llm_provider or "openai"
+    lowered = model_name.lower()
+    if lowered.startswith("gpt") or lowered.startswith("o1"):
+        return "openai"
+    if lowered.startswith("claude"):
+        return "anthropic"
+    if "/" in lowered:
+        return lowered.split("/")[0]
+    return settings.llm_provider or "openai"

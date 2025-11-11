@@ -12,6 +12,7 @@ from app.core.workflow.node_registry import node_registry
 from app.core.workflow.validator import WorkflowValidator
 from app.services.vector_service import VectorService
 from app.services.llm_service import LLMService
+from app.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -171,10 +172,22 @@ class WorkflowExecutor:
 
             if node_type == NodeType.LLM.value:
                 model_value = data.get("model")
+                provider_value = data.get("provider")
                 if isinstance(model_value, dict):
-                    data["model"] = model_value.get("name") or model_value.get("id") or "gpt-4"
+                    provider_value = provider_value or model_value.get("provider")
+                    data["model"] = (
+                        model_value.get("name")
+                        or model_value.get("id")
+                        or settings.openai_model
+                    )
                 elif not isinstance(model_value, str) or not model_value:
-                    data["model"] = "gpt-4"
+                    data["model"] = settings.openai_model
+
+                if not provider_value:
+                    provider_value = WorkflowExecutor._infer_provider_from_model(
+                        data.get("model")
+                    )
+                data["provider"] = (provider_value or settings.llm_provider).lower()
 
                 if "prompt_template" not in data and data.get("prompt"):
                     data["prompt_template"] = data["prompt"]
@@ -190,6 +203,22 @@ class WorkflowExecutor:
 
                 if "document_ids" not in data and data.get("documentIds"):
                     data["document_ids"] = data["documentIds"]
+    @staticmethod
+    def _infer_provider_from_model(model: Optional[str]) -> str:
+        """모델명으로 Provider 추론"""
+        if not model:
+            return settings.llm_provider or "openai"
+
+        lowered = model.lower()
+        if lowered.startswith("gpt") or lowered.startswith("o1"):
+            return "openai"
+        if lowered.startswith("claude"):
+            return "anthropic"
+        if "/" in lowered:
+            provider_part = lowered.split("/")[0]
+            if provider_part in {"openai", "anthropic"}:
+                return provider_part
+        return settings.llm_provider or "openai"
 
     def _create_nodes(self, nodes_data: List[Dict], edges_data: List[Dict]):
         """
