@@ -142,5 +142,27 @@ class ErrorEvent(BaseModel):
     )
 
 
+class WorkflowNodeEvent(BaseModel):
+    """워크플로우 노드 상태 이벤트"""
+    type: Literal["node"] = "node"
+    node_id: str = Field(..., description="노드 ID")
+    node_type: str = Field(..., description="노드 타입")
+    status: str = Field(..., description="노드 상태")
+    message: Optional[str] = Field(None, description="상태 메시지")
+    output_preview: Optional[str] = Field(None, description="출력 요약")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "type": "node",
+                "node_id": "llm-1",
+                "node_type": "llm",
+                "status": "running",
+                "message": "LLM node started"
+            }
+        }
+    )
+
+
 # SSE 이벤트 유니온 타입 (타입 힌팅용)
-SSEEvent = ContentEvent | SourcesEvent | ErrorEvent
+SSEEvent = ContentEvent | SourcesEvent | ErrorEvent | WorkflowNodeEvent

@@ -5,7 +5,7 @@
 토폴로지 정렬을 사용하여 실행 순서를 결정하고 각 노드를 순차적으로 실행합니다.
 """
 
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 from collections import defaultdict, deque
 from app.core.workflow.base_node import BaseNode, NodeType, NodeStatus
 from app.core.workflow.node_registry import node_registry
@@ -13,7 +13,6 @@ from app.core.workflow.validator import WorkflowValidator
 from app.services.vector_service import VectorService
 from app.services.llm_service import LLMService
 import logging
-import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +40,10 @@ class WorkflowExecutionContext:
         # 서비스 인스턴스
         self.vector_service: Optional[VectorService] = None
         self.llm_service: Optional[LLMService] = None
-        self.bot_id: Optional[int] = None
+        self.bot_id: Optional[str] = None
         self.db: Optional[Any] = None
+        self.stream_handler: Optional[Any] = None
+        self.text_normalizer: Optional[Callable[[str], str]] = None
 
     def set_node_output(self, node_id: str, output: Any):
         """노드 출력 저장"""
@@ -62,7 +63,9 @@ class WorkflowExecutionContext:
             "vector_service": self.vector_service,
             "llm_service": self.llm_service,
             "bot_id": self.bot_id,
-            "db": self.db
+            "db": self.db,
+            "stream_handler": self.stream_handler,
+            "text_normalizer": self.text_normalizer
         }
 
 
@@ -87,7 +90,9 @@ class WorkflowExecutor:
         bot_id: str,
         db: Any,
         vector_service: Optional[VectorService] = None,
-        llm_service: Optional[LLMService] = None
+        llm_service: Optional[LLMService] = None,
+        stream_handler: Optional[Any] = None,
+        text_normalizer: Optional[Callable[[str], str]] = None
     ) -> str:
         """
         워크플로우 실행
@@ -140,9 +145,15 @@ class WorkflowExecutor:
             context.llm_service = llm_service
             context.bot_id = bot_id
             context.db = db
+            context.stream_handler = stream_handler
+            context.text_normalizer = text_normalizer
 
             # 노드 실행
-            final_response = await self._execute_nodes(context)
+            final_response = await self._execute_nodes(
+                context,
+                stream_handler=stream_handler,
+                text_normalizer=text_normalizer
+            )
 
             return final_response
 
@@ -224,7 +235,12 @@ class WorkflowExecutor:
                 self.nodes[source].add_output(target)
                 self.nodes[target].add_input(source)
 
-    async def _execute_nodes(self, context: WorkflowExecutionContext) -> str:
+    async def _execute_nodes(
+        self,
+        context: WorkflowExecutionContext,
+        stream_handler: Optional[Any] = None,
+        text_normalizer: Optional[Callable[[str], str]] = None
+    ) -> str:
         """
         노드들을 순서대로 실행
 
@@ -245,26 +261,77 @@ class WorkflowExecutor:
             try:
                 logger.info(f"노드 실행 중: {node_id} ({node.node_type.value})")
 
+                if stream_handler:
+                    await stream_handler.emit_node_event(
+                        node_id=node_id,
+                        node_type=node.node_type.value,
+                        status=NodeStatus.RUNNING.value,
+                        message=f"{node.node_type.value} node started"
+                    )
+
                 # 노드 실행
                 result = await node.execute(context.to_dict())
 
                 # 결과 저장
-                if result.output:
+                if result.status == NodeStatus.COMPLETED and result.output:
                     context.set_node_output(node_id, result.output)
 
-                    # End 노드의 경우 최종 응답 추출
                     if node.node_type == NodeType.END and isinstance(result.output, dict):
                         final_response = result.output.get("response", final_response)
 
-                logger.info(f"노드 {node_id} 실행 완료")
+                logger.info(f"노드 {node_id} 실행 완료 (status={result.status.value})")
+
+                if stream_handler:
+                    output_preview = self._summarize_output(result.output, text_normalizer)
+                    await stream_handler.emit_node_event(
+                        node_id=node_id,
+                        node_type=node.node_type.value,
+                        status=result.status.value,
+                        message="node completed" if result.status == NodeStatus.COMPLETED else "node finished",
+                        output_preview=output_preview
+                    )
+
+                if result.status == NodeStatus.FAILED:
+                    raise RuntimeError(result.error or f"Node {node_id} failed")
 
             except Exception as e:
                 logger.error(f"노드 {node_id} 실행 실패: {str(e)}")
                 node.set_status(NodeStatus.FAILED)
-                # 실패한 노드가 있어도 계속 진행 (옵션에 따라 중단할 수도 있음)
-                continue
+                if stream_handler:
+                    await stream_handler.emit_node_event(
+                        node_id=node_id,
+                        node_type=node.node_type.value,
+                        status=NodeStatus.FAILED.value,
+                        message=str(e)
+                    )
+                raise
 
         return final_response
+
+    @staticmethod
+    def _summarize_output(
+        output: Any,
+        normalizer: Optional[Callable[[str], str]] = None
+    ) -> Optional[str]:
+        """노드 출력 요약 문자열 생성"""
+        summary: Optional[str] = None
+
+        if isinstance(output, dict):
+            if "llm_response" in output:
+                summary = output["llm_response"]
+            elif "response" in output:
+                summary = output["response"]
+            elif "retrieved_documents" in output:
+                summary = f"{len(output['retrieved_documents'])} documents retrieved"
+        elif isinstance(output, str):
+            summary = output
+
+        if summary and normalizer:
+            summary = normalizer(summary)
+
+        if summary:
+            return summary[:200]
+        return None
 
     async def execute_parallel(
         self,

@@ -93,12 +93,17 @@ class LLMNode(BaseNode[LLMNodeConfig]):
             prompt = self._create_prompt(user_message, combined_context)
 
             # LLM 호출
+            stream_handler = context.get("stream_handler")
+            text_normalizer = context.get("text_normalizer")
+
             llm_response = await self._call_llm(
                 llm_service,
                 prompt,
                 self.config.model,
                 self.config.temperature,
-                self.config.max_tokens
+                self.config.max_tokens,
+                stream_handler=stream_handler,
+                text_normalizer=text_normalizer
             )
 
             result = NodeExecutionResult(
@@ -193,7 +198,9 @@ class LLMNode(BaseNode[LLMNodeConfig]):
         prompt: str,
         model: str,
         temperature: float,
-        max_tokens: int
+        max_tokens: int,
+        stream_handler=None,
+        text_normalizer=None
     ) -> str:
         """
         LLM 서비스 호출
@@ -210,12 +217,26 @@ class LLMNode(BaseNode[LLMNodeConfig]):
         """
         try:
             # LLM 서비스의 generate 메서드 호출
-            response = await llm_service.generate(
-                prompt=prompt,
-                model=model,
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
+            if stream_handler:
+                async def on_chunk(chunk: str):
+                    return await stream_handler.emit_content_chunk(chunk)
+
+                response = await llm_service.generate_stream(
+                    prompt=prompt,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    on_chunk=on_chunk
+                )
+            else:
+                response = await llm_service.generate(
+                    prompt=prompt,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+                if text_normalizer:
+                    response = text_normalizer(response)
 
             return response
 

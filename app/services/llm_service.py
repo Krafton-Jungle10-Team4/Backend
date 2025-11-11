@@ -2,7 +2,7 @@
 LLM 서비스
 """
 import logging
-from typing import Optional
+from typing import Optional, Callable, Awaitable, List
 
 from app.core.llm_client import get_llm_client
 from app.config import settings
@@ -35,7 +35,7 @@ class LLMService:
         Returns:
             LLM 응답
         """
-        logger.info(f"[LLMService] LLM generate 호출: model={model}, temp={temperature}")
+        logger.info(f"[LLMService] LLM generate 호출: model={model or settings.openai_model}, temp={temperature}")
 
         messages = [
             {"role": "user", "content": prompt}
@@ -45,11 +45,52 @@ class LLMService:
         response = await self.llm_client.generate(
             messages=messages,
             temperature=temperature,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            model=model
         )
 
         logger.info(f"[LLMService] LLM 응답 생성 완료: {len(response)}자")
         return response
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1000,
+        on_chunk: Optional[Callable[[str], Awaitable[Optional[str]]]] = None
+    ) -> str:
+        """
+        워크플로우용 LLM 스트리밍 생성
+
+        Args:
+            prompt: 프롬프트 텍스트
+            model: 모델 이름
+            temperature: Temperature 설정
+            max_tokens: 최대 토큰 수
+            on_chunk: 청크 수신 시 호출되는 콜백 (평문화/전송 담당)
+
+        Returns:
+            전체 응답 문자열
+        """
+        messages = [
+            {"role": "user", "content": prompt}
+        ]
+
+        buffer: List[str] = []
+        async for chunk in self.llm_client.generate_stream(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            model=model
+        ):
+            processed = chunk
+            if on_chunk:
+                processed = await on_chunk(chunk)
+            if processed:
+                buffer.append(processed)
+
+        return "".join(buffer)
 
     async def generate_response(
         self,
