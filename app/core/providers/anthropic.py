@@ -1,39 +1,40 @@
 """
 Anthropic Claude API 클라이언트 구현
 """
-from typing import List, Dict, Optional, AsyncGenerator
+from typing import List, Dict, AsyncGenerator, Optional
 import logging
 import httpx
 from anthropic import AsyncAnthropic
 from anthropic import APIError, RateLimitError, APITimeoutError
-from app.core.llm_client import BaseLLMClient
+
+from app.core.llm_base import BaseLLMClient
+from app.core.llm_registry import register_provider
+from app.core.providers.config import AnthropicConfig
 from app.core.exceptions import (
     LLMAPIError,
     LLMRateLimitError,
-    LLMInvalidResponseError
 )
 
 logger = logging.getLogger(__name__)
 
 
+@register_provider("anthropic")
 class AnthropicClient(BaseLLMClient):
     """Anthropic Claude API 클라이언트"""
 
-    def __init__(
-        self,
-        api_key: str,
-        model: str = "claude-sonnet-4-5-20250929",
-        system_prompt: Optional[str] = None,
-    ):
-        # httpx 클라이언트를 명시적으로 생성 (proxies 파라미터 제거)
+    def __init__(self, config: AnthropicConfig):
         http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(60.0, connect=10.0),
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
         )
-        self.client = AsyncAnthropic(api_key=api_key, http_client=http_client)
-        self.model = model
-        self.system_prompt = system_prompt if system_prompt else "당신은 유능한 AI 어시스턴트입니다. 사용자에게 친절하고 명확하게 답변해야 합니다."
-        logger.info(f"Anthropic Client 초기화: 모델={model}")
+        self.config = config
+        self.client = AsyncAnthropic(api_key=config.api_key, http_client=http_client)
+        self.model = config.default_model
+        self.system_prompt = (
+            config.system_prompt
+            or "당신은 유능한 AI 어시스턴트입니다. 사용자에게 친절하고 명확하게 답변해야 합니다."
+        )
+        logger.info("Anthropic Client 초기화: 모델=%s", self.model)
 
     def _convert_messages(
         self, messages: List[Dict[str, str]]
@@ -93,28 +94,19 @@ class AnthropicClient(BaseLLMClient):
             logger.error(f"Anthropic API 사용량 제한: {e}")
             raise LLMRateLimitError(
                 message="Anthropic API 사용량 제한에 도달했습니다",
-                details={
-                    "model": self.model,
-                    "error": str(e)
-                }
+                details={"model": self.model, "error": str(e)}
             )
         except APITimeoutError as e:
             logger.error(f"Anthropic API 타임아웃: {e}")
             raise LLMAPIError(
                 message="Anthropic API 요청 시간이 초과되었습니다",
-                details={
-                    "model": self.model,
-                    "error": str(e)
-                }
+                details={"model": self.model, "error": str(e)}
             )
         except APIError as e:
             logger.error(f"Anthropic API 오류: {e}")
             raise LLMAPIError(
                 message=f"Anthropic API 호출 중 오류가 발생했습니다: {str(e)}",
-                details={
-                    "model": self.model,
-                    "error": str(e)
-                }
+                details={"model": self.model, "error": str(e)}
             )
         except Exception as e:
             logger.error(f"Anthropic API 호출 실패 (예기치 않은 오류): {e}", exc_info=True)
