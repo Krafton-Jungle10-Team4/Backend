@@ -166,7 +166,7 @@ async def chat_stream(
                 code=ErrorCode.UNKNOWN_ERROR,
                 message="응답 생성 중 오류가 발생했습니다"
             )
-            yield f"data: {error_event.model_dump_json(ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(error_event.model_dump(), ensure_ascii=False)}\n\n"
             error_sent = True
 
         if not error_sent:

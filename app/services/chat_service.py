@@ -1,18 +1,31 @@
 """
 RAG 챗봇 서비스
 """
+import asyncio
+import copy
 import logging
 import threading
-from typing import List, Dict, Optional, AsyncGenerator
+import json
+from typing import List, Dict, Optional, AsyncGenerator, Callable, Awaitable, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embeddings import get_embedding_service
 from app.core.vector_store import get_vector_store
 from app.core.llm_client import get_llm_client
 from app.core.prompt_templates import PromptTemplate
-from app.models.chat import ChatRequest, ChatResponse, Source
+from app.models.chat import (
+    ChatRequest,
+    ChatResponse,
+    Source,
+    ContentEvent,
+    SourcesEvent,
+    ErrorEvent,
+    ErrorCode,
+    WorkflowNodeEvent
+)
 from app.config import settings
 from app.utils.validators import sanitize_chat_query
+from app.utils.text_utils import strip_markdown
 from app.core.exceptions import (
     ChatServiceError,
     ChatMessageError,
@@ -22,6 +35,68 @@ from app.core.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class WorkflowStreamHandler:
+    """워크플로우 스트리밍 이벤트 헬퍼"""
+
+    def __init__(
+        self,
+        emit_fn: Callable[[Dict[str, Any]], Awaitable[None]],
+        include_sources: bool,
+        text_normalizer: Callable[[str], str]
+    ):
+        self._emit_fn = emit_fn
+        self.include_sources = include_sources
+        self._normalize = text_normalizer
+
+    async def emit_node_event(
+        self,
+        node_id: str,
+        node_type: str,
+        status: str,
+        message: Optional[str] = None,
+        output_preview: Optional[str] = None
+    ) -> None:
+        event = WorkflowNodeEvent(
+            node_id=node_id,
+            node_type=node_type,
+            status=status,
+            message=message,
+            output_preview=output_preview
+        )
+        await self._emit_fn(event.model_dump())
+
+    async def emit_content_chunk(self, chunk: str) -> Optional[str]:
+        """LLM 토큰 청크를 평문화 후 이벤트 전송"""
+        normalized = self._normalize(chunk)
+        if not normalized:
+            return None
+
+        await self._emit_fn(ContentEvent(data=normalized).model_dump())
+        return normalized
+
+    async def emit_sources(self, sources: List[Source]) -> None:
+        if not self.include_sources or not sources:
+            return
+        await self._emit_fn(SourcesEvent(data=sources).model_dump())
+
+    def _convert_documents_to_sources(self, documents: List[Dict[str, Any]]) -> List[Source]:
+        sources: List[Source] = []
+        for idx, doc in enumerate(documents):
+            metadata = doc.get("metadata") or {}
+            sources.append(Source(
+                document_id=metadata.get("document_id") or metadata.get("doc_id") or "unknown",
+                chunk_id=metadata.get("chunk_id") or f"chunk_{idx}",
+                content=(doc.get("content") or "")[:200],
+                similarity_score=float(doc.get("similarity", 0.0)),
+                metadata={
+                    "filename": None,
+                    "chunk_index": metadata.get("chunk_index"),
+                    "file_type": metadata.get("file_type")
+                }
+            ))
+        return sources
 
 
 class ChatService:
@@ -90,16 +165,7 @@ class ChatService:
         llm_service = LLMService()
 
         executor = WorkflowExecutor()
-
-        # 런타임 모델 오버라이드 처리
-        workflow_data = bot.workflow.copy() if bot.workflow else {}
-        if request.model and workflow_data.get("nodes"):
-            logger.info(f"[ChatService] 런타임 모델 오버라이드: {request.model}")
-            for node in workflow_data["nodes"]:
-                if node.get("type") == "llm" and node.get("data"):
-                    original_model = node["data"].get("model")
-                    node["data"]["model"] = request.model
-                    logger.info(f"[ChatService] LLM 노드 모델 변경: {original_model} → {request.model}")
+        workflow_data = self._prepare_workflow_data(bot, request)
 
         # 워크플로우 실행
         response_text = await executor.execute(
@@ -109,7 +175,9 @@ class ChatService:
             bot_id=bot.bot_id,
             db=db,
             vector_service=vector_service,
-            llm_service=llm_service
+            llm_service=llm_service,
+            stream_handler=None,
+            text_normalizer=strip_markdown
         )
 
         # ChatResponse 형식으로 변환
@@ -127,41 +195,18 @@ class ChatService:
         user_uuid: str,
         db: Optional[AsyncSession] = None
     ) -> AsyncGenerator[str, None]:
-        """
-        스트리밍 챗봇 응답 생성 (RAG 파이프라인만 지원)
-
-        SSE 이벤트 전송 순서:
-        1. ContentEvent (여러 번)
-        2. SourcesEvent (include_sources=True인 경우)
-        3. DoneEvent ("[DONE]")
-
-        Args:
-            request: 챗봇 요청
-            user_uuid: 사용자 UUID
-            db: 데이터베이스 세션
-
-        Yields:
-            str: SSE 형식 이벤트 ("data: {json}\\n\\n")
-
-        Raises:
-            ValueError: bot_id 누락 또는 입력 검증 실패
-            StreamingError: 스트리밍 중 오류 발생
-        """
-        from app.models.chat import ContentEvent, SourcesEvent, ErrorEvent, ErrorCode
-
+        """워크플로우/일반 RAG 공통 스트리밍 응답 생성"""
         logger.info(f"[ChatService] 스트리밍 요청: '{request.message[:50]}...' (bot_id={request.bot_id})")
 
-        # bot_id 검증
         if not request.bot_id:
             raise ValueError("bot_id는 필수 파라미터입니다")
 
-        # db 세션 검증
         if not db:
             raise ValueError("데이터베이스 세션이 필요합니다")
 
         try:
-            # 1. 봇 조회 (Workflow 여부 확인)
             from app.services.bot_service import get_bot_service
+
             bot_service = get_bot_service()
             bot = await bot_service.get_bot_by_id(request.bot_id, None, db, include_workflow=True)
 
@@ -170,135 +215,160 @@ class ChatService:
                     code=ErrorCode.INVALID_REQUEST,
                     message=f"Bot not found: {request.bot_id}"
                 )
-                yield error_event.model_dump_json(ensure_ascii=False)
+                yield json.dumps(error_event.model_dump(), ensure_ascii=False)
                 return
 
-            # 2. Workflow가 있으면 기존 동기 응답을 SSE로 감싸서 전송 (Phase 1 호환 계층)
             if bot.workflow:
-                logger.info(f"[ChatService] Workflow 감지. 동기 응답을 SSE로 변환합니다 (bot_id={request.bot_id})")
-                response = await self.generate_response(request, user_uuid, db)
-
-                # ContentEvent로 전체 응답 전송
-                yield ContentEvent(data=response.response).model_dump_json(ensure_ascii=False)
-
-                # SourcesEvent 전송 (include_sources=True인 경우)
-                if request.include_sources and response.sources:
-                    yield SourcesEvent(data=response.sources).model_dump_json(ensure_ascii=False)
-
+                async for payload in self._stream_workflow_response(bot, request, db):
+                    yield payload
                 return
 
-            # 3. Workflow가 없으면 RAG 스트리밍 파이프라인 실행
-            logger.info(f"[ChatService] RAG 스트리밍 파이프라인 실행 (bot_id={request.bot_id})")
-
-            # 벡터 스토어 가져오기
+            # --- 기본 RAG 스트리밍 파이프라인 ---
             vector_store = get_vector_store(bot_id=request.bot_id, db=db)
-
-            # 입력 검증 및 정제
             sanitized_message = sanitize_chat_query(request.message)
-            logger.debug(f"입력 검증 완료 (원본: {len(request.message)}자 → 정제: {len(sanitized_message)}자)")
 
-            # 쿼리 임베딩 생성
-            logger.debug("쿼리 임베딩 생성 중...")
             query_embedding = await self.embedding_service.embed_query(sanitized_message)
-
-            # 벡터 검색
-            logger.debug(f"벡터 검색 중 (bot_id={request.bot_id}, top_k={request.top_k})...")
             search_results = await vector_store.search(
                 query_embedding=query_embedding,
                 top_k=request.top_k,
-                # document_ids 필터링 (추가된 필드 사용)
                 filter_dict={"document_id": request.document_ids} if request.document_ids else None
             )
 
-            # 검색 결과 추출
             retrieved_chunks = self._extract_chunks(search_results)
-
             if not retrieved_chunks:
-                logger.warning("검색 결과 없음")
                 error_event = ErrorEvent(
                     code=ErrorCode.INVALID_REQUEST,
                     message="관련 문서를 찾을 수 없습니다"
                 )
-                yield error_event.model_dump_json(ensure_ascii=False)
+                yield json.dumps(error_event.model_dump(), ensure_ascii=False)
                 return
 
-            # 컨텍스트 구성
-            logger.debug(f"컨텍스트 구성 중 ({len(retrieved_chunks)}개 청크)...")
             context = self.prompt_template.format_context(retrieved_chunks)
-
-            # 프롬프트 메시지 생성
             messages = self.prompt_template.build_messages(
                 user_query=sanitized_message,
                 context=context
             )
 
-            # LLM 스트리밍 호출
-            logger.info("LLM 스트리밍 API 호출 중...")
-
-            # temperature, max_tokens 우선순위: 요청 파라미터 > 설정 기본값
             temperature = request.temperature if request.temperature is not None else settings.chat_temperature
             max_tokens = request.max_tokens if request.max_tokens is not None else settings.chat_max_tokens
+
+            resolved_model = self._resolve_model_name(request.model)
 
             async for chunk in self.llm_client.generate_stream(
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                model=request.model
+                model=resolved_model
             ):
-                # ContentEvent 생성 및 전송
-                content_event = ContentEvent(data=chunk)
-                yield content_event.model_dump_json(ensure_ascii=False)
+                normalized_chunk = strip_markdown(chunk)
+                if not normalized_chunk:
+                    continue
+                content_event = ContentEvent(data=normalized_chunk)
+                yield json.dumps(content_event.model_dump(), ensure_ascii=False)
 
-            logger.info("LLM 스트리밍 완료")
-
-            # 출처 정보 전송 (선택적)
             if request.include_sources:
                 sources = self._build_sources(retrieved_chunks, search_results)
-                sources_event = SourcesEvent(data=sources)
-                yield sources_event.model_dump_json(ensure_ascii=False)
-                logger.debug(f"출처 정보 전송 완료 ({len(sources)}개)")
-
-            return
+                if sources:
+                    sources_event = SourcesEvent(data=sources)
+                    yield json.dumps(sources_event.model_dump(), ensure_ascii=False)
 
         except ValueError as e:
-            # 입력 검증 에러
             logger.error(f"[ChatService] 입력 검증 실패: {e}")
             error_event = ErrorEvent(
                 code=ErrorCode.INVALID_REQUEST,
                 message=str(e)
             )
-            yield error_event.model_dump_json(ensure_ascii=False)
+            yield json.dumps(error_event.model_dump(), ensure_ascii=False)
             return
 
         except VectorStoreError as e:
-            # 벡터 검색 에러
             logger.error(f"[ChatService] 벡터 검색 오류: {e}", exc_info=True)
             error_event = ErrorEvent(
                 code=ErrorCode.STREAM_ERROR,
                 message="문서 검색 중 오류가 발생했습니다"
             )
-            yield error_event.model_dump_json(ensure_ascii=False)
+            yield json.dumps(error_event.model_dump(), ensure_ascii=False)
             return
 
         except LLMRateLimitError as e:
-            # Rate Limit 에러
             logger.error(f"[ChatService] LLM API 사용량 제한: {e}")
             error_event = ErrorEvent(
                 code=ErrorCode.RATE_LIMIT_EXCEEDED,
                 message="API 사용량 제한을 초과했습니다. 잠시 후 다시 시도해주세요."
             )
-            yield error_event.model_dump_json(ensure_ascii=False)
+            yield json.dumps(error_event.model_dump(), ensure_ascii=False)
             return
 
         except Exception as e:
-            # 기타 예외
             logger.error(f"[ChatService] 스트리밍 중 예기치 않은 오류: {e}", exc_info=True)
             error_event = ErrorEvent(
                 code=ErrorCode.UNKNOWN_ERROR,
                 message="응답 생성 중 오류가 발생했습니다"
             )
-            yield error_event.model_dump_json(ensure_ascii=False)
+            yield json.dumps(error_event.model_dump(), ensure_ascii=False)
             return
+
+    async def _stream_workflow_response(
+        self,
+        bot,
+        request: ChatRequest,
+        db: AsyncSession
+    ) -> AsyncGenerator[str, None]:
+        """워크플로우 실행 결과를 실시간으로 전송"""
+        from app.core.workflow.executor import WorkflowExecutor
+        from app.services.vector_service import VectorService
+        from app.services.llm_service import LLMService
+
+        workflow_data = self._prepare_workflow_data(bot, request)
+        vector_service = VectorService()
+        llm_service = LLMService()
+        executor = WorkflowExecutor()
+
+        queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+        async def emit(event_payload: Dict[str, Any]) -> None:
+            await queue.put(json.dumps(event_payload, ensure_ascii=False))
+
+        stream_handler = WorkflowStreamHandler(
+            emit_fn=emit,
+            include_sources=request.include_sources,
+            text_normalizer=strip_markdown
+        )
+
+        async def run_workflow():
+            try:
+                await executor.execute(
+                    workflow_data=workflow_data,
+                    session_id=request.session_id or "default",
+                    user_message=request.message,
+                    bot_id=bot.bot_id,
+                    db=db,
+                    vector_service=vector_service,
+                    llm_service=llm_service,
+                    stream_handler=stream_handler,
+                    text_normalizer=strip_markdown
+                )
+            except Exception as exc:
+                logger.error(f"[ChatService] 워크플로우 스트리밍 실패: {exc}")
+                friendly_message = str(exc) or "워크플로우 실행 중 오류가 발생했습니다"
+                error_event = ErrorEvent(
+                    code=ErrorCode.STREAM_ERROR,
+                    message=friendly_message
+                )
+                await emit(error_event.model_dump())
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(run_workflow())
+
+        try:
+            while True:
+                payload = await queue.get()
+                if payload is None:
+                    break
+                yield payload
+        finally:
+            await task
 
     async def _execute_rag_pipeline(
         self,
@@ -425,6 +495,47 @@ class ChatService:
                 }
             )
 
+    def _prepare_workflow_data(self, bot, request: ChatRequest) -> Dict[str, Any]:
+        """워크플로우 실행 전에 런타임 구성을 정리"""
+        workflow_data = copy.deepcopy(bot.workflow) if bot.workflow else {}
+
+        override_model = self._resolve_model_name(request.model)
+
+        if override_model and workflow_data.get("nodes"):
+            logger.info(f"[ChatService] 런타임 모델 오버라이드: {override_model}")
+            for node in workflow_data["nodes"]:
+                if node.get("type") == "llm" and node.get("data"):
+                    original_model = node["data"].get("model")
+                    node["data"]["model"] = override_model
+                    logger.info(
+                        f"[ChatService] LLM 노드 모델 변경: {original_model} → {override_model}"
+                    )
+        elif workflow_data.get("nodes"):
+            for node in workflow_data["nodes"]:
+                if node.get("type") == "llm" and node.get("data"):
+                    node["data"]["model"] = self._resolve_model_name(node["data"].get("model"))
+
+        return workflow_data
+
+    def _resolve_model_name(self, model_name: Optional[str]) -> Optional[str]:
+        if not model_name:
+            return None
+
+        normalized = model_name.strip().lower()
+        alias_map = {
+            "anthropic/claude": settings.anthropic_model,
+            "anthropic:claude": settings.anthropic_model,
+            "claude": settings.anthropic_model,
+            "claude-3": settings.anthropic_model,
+            "openai/gpt-4o": settings.openai_model,
+            "gpt-4": settings.openai_model,
+        }
+
+        resolved = alias_map.get(normalized, model_name)
+        if resolved != model_name:
+            logger.info(f"[ChatService] 모델 별칭 변환: {model_name} -> {resolved}")
+        return resolved
+
     def _extract_chunks(self, search_results: Dict) -> List[Dict]:
         """벡터 검색 결과에서 청크 추출"""
         chunks = []
@@ -481,7 +592,7 @@ class ChatService:
                 similarity_score=round(similarity_score, 3),
                 # 추가 메타데이터(파일명, 문서 내 청크 인덱스, 파일 타입 등)
                 metadata={
-                    "filename": metadata.get("original_filename") or metadata.get("filename"),  # 원본 파일명 우선
+                    "filename": None,
                     "chunk_index": metadata.get("chunk_index"),
                     "file_type": metadata.get("file_type")
                 }
@@ -518,9 +629,11 @@ class ChatService:
 
         # Sources 이전까지만 반환
         if earliest_pos < len(response):
-            return response[:earliest_pos].strip()
+            cleaned = response[:earliest_pos].strip()
+        else:
+            cleaned = response.strip()
 
-        return response.strip()
+        return strip_markdown(cleaned)
 
 
 # 싱글톤 인스턴스 및 Lock
