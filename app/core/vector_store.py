@@ -153,9 +153,12 @@ class VectorStore:
             # 메타데이터 필터 적용
             if filter_dict:
                 for key, value in filter_dict.items():
-                    query = query.where(
-                        DocumentEmbedding.doc_metadata[key].astext == str(value)
-                    )
+                    field = DocumentEmbedding.doc_metadata[key].astext
+
+                    if isinstance(value, list):
+                        query = query.where(field.in_([str(v) for v in value]))
+                    else:
+                        query = query.where(field == str(value))
 
             # 거리순 정렬 및 top_k 제한
             query = query.order_by(distance_expr).limit(top_k)
