@@ -1,4 +1,6 @@
+import json
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
@@ -16,6 +18,7 @@ from app.schemas.widget import (
 )
 from app.services.widget_service import WidgetService
 from app.core.exceptions import NotFoundException, ForbiddenException, UnauthorizedException
+from app.models.chat import ErrorEvent, ErrorCode
 
 router = APIRouter()
 
@@ -96,6 +99,71 @@ async def send_message(
         raise HTTPException(status_code=401, detail=str(e))
     except NotFoundException as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/chat/stream")
+@public_limiter.limit("20 per minute")
+async def send_message_stream(
+    request: Request,
+    message_data: ChatMessageRequest,
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """메시지 전송 (스트리밍용)"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization header required")
+
+    session_token = authorization.replace("Bearer ", "")
+
+    async def event_generator():
+        def is_error_event(event_json: str) -> bool:
+            try:
+                payload = json.loads(event_json)
+                return payload.get("type") == "error"
+            except json.JSONDecodeError:
+                return False
+
+        error_sent = False
+
+        try:
+            async for event_json in WidgetService.stream_message(db, message_data, session_token):
+                yield f"data: {event_json}\n\n"
+                if is_error_event(event_json):
+                    error_sent = True
+        except UnauthorizedException as e:
+            error_event = ErrorEvent(
+                code=ErrorCode.INVALID_REQUEST,
+                message=str(e)
+            )
+            yield f"data: {json.dumps(error_event.model_dump(), ensure_ascii=False)}\n\n"
+            return
+        except NotFoundException as e:
+            error_event = ErrorEvent(
+                code=ErrorCode.INVALID_REQUEST,
+                message=str(e)
+            )
+            yield f"data: {json.dumps(error_event.model_dump(), ensure_ascii=False)}\n\n"
+            return
+        except Exception:
+            error_event = ErrorEvent(
+                code=ErrorCode.UNKNOWN_ERROR,
+                message="응답 생성 중 오류가 발생했습니다"
+            )
+            yield f"data: {json.dumps(error_event.model_dump(), ensure_ascii=False)}\n\n"
+            return
+
+        if not error_sent:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @router.post("/feedback")

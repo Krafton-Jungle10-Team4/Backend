@@ -1,7 +1,8 @@
+import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, AsyncGenerator
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 import secrets
@@ -47,6 +48,42 @@ def extract_domain_from_origin_or_referer(
 
 class WidgetService:
     """Widget 서비스"""
+
+    @staticmethod
+    async def _load_session_and_bot(
+        db: AsyncSession,
+        message_data: ChatMessageRequest,
+        session_token: str
+    ) -> tuple[WidgetSession, Bot]:
+        """세션 검증 및 봇 로드"""
+        session_token_hash = widget_security.hash_token(session_token)
+
+        stmt = select(WidgetSession).options(
+            selectinload(WidgetSession.deployment)
+        ).where(
+            WidgetSession.session_id == message_data.session_id,
+            WidgetSession.session_token_hash == session_token_hash,
+            WidgetSession.is_active == True
+        )
+        result = await db.execute(stmt)
+        session = result.scalar_one_or_none()
+
+        if not session:
+            raise UnauthorizedException("Invalid session")
+
+        if datetime.now(timezone.utc) > session.expires_at:
+            raise UnauthorizedException("Session expired")
+
+        deployment = session.deployment or await db.get(BotDeployment, session.deployment_id)
+
+        stmt = select(Bot).where(Bot.id == deployment.bot_id).options(selectinload(Bot.user))
+        result = await db.execute(stmt)
+        bot = result.scalar_one_or_none()
+
+        if not bot:
+            raise NotFoundException("Bot not found for widget deployment")
+
+        return session, bot
 
     @staticmethod
     async def get_widget_config(
@@ -315,22 +352,7 @@ class WidgetService:
         Returns:
             봇 응답
         """
-        # 세션 조회 및 검증
-        session_token_hash = widget_security.hash_token(session_token)
-        stmt = select(WidgetSession).where(
-            WidgetSession.session_id == message_data.session_id,
-            WidgetSession.session_token_hash == session_token_hash,
-            WidgetSession.is_active == True
-        )
-        result = await db.execute(stmt)
-        session = result.scalar_one_or_none()
-
-        if not session:
-            raise UnauthorizedException("Invalid session")
-
-        # 만료 확인 (timezone-aware 비교)
-        if datetime.now(timezone.utc) > session.expires_at:
-            raise UnauthorizedException("Session expired")
+        session, bot = await WidgetService._load_session_and_bot(db, message_data, session_token)
 
         # 사용자 메시지 저장 (속성명 수정: metadata → message_metadata)
         user_message = WidgetMessage(
@@ -342,14 +364,6 @@ class WidgetService:
             message_metadata=message_data.context
         )
         db.add(user_message)
-
-        # 배포 및 봇 정보 로드 (user relationship을 eager loading)
-        deployment = await db.get(BotDeployment, session.deployment_id)
-
-        # Bot 조회 시 user도 함께 로드 (lazy loading 방지)
-        stmt = select(Bot).where(Bot.id == deployment.bot_id).options(selectinload(Bot.user))
-        result = await db.execute(stmt)
-        bot = result.scalar_one_or_none()
 
         # ChatService로 RAG 파이프라인 실행
         from app.services.chat_service import ChatService
@@ -401,6 +415,81 @@ class WidgetService:
             "suggested_actions": [],
             "timestamp": bot_message.created_at
         }
+
+    @staticmethod
+    async def stream_message(
+        db: AsyncSession,
+        message_data: ChatMessageRequest,
+        session_token: str
+    ) -> AsyncGenerator[str, None]:
+        """위젯 스트리밍 응답 생성"""
+        from app.services.chat_service import ChatService
+        from app.models.chat import ChatRequest
+
+        session, bot = await WidgetService._load_session_and_bot(db, message_data, session_token)
+
+        user_message = WidgetMessage(
+            session_id=session.session_id,
+            role="user",
+            content=message_data.message["content"],
+            message_type=message_data.message.get("type", "text"),
+            attachments=message_data.message.get("attachments"),
+            message_metadata=message_data.context
+        )
+        db.add(user_message)
+
+        chat_service = ChatService()
+        chat_request = ChatRequest(
+            message=message_data.message["content"],
+            bot_id=bot.bot_id if bot else None,
+            top_k=settings.chat_default_top_k
+        )
+        user_uuid = str(bot.user.uuid) if bot and bot.user else None
+
+        assistant_chunks: List[str] = []
+        sources_payload: List[Dict[str, Any]] = []
+        error_event_emitted = False
+
+        try:
+            async for event_json in chat_service.generate_response_stream(
+                request=chat_request,
+                user_uuid=user_uuid,
+                db=db
+            ):
+                try:
+                    payload = json.loads(event_json)
+                    event_type = payload.get("type")
+                    if event_type == "content":
+                        assistant_chunks.append(payload.get("data", ""))
+                    elif event_type == "sources":
+                        sources_payload = payload.get("data") or []
+                    elif event_type == "error":
+                        error_event_emitted = True
+                except json.JSONDecodeError:
+                    pass
+
+                yield event_json
+
+        except Exception:
+            await db.rollback()
+            raise
+        else:
+            if not error_event_emitted:
+                assistant_text = "".join(assistant_chunks)
+                if assistant_text:
+                    bot_message = WidgetMessage(
+                        session_id=session.session_id,
+                        role="assistant",
+                        content=assistant_text,
+                        sources=sources_payload or None,
+                        message_metadata={"confidence": 0.95}
+                    )
+                    db.add(bot_message)
+
+                session.last_activity = datetime.now(timezone.utc)
+                await db.commit()
+            else:
+                await db.rollback()
 
     @staticmethod
     async def track_usage(
