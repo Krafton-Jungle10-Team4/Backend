@@ -12,7 +12,12 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.bot import Bot, BotKnowledge, BotStatus
 from app.models.document_embeddings import DocumentEmbedding
-from app.schemas.bot import CreateBotRequest, UpdateBotRequestPut, UpdateBotRequestPatch
+from app.schemas.bot import (
+    CreateBotRequest,
+    UpdateBotRequestPut,
+    UpdateBotRequestPatch,
+    BotGoal,
+)
 from app.core.exceptions import (
     BotCreationError,
     BotConfigurationError,
@@ -188,6 +193,34 @@ class BotService:
 
         return personalities.get(goal, personalities["other"])
 
+    def _normalize_goal_input(
+        self,
+        goal_input: Optional[str | BotGoal]
+    ) -> Tuple[Optional[str], Optional[BotGoal]]:
+        """
+        goal 입력값을 저장용 문자열과 ENUM (선택)으로 분리
+
+        Args:
+            goal_input: 사용자 입력 goal (ENUM 또는 자유 텍스트)
+
+        Returns:
+            (저장용 문자열, ENUM 값 또는 None)
+        """
+        if goal_input is None:
+            return None, None
+
+        if isinstance(goal_input, BotGoal):
+            return goal_input.value, goal_input
+
+        goal_text = goal_input.strip()
+        if not goal_text:
+            return None, None
+
+        try:
+            return goal_text, BotGoal(goal_text)
+        except ValueError:
+            return goal_text, None
+
     def _apply_knowledge_to_workflow_dict(
         self,
         workflow_dict: Dict[str, Any],
@@ -320,13 +353,13 @@ class BotService:
             # 1. 고유한 bot_id 생성 (중복 체크 포함)
             bot_id = await self._generate_unique_bot_id(db)
 
-            # 2. goal을 ENUM에서 string으로 변환 (DB 저장용)
-            goal_str = request.goal.value if request.goal else None
+            # 2. goal 문자열 및 ENUM 분리 (커스텀 텍스트 허용)
+            goal_str, goal_enum = self._normalize_goal_input(request.goal)
 
             # 3. Goal에 따른 기본 페르소나 설정 (사용자가 지정하지 않은 경우)
             personality = request.personality
-            if not personality and request.goal:
-                personality = self._get_default_personality(request.goal.value)
+            if not personality and goal_enum:
+                personality = self._get_default_personality(goal_enum.value)
 
             # 4. description 생성 (goal이 있으면 사용, 없으면 name 기반)
             description = goal_str if goal_str else f"{request.name} 봇"
@@ -704,7 +737,14 @@ class BotService:
             if field == "status":
                 setattr(bot, field, BotStatus(value))
             elif field == "goal" and value is not None:
-                setattr(bot, field, value.value)
+                previous_goal = bot.goal
+                previous_description = bot.description
+                goal_value, _ = self._normalize_goal_input(value)
+                setattr(bot, field, goal_value)
+
+                # 사용자가 별도로 설명을 입력하지 않았다면 goal과 동기화
+                if previous_description in (None, previous_goal, f"{bot.name} 봇"):
+                    bot.description = goal_value
             elif field == "workflow" and value is not None:
                 # Pydantic Workflow 객체 → dict 변환
                 workflow_dict = value.model_dump(mode='json') if hasattr(value, 'model_dump') else value

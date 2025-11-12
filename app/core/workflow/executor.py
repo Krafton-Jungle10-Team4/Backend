@@ -218,6 +218,8 @@ class WorkflowExecutor:
             provider_part = lowered.split("/")[0]
             if provider_part in {"openai", "anthropic"}:
                 return provider_part
+        if lowered.startswith("gemini"):
+            return "google"
         return settings.llm_provider or "openai"
 
     def _create_nodes(self, nodes_data: List[Dict], edges_data: List[Dict]):

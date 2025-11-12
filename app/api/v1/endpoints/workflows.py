@@ -347,15 +347,15 @@ async def get_models(
         models = [
             ModelInfo(
                 id="gpt-5-chat-latest",
-                name="GPT-5 chat",
+                name="GPT-5 Chat",
                 provider="openai",
-                description="OpenAI의 최신 고효율 모델"
+                description="OpenAI GPT-5 채팅 모델"
             ),
             ModelInfo(
                 id="chatgpt-4o-latest",
                 name="GPT-4o",
                 provider="openai",
-                description="OpenAI의 경량 멀티 모델"
+                description="OpenAI의 고성능 멀티모달 모델"
             ),
             ModelInfo(
                 id="claude-sonnet-4-5-20250929",
@@ -368,6 +368,18 @@ async def get_models(
                 name="Claude 4.5 Haiku",
                 provider="anthropic",
                 description="낮은 지연시간의 경량 Claude 모델"
+            ),
+            ModelInfo(
+                id="gemini-2.5-flash",
+                name="Gemini 2.5 Flash",
+                provider="google",
+                description="Google Gemini 2.5 Flash 모델"
+            ),
+            ModelInfo(
+                id="gemini-2.5-pro",
+                name="Gemini 2.5 Pro",
+                provider="google",
+                description="Google Gemini 2.5 Pro 모델"
             ),
         ]
 
@@ -418,6 +430,8 @@ def _infer_provider(provider: Optional[str], model_name: Optional[str]) -> str:
         return "openai"
     if lowered.startswith("claude"):
         return "anthropic"
+    if lowered.startswith("gemini"):
+        return "google"
     if "/" in lowered:
         return lowered.split("/")[0]
     return settings.llm_provider or "openai"

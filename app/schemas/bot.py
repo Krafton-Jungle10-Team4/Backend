@@ -1,11 +1,29 @@
 """봇 관련 스키마"""
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List, Literal, Dict, Any
+from typing import Optional, List, Literal, Dict, Any, Union, Annotated
+
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
 from enum import Enum
 import json
 
 from app.schemas.workflow import Workflow
+
+# 사용자 정의 Goal 입력 타입 (자유 텍스트 허용)
+GoalText = Annotated[str, Field(min_length=1, max_length=500)]
+
+
+def _normalize_goal_value(value: Optional[Union["BotGoal", str]]) -> Optional[Union["BotGoal", str]]:
+    """goal 입력값 공통 정규화"""
+    if value is None:
+        return None
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("goal must not be empty")
+        return stripped
+
+    return value
 
 
 class BotGoal(str, Enum):
@@ -19,7 +37,10 @@ class BotGoal(str, Enum):
 class CreateBotRequest(BaseModel):
     """봇 생성 요청"""
     name: str = Field(..., min_length=1, max_length=100, description="봇 이름")
-    goal: Optional[BotGoal] = Field(None, description="봇의 목표")
+    goal: Optional[Union[BotGoal, GoalText]] = Field(
+        None,
+        description="봇의 목표 (사전 정의된 유형 또는 사용자 정의 텍스트)"
+    )
     personality: Optional[str] = Field(None, max_length=2000, description="봇의 성격/어조")
     knowledge: Optional[List[str]] = Field(default_factory=list, description="문서 ID 배열")
     session_id: Optional[str] = Field(
@@ -50,6 +71,11 @@ class CreateBotRequest(BaseModel):
             }
         }
     )
+
+    @field_validator("goal")
+    @classmethod
+    def validate_goal(cls, value):
+        return _normalize_goal_value(value)
 
 
 class BotResponse(BaseModel):
@@ -158,7 +184,10 @@ class UpdateBotRequestPatch(BaseModel):
     """봇 수정 요청 (PATCH - 부분 업데이트, 모든 필드 선택)"""
     name: Optional[str] = Field(None, min_length=1, max_length=100, description="봇 이름")
     description: Optional[str] = Field(None, max_length=2000, description="봇 설명")
-    goal: Optional[BotGoal] = Field(None, description="봇의 목표")
+    goal: Optional[Union[BotGoal, GoalText]] = Field(
+        None,
+        description="봇의 목표 (사전 정의된 유형 또는 사용자 정의 텍스트)"
+    )
     personality: Optional[str] = Field(None, max_length=2000, description="봇의 성격/어조")
     knowledge: Optional[List[str]] = Field(None, description="문서 ID 배열 (기존 지식 전체 대체)")
     workflow: Optional[Workflow] = Field(None, description="Workflow 정의")
@@ -171,6 +200,11 @@ class UpdateBotRequestPatch(BaseModel):
             }
         }
     )
+
+    @field_validator("goal")
+    @classmethod
+    def validate_goal(cls, value):
+        return _normalize_goal_value(value)
 
 
 class ErrorResponse(BaseModel):

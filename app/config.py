@@ -178,6 +178,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5-20250929"
 
+    # Google Gemini
+    google_api_key: str = ""
+    google_default_model: str = "gemini-2.5-flash"
+
     # 챗봇 설정
     # 생성 응답의 다양성(창의성): 높을 수록 창의적, 낮을 수록 일관적
     chat_temperature: float = 0.7

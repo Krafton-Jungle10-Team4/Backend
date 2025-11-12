@@ -10,6 +10,7 @@ from app.core.providers.config import (
     LLMConfig,
     OpenAIConfig,
     AnthropicConfig,
+    GoogleConfig,
     ProviderConfig,
 )
 from app.core.exceptions import LLMServiceError
@@ -152,15 +153,23 @@ class LLMService:
                 system_prompt=None
             )
 
+        google_cfg = None
+        if settings.google_api_key:
+            google_cfg = GoogleConfig(
+                api_key=settings.google_api_key,
+                default_model=settings.google_default_model
+            )
+
         return LLMConfig(
             default_provider=(settings.llm_provider or "openai").lower(),
             openai=openai_cfg,
-            anthropic=anthropic_cfg
+            anthropic=anthropic_cfg,
+            google=google_cfg
         )
 
     def _initialize_providers(self) -> None:
         """사용 가능한 Provider 선 초기화"""
-        for provider_key in ("openai", "anthropic"):
+        for provider_key in ("openai", "anthropic", "google"):
             config = self.config.get_provider_config(provider_key)
             if config and config.enabled:
                 try:
@@ -187,6 +196,8 @@ class LLMService:
             return "openai"
         if lowered.startswith("claude") or "anthropic" in lowered:
             return "anthropic"
+        if lowered.startswith("gemini"):
+            return "google"
         return self.config.default_provider or "openai"
 
     def _get_provider_config(self, provider: str) -> ProviderConfig:

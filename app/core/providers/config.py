@@ -43,6 +43,16 @@ class AnthropicConfig(ProviderConfig):
     )
 
 
+class GoogleConfig(ProviderConfig):
+    """Google Gemini Provider 설정"""
+
+    api_key: str = Field(..., description="Google API Key")
+    default_model: str = Field(
+        default="gemini-2.5-flash",
+        description="기본 모델 ID"
+    )
+
+
 class LLMConfig(BaseModel):
     """LLM 통합 설정"""
 
@@ -52,6 +62,7 @@ class LLMConfig(BaseModel):
     )
     openai: Optional[OpenAIConfig] = None
     anthropic: Optional[AnthropicConfig] = None
+    google: Optional[GoogleConfig] = None
 
     def get_provider_config(self, provider: str) -> Optional[ProviderConfig]:
         """Provider 이름으로 설정 조회"""
@@ -60,4 +71,6 @@ class LLMConfig(BaseModel):
             return self.openai
         if provider_key == "anthropic":
             return self.anthropic
+        if provider_key == "google":
+            return self.google
         return None

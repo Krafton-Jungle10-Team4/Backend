@@ -304,7 +304,7 @@ class LLMNode(BaseNode[LLMNodeConfig]):
                 },
                 "provider": {
                     "type": "enum",
-                    "options": ["openai", "anthropic"],
+                    "options": ["openai", "anthropic", "google"],
                     "required": False,
                     "description": "LLM Provider"
                 },

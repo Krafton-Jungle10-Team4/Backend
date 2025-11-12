@@ -7,7 +7,7 @@ from importlib import import_module
 from app.config import settings
 from app.core.llm_base import BaseLLMClient
 from app.core.llm_registry import LLMProviderRegistry
-from app.core.providers.config import OpenAIConfig, AnthropicConfig
+from app.core.providers.config import OpenAIConfig, AnthropicConfig, GoogleConfig
 
 logger = logging.getLogger(__name__)
 
@@ -56,3 +56,12 @@ def get_llm_client(provider: str = None) -> BaseLLMClient:
     provider_key = (provider or settings.llm_provider or "openai").lower()
     config = _build_provider_config(provider_key)
     return LLMProviderRegistry.get_client(provider_key, config=config)
+    if provider_key == "google":
+        if not settings.google_api_key:
+            raise ValueError(
+                "GOOGLE_API_KEY가 설정되지 않았습니다. .env.local 파일을 확인하세요."
+            )
+        return GoogleConfig(
+            api_key=settings.google_api_key,
+            default_model=settings.google_default_model
+        )

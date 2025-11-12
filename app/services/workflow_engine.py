@@ -199,7 +199,15 @@ class WorkflowEngine:
             model_name = model_info
 
         if not provider:
-            provider = "openai" if (model_name or "").startswith("gpt") else "anthropic"
+            normalized = (model_name or "").lower()
+            if normalized.startswith("gpt"):
+                provider = "openai"
+            elif normalized.startswith("claude"):
+                provider = "anthropic"
+            elif normalized.startswith("gemini"):
+                provider = "google"
+            else:
+                provider = "openai"
         provider = provider.lower()
         prompt_template = node.data.get("prompt", "검색된 문서를 기반으로 답변하세요.")
         temperature = node.data.get("temperature", 0.7)
