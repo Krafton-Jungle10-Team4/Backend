@@ -130,6 +130,82 @@ async def search_documents(
         raise HTTPException(status_code=500, detail="검색 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
 
 
+@router.get("/list", response_model=DocumentListResponse)
+async def list_documents(
+    bot_id: Optional[str] = Query(None, description="봇 ID 필터"),
+    status: Optional[DocumentStatusEnum] = Query(None, description="상태 필터"),
+    limit: int = Query(50, description="페이지 크기", ge=1, le=100),
+    offset: int = Query(0, description="오프셋", ge=0),
+    user: User = Depends(get_current_user_from_jwt_only),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    문서 목록 조회 (Phase 0)
+
+    **인증 방식:** JWT 토큰 (로그인 필수)
+
+    Headers:
+        Authorization: Bearer <token>
+
+    Query Parameters:
+        bot_id: 봇 ID 필터 (선택)
+        status: 상태 필터 (선택: queued/processing/done/failed)
+        limit: 페이지 크기 (기본: 50, 최대: 100)
+        offset: 오프셋 (기본: 0)
+
+    Returns:
+        documents: 문서 목록
+        total: 전체 문서 개수
+        limit: 페이지 크기
+        offset: 오프셋
+    """
+    logger.info(f"문서 목록 조회: bot_id={bot_id}, status={status}, limit={limit}, offset={offset} (User: {user.email})")
+
+    # 쿼리 작성
+    query = select(Document).where(Document.user_uuid == user.uuid)
+
+    if bot_id:
+        query = query.where(Document.bot_id == bot_id)
+
+    if status:
+        query = query.where(Document.status == DocumentStatus(status.value))
+
+    # 전체 개수 조회
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    # 문서 목록 조회 (최신순 정렬, 페이지네이션)
+    query = query.order_by(Document.created_at.desc()).limit(limit).offset(offset)
+    result = await db.execute(query)
+    documents = result.scalars().all()
+
+    # DocumentInfo 리스트 생성
+    document_list = [
+        DocumentInfo(
+            document_id=doc.document_id,
+            bot_id=doc.bot_id,
+            original_filename=doc.original_filename,
+            file_extension=doc.file_extension,
+            file_size=doc.file_size,
+            status=DocumentStatusEnum(doc.status.value),
+            chunk_count=doc.chunk_count,
+            processing_time=doc.processing_time,
+            error_message=doc.error_message,
+            created_at=doc.created_at,
+            updated_at=doc.updated_at
+        )
+        for doc in documents
+    ]
+
+    return DocumentListResponse(
+        documents=document_list,
+        total=total,
+        limit=limit,
+        offset=offset
+    )
+
+
 @router.get("/{document_id}")
 async def get_document_info(
     document_id: str,
@@ -365,82 +441,6 @@ async def get_document_status(
         created_at=document.created_at,
         updated_at=document.updated_at,
         completed_at=document.completed_at
-    )
-
-
-@router.get("/list", response_model=DocumentListResponse)
-async def list_documents(
-    bot_id: Optional[str] = Query(None, description="봇 ID 필터"),
-    status: Optional[DocumentStatusEnum] = Query(None, description="상태 필터"),
-    limit: int = Query(50, description="페이지 크기", ge=1, le=100),
-    offset: int = Query(0, description="오프셋", ge=0),
-    user: User = Depends(get_current_user_from_jwt_only),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    문서 목록 조회 (Phase 0)
-
-    **인증 방식:** JWT 토큰 (로그인 필수)
-
-    Headers:
-        Authorization: Bearer <token>
-
-    Query Parameters:
-        bot_id: 봇 ID 필터 (선택)
-        status: 상태 필터 (선택: queued/processing/done/failed)
-        limit: 페이지 크기 (기본: 50, 최대: 100)
-        offset: 오프셋 (기본: 0)
-
-    Returns:
-        documents: 문서 목록
-        total: 전체 문서 개수
-        limit: 페이지 크기
-        offset: 오프셋
-    """
-    logger.info(f"문서 목록 조회: bot_id={bot_id}, status={status}, limit={limit}, offset={offset} (User: {user.email})")
-
-    # 쿼리 작성
-    query = select(Document).where(Document.user_uuid == user.uuid)
-
-    if bot_id:
-        query = query.where(Document.bot_id == bot_id)
-
-    if status:
-        query = query.where(Document.status == DocumentStatus(status.value))
-
-    # 전체 개수 조회
-    count_query = select(func.count()).select_from(query.subquery())
-    total_result = await db.execute(count_query)
-    total = total_result.scalar()
-
-    # 문서 목록 조회 (최신순 정렬, 페이지네이션)
-    query = query.order_by(Document.created_at.desc()).limit(limit).offset(offset)
-    result = await db.execute(query)
-    documents = result.scalars().all()
-
-    # DocumentInfo 리스트 생성
-    document_list = [
-        DocumentInfo(
-            document_id=doc.document_id,
-            bot_id=doc.bot_id,
-            original_filename=doc.original_filename,
-            file_extension=doc.file_extension,
-            file_size=doc.file_size,
-            status=DocumentStatusEnum(doc.status.value),
-            chunk_count=doc.chunk_count,
-            processing_time=doc.processing_time,
-            error_message=doc.error_message,
-            created_at=doc.created_at,
-            updated_at=doc.updated_at
-        )
-        for doc in documents
-    ]
-
-    return DocumentListResponse(
-        documents=document_list,
-        total=total,
-        limit=limit,
-        offset=offset
     )
 
 

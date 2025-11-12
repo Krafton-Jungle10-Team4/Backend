@@ -3,7 +3,7 @@ PostgreSQL + pgvector 벡터 스토어 관리
 """
 import logging
 from typing import List, Dict, Optional
-from sqlalchemy import select, delete as sql_delete, func
+from sqlalchemy import select, delete as sql_delete, func, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.document_embeddings import DocumentEmbedding
 from app.models.bot import Bot, BotStatus
@@ -165,7 +165,8 @@ class VectorStore:
             # 메타데이터 필터 적용
             if filter_dict:
                 for key, value in filter_dict.items():
-                    field = DocumentEmbedding.doc_metadata[key].astext
+                    # SQLAlchemy 2.0+ 호환: .astext 대신 cast 사용
+                    field = cast(DocumentEmbedding.doc_metadata[key], String)
 
                     if isinstance(value, list):
                         query = query.where(field.in_([str(v) for v in value]))
@@ -222,11 +223,12 @@ class VectorStore:
         db = self._get_session()
 
         try:
+            # SQLAlchemy 2.0+ 호환: .astext 대신 cast 사용
             result = (
                 await db.execute(
                     select(DocumentEmbedding).where(
                         DocumentEmbedding.bot_id == self.bot_id,
-                        DocumentEmbedding.doc_metadata["document_id"].astext == document_id
+                        cast(DocumentEmbedding.doc_metadata["document_id"], String) == document_id
                     )
                 )
             ).scalars().first()
@@ -260,10 +262,11 @@ class VectorStore:
         db = self._get_session()
 
         try:
+            # SQLAlchemy 2.0+ 호환: .astext 대신 cast 사용
             result = await db.execute(
                 sql_delete(DocumentEmbedding).where(
                     DocumentEmbedding.bot_id == self.bot_id,
-                    DocumentEmbedding.doc_metadata["document_id"].astext == document_id
+                    cast(DocumentEmbedding.doc_metadata["document_id"], String) == document_id
                 )
             )
 

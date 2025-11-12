@@ -88,7 +88,7 @@ except Exception as e:
     print(f"⚠️  Column fix failed (will retry with migration): {e}")
 EOF
 
-# 3. SQL 마이그레이션 실행 (document_id, embedded_at 추가)
+# 3. SQL 마이그레이션 실행 (documents 테이블, document_id, embedded_at 추가)
 echo "📦 Running SQL migrations..."
 python << EOF
 import os
@@ -111,6 +111,55 @@ try:
     with engine.connect() as conn:
         inspector = inspect(engine)
 
+        # 0. documents 테이블 생성 (존재하지 않으면)
+        if 'documents' not in inspector.get_table_names():
+            print("🔧 Creating documents table...")
+
+            # DocumentStatus enum 생성 (DO 블록 대신 CREATE TYPE IF NOT EXISTS 사용 불가하므로 예외 처리)
+            try:
+                conn.execute(text("CREATE TYPE documentstatus AS ENUM ('uploaded', 'queued', 'processing', 'done', 'failed')"))
+            except Exception as e:
+                if 'already exists' not in str(e):
+                    raise
+
+            # documents 테이블 생성
+            conn.execute(text("""
+                CREATE TABLE documents (
+                    id SERIAL PRIMARY KEY,
+                    document_id VARCHAR(36) NOT NULL,
+                    bot_id VARCHAR(50) NOT NULL,
+                    user_uuid VARCHAR(36) NOT NULL,
+                    original_filename VARCHAR(255) NOT NULL,
+                    file_extension VARCHAR(10) NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    s3_uri TEXT,
+                    status documentstatus NOT NULL DEFAULT 'queued',
+                    error_message TEXT,
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    chunk_count INTEGER,
+                    processing_time INTEGER,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMP WITH TIME ZONE,
+                    queued_at TIMESTAMP WITH TIME ZONE,
+                    processing_started_at TIMESTAMP WITH TIME ZONE,
+                    completed_at TIMESTAMP WITH TIME ZONE,
+                    embedded_at TIMESTAMP WITH TIME ZONE
+                )
+            """))
+
+            # 인덱스 생성
+            conn.execute(text("CREATE INDEX ix_documents_id ON documents(id)"))
+            conn.execute(text("CREATE UNIQUE INDEX ix_documents_document_id ON documents(document_id)"))
+            conn.execute(text("CREATE INDEX ix_documents_bot_id ON documents(bot_id)"))
+            conn.execute(text("CREATE INDEX ix_documents_user_uuid ON documents(user_uuid)"))
+            conn.execute(text("CREATE INDEX ix_documents_status ON documents(status)"))
+            conn.execute(text("CREATE INDEX ix_documents_created_at ON documents(created_at)"))
+
+            conn.commit()
+            print("✅ documents table created successfully!")
+        else:
+            print("✅ documents table already exists")
+
         # 1. document_embeddings 테이블에 document_id 추가
         if 'document_embeddings' in inspector.get_table_names():
             columns = [col['name'] for col in inspector.get_columns('document_embeddings')]
@@ -124,7 +173,7 @@ try:
             else:
                 print("✅ document_id column already exists")
 
-        # 2. documents 테이블에 embedded_at 추가
+        # 2. documents 테이블에 embedded_at 추가 (이미 위에서 생성되었으면 스킵)
         if 'documents' in inspector.get_table_names():
             columns = [col['name'] for col in inspector.get_columns('documents')]
 

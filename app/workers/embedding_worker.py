@@ -8,7 +8,7 @@ import json
 import os
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -71,14 +71,14 @@ class EmbeddingWorker:
         logger.info("🚀 임베딩 워커 시작")
         logger.info(f"SQS 큐: {settings.sqs_queue_url}")
         logger.info(f"S3 버킷: {settings.s3_bucket_name}")
-        logger.info(f"Long Polling: 20초")
+        logger.info(f"Long Polling: 5초")
 
         while True:
             try:
                 # SQS에서 메시지 수신 (Long Polling)
                 messages = await self.sqs_client.receive_messages(
                     max_messages=1,
-                    wait_time_seconds=20  # Long Polling
+                    wait_time_seconds=5  # Long Polling (빠른 응답성 확보)
                 )
 
                 if not messages:
@@ -170,7 +170,7 @@ class EmbeddingWorker:
                     db=db,
                     document_id=document_id,
                     status=DocumentStatus.PROCESSING,
-                    processing_started_at=datetime.utcnow()
+                    processing_started_at=datetime.now(timezone.utc)
                 )
 
                 # 2. S3에서 파일 다운로드
@@ -245,7 +245,7 @@ class EmbeddingWorker:
                         document_id=document_id,
                         status=DocumentStatus.DONE,
                         chunk_count=len(chunks),
-                        completed_at=datetime.utcnow()
+                        completed_at=datetime.now(timezone.utc)
                     )
 
                     logger.info(f"✅ 문서 처리 성공: {document_id} ({len(chunks)} 청크)")
@@ -261,7 +261,7 @@ class EmbeddingWorker:
                     document_id=document_id,
                     status=DocumentStatus.FAILED,
                     error_message=f"문서 파싱 실패: {str(e)}",
-                    completed_at=datetime.utcnow()
+                    completed_at=datetime.now(timezone.utc)
                 )
                 raise
 
@@ -272,7 +272,7 @@ class EmbeddingWorker:
                     document_id=document_id,
                     status=DocumentStatus.FAILED,
                     error_message=f"벡터 저장 실패: {str(e)}",
-                    completed_at=datetime.utcnow()
+                    completed_at=datetime.now(timezone.utc)
                 )
                 raise
 
@@ -284,7 +284,7 @@ class EmbeddingWorker:
                     document_id=document_id,
                     status=DocumentStatus.FAILED,
                     error_message=f"{type(e).__name__}: {str(e)}",
-                    completed_at=datetime.utcnow()
+                    completed_at=datetime.now(timezone.utc)
                 )
                 raise
 
@@ -323,7 +323,7 @@ class EmbeddingWorker:
 
             # 상태 업데이트
             document.status = status
-            document.updated_at = datetime.utcnow()
+            document.updated_at = datetime.now(timezone.utc)
 
             if error_message:
                 document.error_message = error_message
@@ -338,7 +338,11 @@ class EmbeddingWorker:
                 document.completed_at = completed_at
                 # 처리 시간 계산 (초)
                 if document.processing_started_at:
-                    processing_time = (completed_at - document.processing_started_at).total_seconds()
+                    # timezone-naive datetime을 timezone-aware로 변환
+                    start_time = document.processing_started_at
+                    if start_time.tzinfo is None:
+                        start_time = start_time.replace(tzinfo=timezone.utc)
+                    processing_time = (completed_at - start_time).total_seconds()
                     document.processing_time = int(processing_time)
 
                 # 성공적으로 완료된 경우 embedded_at 설정

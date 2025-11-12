@@ -346,12 +346,210 @@ docker-compose logs backend
 
 ---
 
+---
+
+## 9. AWS ECS 배포 (선택)
+
+ECS Fargate를 사용한 컨테이너 배포 가이드입니다.
+
+### 9.1 아키텍처 요구사항
+
+**중요:** ECS Fargate는 기본적으로 **AMD64 (X86_64)** 아키텍처를 사용합니다.
+
+```bash
+# Docker 빌드 시 반드시 AMD64 플랫폼 지정
+docker build --platform linux/amd64 -t your-image:latest .
+```
+
+**ARM64로 빌드 시 발생하는 오류:**
+```
+exec /app/entrypoint.sh: exec format error
+```
+
+### 9.2 ECR 이미지 푸시
+
+```bash
+# 1. ECR 로그인
+aws ecr get-login-password --region ap-northeast-2 | \
+  docker login --username AWS --password-stdin \
+  YOUR_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com
+
+# 2. 이미지 빌드 (AMD64 필수!)
+docker build --no-cache \
+  --platform linux/amd64 \
+  -t YOUR_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/rag-backend:latest .
+
+# 3. ECR에 푸시
+docker push YOUR_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/rag-backend:latest
+
+# 4. ECS 서비스 업데이트
+aws ecs update-service \
+  --cluster rag-cluster \
+  --service rag-backend-service \
+  --force-new-deployment \
+  --region ap-northeast-2
+```
+
+### 9.3 데이터베이스 마이그레이션 전략
+
+#### Option 1: Alembic 자동 마이그레이션 (권장)
+
+`entrypoint.sh`에서 Alembic 마이그레이션 자동 실행:
+
+```bash
+# 4. Alembic 마이그레이션 실행
+echo "📦 Running alembic migrations..."
+if alembic upgrade head; then
+    echo "✅ Alembic migrations completed successfully!"
+else
+    echo "⚠️  Alembic migration failed, but continuing startup..."
+fi
+```
+
+**장점:**
+- 컨테이너 시작 시 자동으로 DB 스키마 업데이트
+- 버전 관리 및 롤백 가능
+- 복잡한 마이그레이션 지원
+
+#### Option 2: SQL 직접 실행 (백업용)
+
+entrypoint.sh에 SQL 마이그레이션 코드 추가 (Alembic 실패 시 백업):
+
+```bash
+# 3. SQL 마이그레이션 실행
+echo "📦 Running SQL migrations..."
+python << EOF
+import os
+from sqlalchemy import create_engine, text, inspect
+
+database_url = os.getenv("DATABASE_URL")
+database_url = database_url.replace('+asyncpg', '')
+
+try:
+    engine = create_engine(database_url)
+    with engine.connect() as conn:
+        inspector = inspect(engine)
+
+        if 'documents' not in inspector.get_table_names():
+            print("🔧 Creating documents table...")
+            # CREATE TABLE 문 실행
+            conn.execute(text("CREATE TABLE documents (...);"))
+            conn.commit()
+            print("✅ documents table created successfully!")
+except Exception as e:
+    print(f"⚠️  SQL migration failed (will retry with alembic): {e}")
+EOF
+```
+
+**주의사항:**
+- PostgreSQL 문법 주의: `DO $$` 블록 사용 시 문법 오류 가능
+- 동기 SQLAlchemy 사용 (`create_engine`, not `create_async_engine`)
+- `database_url`에서 `+asyncpg` 제거 필요
+
+### 9.4 ECS 로그 확인
+
+```bash
+# 최근 로그 확인
+aws logs tail /ecs/rag-backend --region ap-northeast-2 --since 5m --format short
+
+# 특정 키워드 필터링
+aws logs tail /ecs/rag-backend --region ap-northeast-2 --since 5m --format short | grep "ERROR\|Starting\|Migration"
+
+# 실시간 로그 스트리밍
+aws logs tail /ecs/rag-backend --region ap-northeast-2 --follow
+```
+
+### 9.5 ECS 배포 상태 확인
+
+```bash
+# 서비스 상태 확인
+aws ecs describe-services \
+  --cluster rag-cluster \
+  --services rag-backend-service \
+  --region ap-northeast-2 \
+  --query 'services[0].deployments[*].{Status:status,DesiredCount:desiredCount,RunningCount:runningCount,CreatedAt:createdAt}' \
+  --output table
+
+# 실행 중인 태스크 확인
+aws ecs list-tasks \
+  --cluster rag-cluster \
+  --service-name rag-backend-service \
+  --region ap-northeast-2
+```
+
+### 9.6 일반적인 ECS 트러블슈팅
+
+#### 1. "exec format error" - 아키텍처 불일치
+
+**원인:** ARM64 이미지를 AMD64 환경에서 실행
+
+**해결:**
+```bash
+# 이미지 재빌드 (AMD64 플랫폼 명시)
+docker build --platform linux/amd64 --no-cache -t IMAGE_URI .
+docker push IMAGE_URI
+
+# ECS 서비스 강제 재배포
+aws ecs update-service --cluster CLUSTER --service SERVICE --force-new-deployment
+```
+
+#### 2. 데이터베이스 연결 실패
+
+**증상:** "relation 'documents' does not exist"
+
+**원인:** 마이그레이션 미실행 또는 실패
+
+**해결:**
+1. CloudWatch Logs에서 마이그레이션 로그 확인
+2. entrypoint.sh의 마이그레이션 코드 검증
+3. Alembic 버전 확인: `alembic current`
+4. 수동 마이그레이션 실행 (필요시)
+
+#### 3. VPC 네트워크 접근 문제
+
+**증상:** RDS 연결 타임아웃
+
+**해결:**
+- ECS 태스크와 RDS가 같은 VPC에 있는지 확인
+- RDS 보안 그룹에서 ECS 보안 그룹 허용
+- RDS 서브넷 그룹 설정 확인
+
+#### 4. 컨테이너 재시작 반복
+
+**원인:** 헬스체크 실패 또는 애플리케이션 크래시
+
+**해결:**
+```bash
+# 최근 로그 확인하여 오류 식별
+aws logs tail /ecs/rag-backend --since 10m | grep -E "ERROR|CRITICAL|Exception"
+
+# 헬스체크 엔드포인트 확인
+curl http://YOUR_ALB_DNS/health
+```
+
+### 9.7 배포 체크리스트
+
+배포 전 확인사항:
+
+- [ ] Docker 이미지가 **AMD64** 플랫폼으로 빌드되었는가?
+- [ ] 환경변수가 ECS Task Definition에 올바르게 설정되었는가?
+- [ ] RDS 연결 정보가 정확한가? (호스트, 포트, 자격증명)
+- [ ] Alembic 마이그레이션 파일이 최신인가?
+- [ ] entrypoint.sh 파일의 Line Ending이 LF인가? (CRLF 아님)
+- [ ] ECS 태스크 역할에 필요한 권한이 있는가? (S3, ECR 등)
+- [ ] 보안 그룹 설정이 올바른가? (RDS, Redis 접근)
+
+---
+
 ## 참고 자료
 
 - [Docker 공식 문서](https://docs.docker.com/)
 - [Nginx 공식 문서](https://nginx.org/en/docs/)
 - [Let's Encrypt](https://letsencrypt.org/)
 - [AWS EC2 문서](https://docs.aws.amazon.com/ec2/)
+- [AWS ECS 문서](https://docs.aws.amazon.com/ecs/)
+- [AWS RDS 문서](https://docs.aws.amazon.com/rds/)
+- [Alembic 문서](https://alembic.sqlalchemy.org/)
 
 ---
 
@@ -361,3 +559,4 @@ docker-compose logs backend
 2. 📝 [GitHub Secrets 설정](./github-secrets-setup.md)
 3. 🚀 자동 배포 테스트
 4. 🌐 도메인 및 HTTPS 설정 (선택)
+5. 🐳 ECS Fargate 배포 (선택)

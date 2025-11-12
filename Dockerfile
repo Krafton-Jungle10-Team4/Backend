@@ -32,8 +32,8 @@ COPY . .
 # 디렉토리 생성
 RUN mkdir -p /app/data/uploads /app/data/huggingface_cache
 
-# entrypoint 스크립트 실행 권한 부여 (파일이 COPY로 이미 복사됨)
-RUN chmod +x /app/entrypoint.sh || echo "Warning: entrypoint.sh not found, using inline script"
+# entrypoint 스크립트 line ending 수정 및 실행 권한 부여
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh || echo "Warning: entrypoint.sh not found, using inline script"
 
 # Python 패키지 경로 설정
 ENV PATH=/root/.local/bin:$PATH \
