@@ -1,7 +1,7 @@
 """
 봇 관련 데이터베이스 모델
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum as SQLEnum, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum as SQLEnum, JSON, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -43,6 +43,10 @@ class Bot(Base):
     # Workflow 정의 (JSON 형식)
     workflow = Column(JSON, nullable=True)
 
+    # V2 마이그레이션 필드
+    use_workflow_v2 = Column(Boolean, default=False, nullable=False)
+    legacy_workflow = Column(JSON, nullable=True)  # 백업용
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -51,6 +55,7 @@ class Bot(Base):
     knowledge_items = relationship("BotKnowledge", back_populates="bot", cascade="all, delete-orphan")
     deployments = relationship("BotDeployment", back_populates="bot", cascade="all, delete-orphan")
     document_embeddings = relationship("DocumentEmbedding", back_populates="bot", cascade="all, delete-orphan")
+    workflow_versions = relationship("BotWorkflowVersion", back_populates="bot", cascade="all, delete-orphan")
 
 
 class BotKnowledge(Base):
