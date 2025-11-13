@@ -19,6 +19,7 @@ from app.schemas.workflow import (
 )
 from app.services.workflow_version_service import WorkflowVersionService
 from app.services.bot_service import BotService
+from app.core.workflow.validator import WorkflowValidator
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +58,26 @@ async def create_or_update_draft(
             )
 
         # Draft 생성/수정
+        graph_payload = request.graph.dict()
+        validator = WorkflowValidator()
+        nodes = graph_payload.get("nodes", [])
+        edges = graph_payload.get("edges", [])
+        is_valid, errors, warnings = validator.validate(nodes, edges)
+
+        if not is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": "워크플로우 검증 실패",
+                    "errors": errors,
+                    "warnings": warnings
+                }
+            )
+
         service = WorkflowVersionService(db)
         version = await service.create_or_update_draft(
             bot_id=bot_id,
-            graph=request.graph.dict(),
+            graph=graph_payload,
             environment_variables=request.environment_variables,
             conversation_variables=request.conversation_variables,
             user_id=str(current_user.id)

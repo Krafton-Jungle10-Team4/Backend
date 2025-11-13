@@ -151,8 +151,8 @@ class ChatService:
         if not bot:
             raise ValueError(f"Bot not found: {request.bot_id}")
 
-        # Workflow가 없으면 기본 RAG 파이프라인으로 fallback
-        if not bot.workflow:
+        # Workflow가 없으면 기본 RAG 파이프라인으로 fallback (단, V2 사용 시에는 published 버전 사용)
+        if not getattr(bot, "use_workflow_v2", False) and not bot.workflow:
             logger.info(f"[ChatService] Bot {request.bot_id}에 Workflow가 없어 기본 RAG 파이프라인 실행")
             return await self._execute_rag_pipeline(request, bot.bot_id, db)
 
@@ -238,7 +238,9 @@ class ChatService:
                 yield json.dumps(error_event.model_dump(), ensure_ascii=False)
                 return
 
-            if bot.workflow:
+            if bot.workflow or getattr(bot, "use_workflow_v2", False):
+                if not bot.workflow and getattr(bot, "use_workflow_v2", False):
+                    logger.info(f"[ChatService] Bot {request.bot_id}는 V2 워크플로우를 사용합니다 (published graph 로드)")
                 async for payload in self._stream_workflow_response(bot, request, db):
                     yield payload
                 return

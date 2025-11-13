@@ -70,6 +70,10 @@ class WorkflowValidator:
         self._validate_node_constraints(nodes, adjacency_list)
         self._validate_execution_order(adjacency_list)
 
+        # V2 포트/변수 검증 (필요 시)
+        if self._is_v2_workflow(nodes, edges):
+            self._validate_v2_schema(nodes, edges, node_map)
+
         is_valid = len(self.errors) == 0
         return is_valid, self.errors, self.warnings
 
@@ -198,6 +202,119 @@ class WorkflowValidator:
         for end_node in end_nodes:
             if end_node not in incoming or not incoming[end_node]:
                 self.errors.append(f"End 노드 {end_node}로 들어오는 연결이 없습니다")
+
+    def _is_v2_workflow(
+        self,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]]
+    ) -> bool:
+        """포트/변수 기반 V2 워크플로우인지 여부"""
+        for node in nodes:
+            if node.get("ports") or node.get("variable_mappings"):
+                return True
+        for edge in edges:
+            if edge.get("source_port") or edge.get("target_port"):
+                return True
+        return False
+
+    def _validate_v2_schema(
+        self,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]],
+        node_map: Dict[str, Dict]
+    ) -> None:
+        """포트, 엣지, 변수 매핑 등 V2 전용 스키마 검증"""
+        port_map: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+        for node in nodes:
+            node_id = node.get("id")
+            ports = node.get("ports") or {}
+            inputs = {p.get("name"): p for p in ports.get("inputs", []) if p.get("name")}
+            outputs = {p.get("name"): p for p in ports.get("outputs", []) if p.get("name")}
+            port_map[node_id] = {
+                "inputs": inputs,
+                "outputs": outputs
+            }
+
+        # 엣지 포트 매핑 검증
+        for edge in edges:
+            source = edge.get("source")
+            target = edge.get("target")
+            source_port = edge.get("source_port")
+            target_port = edge.get("target_port")
+
+            if source_port:
+                if source not in port_map or source_port not in port_map[source]["outputs"]:
+                    self.errors.append(
+                        f"엣지 {edge.get('id')}에 정의된 source_port '{source_port}'가 노드 {source}에 존재하지 않습니다"
+                    )
+            if target_port:
+                if target not in port_map or target_port not in port_map[target]["inputs"]:
+                    self.errors.append(
+                        f"엣지 {edge.get('id')}에 정의된 target_port '{target_port}'가 노드 {target}에 존재하지 않습니다"
+                    )
+
+        # 변수 매핑 및 필수 입력 검증
+        for node in nodes:
+            node_id = node.get("id")
+            required_inputs = {
+                name: meta for name, meta in port_map.get(node_id, {}).get("inputs", {}).items()
+                if meta.get("required", True)
+            }
+            variable_mappings: Dict[str, Any] = node.get("variable_mappings") or {}
+
+            for port_name, meta in required_inputs.items():
+                if port_name not in variable_mappings:
+                    self.errors.append(
+                        f"노드 {node_id}의 필수 입력 포트 '{port_name}'가 variable_mappings에 정의되지 않았습니다"
+                    )
+
+            for target_port, mapping in variable_mappings.items():
+                if target_port not in port_map.get(node_id, {}).get("inputs", {}):
+                    self.errors.append(
+                        f"노드 {node_id}의 variable_mappings에 알 수 없는 입력 포트 '{target_port}'가 있습니다"
+                    )
+                    continue
+
+                selector = self._extract_selector(mapping)
+                if not selector:
+                    self.errors.append(
+                        f"노드 {node_id}의 포트 '{target_port}' 매핑에 유효한 ValueSelector가 없습니다"
+                    )
+                    continue
+
+                if selector.startswith(("env.", "conv.", "sys.")):
+                    continue
+
+                parts = selector.split(".", 1)
+                if len(parts) != 2:
+                    self.errors.append(
+                        f"노드 {node_id}의 포트 '{target_port}' 매핑 셀렉터 형식이 잘못되었습니다: {selector}"
+                    )
+                    continue
+
+                source_node, source_port = parts
+                if source_node not in node_map:
+                    self.errors.append(
+                        f"노드 {node_id}의 포트 '{target_port}'가 존재하지 않는 노드 '{source_node}'를 참조합니다"
+                    )
+                elif source_port not in port_map.get(source_node, {}).get("outputs", {}):
+                    self.errors.append(
+                        f"노드 {node_id}의 포트 '{target_port}'가 노드 {source_node}의 출력 포트 '{source_port}'를 찾을 수 없습니다"
+                    )
+
+    @staticmethod
+    def _extract_selector(mapping: Any) -> Optional[str]:
+        """variable_mappings 항목에서 ValueSelector 문자열을 추출"""
+        if isinstance(mapping, str):
+            return mapping
+        if isinstance(mapping, dict):
+            if isinstance(mapping.get("variable"), str):
+                return mapping["variable"]
+            source = mapping.get("source")
+            if isinstance(source, dict) and isinstance(source.get("variable"), str):
+                return source["variable"]
+        return None
 
     def _validate_no_cycles(self, adjacency_list: Dict[str, List[str]]):
         """순환 참조 검증 (DFS 사용)"""
