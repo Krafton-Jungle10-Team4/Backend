@@ -28,6 +28,13 @@ router = APIRouter(
     tags=["workflow-versions"]
 )
 
+# 레거시 호환: 기존 프론트엔드가 /workflows/versions 경로를 호출하므로
+# 동일한 핸들러를 재사용하는 별도 라우터를 제공한다.
+legacy_router = APIRouter(
+    prefix="/bots/{bot_id}/workflows/versions",
+    tags=["workflow-versions (legacy)"]
+)
+
 
 @router.post(
     "/draft",
@@ -103,6 +110,16 @@ async def create_or_update_draft(
         )
 
 
+legacy_router.add_api_route(
+    "/draft",
+    create_or_update_draft,
+    methods=["POST"],
+    response_model=WorkflowVersionResponse,
+    summary="Draft 워크플로우 생성/수정",
+    description="(레거시 경로) Bot의 draft 워크플로우를 생성하거나 기존 draft를 수정합니다."
+)
+
+
 @router.post(
     "/{version_id}/publish",
     response_model=WorkflowVersionResponse,
@@ -165,6 +182,16 @@ async def publish_workflow(
         )
 
 
+legacy_router.add_api_route(
+    "/{version_id}/publish",
+    publish_workflow,
+    methods=["POST"],
+    response_model=WorkflowVersionResponse,
+    summary="워크플로우 발행",
+    description="(레거시 경로) Draft 워크플로우를 발행하여 실제 사용 가능한 버전으로 만듭니다."
+)
+
+
 @router.get(
     "",
     response_model=List[WorkflowVersionResponse],
@@ -220,6 +247,16 @@ async def list_workflow_versions(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"워크플로우 버전 목록 조회 실패: {str(e)}"
         )
+
+
+legacy_router.add_api_route(
+    "",
+    list_workflow_versions,
+    methods=["GET"],
+    response_model=List[WorkflowVersionResponse],
+    summary="워크플로우 버전 목록 조회",
+    description="(레거시 경로) Bot의 모든 워크플로우 버전을 조회합니다."
+)
 
 
 @router.get(
@@ -283,6 +320,16 @@ async def get_workflow_version(
         )
 
 
+legacy_router.add_api_route(
+    "/{version_id}",
+    get_workflow_version,
+    methods=["GET"],
+    response_model=WorkflowVersionDetail,
+    summary="워크플로우 버전 상세 조회",
+    description="(레거시 경로) 특정 워크플로우 버전의 상세 정보를 조회합니다."
+)
+
+
 @router.post(
     "/{version_id}/archive",
     response_model=WorkflowVersionResponse,
@@ -343,3 +390,13 @@ async def archive_workflow_version(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"워크플로우 버전 아카이브 실패: {str(e)}"
         )
+
+
+legacy_router.add_api_route(
+    "/{version_id}/archive",
+    archive_workflow_version,
+    methods=["POST"],
+    response_model=WorkflowVersionResponse,
+    summary="워크플로우 버전 아카이브",
+    description="(레거시 경로) 특정 워크플로우 버전을 아카이브 상태로 변경합니다."
+)

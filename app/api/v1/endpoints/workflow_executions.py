@@ -30,6 +30,13 @@ router = APIRouter(
     tags=["workflow-executions"]
 )
 
+# 레거시 호환: 프론트엔드가 /workflows/runs 경로를 참조하는 경우가 있어
+# 동일한 핸들러를 재사용하는 보조 라우터를 추가한다.
+legacy_router = APIRouter(
+    prefix="/bots/{bot_id}/workflows/runs",
+    tags=["workflow-executions (legacy)"]
+)
+
 
 @router.get(
     "",
@@ -109,6 +116,16 @@ async def list_execution_runs(
         )
 
 
+legacy_router.add_api_route(
+    "",
+    list_execution_runs,
+    methods=["GET"],
+    response_model=PaginatedWorkflowRuns,
+    summary="워크플로우 실행 기록 목록 조회",
+    description="(레거시 경로) Bot의 워크플로우 실행 기록 목록을 페이지네이션하여 조회합니다."
+)
+
+
 @router.get(
     "/{run_id}",
     response_model=WorkflowRunDetail,
@@ -172,6 +189,16 @@ async def get_execution_run(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"실행 기록 조회 실패: {str(e)}"
         )
+
+
+legacy_router.add_api_route(
+    "/{run_id}",
+    get_execution_run,
+    methods=["GET"],
+    response_model=WorkflowRunDetail,
+    summary="워크플로우 실행 기록 상세 조회",
+    description="(레거시 경로) 특정 워크플로우 실행 기록의 상세 정보를 조회합니다."
+)
 
 
 @router.get(
@@ -241,6 +268,16 @@ async def get_node_executions(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"노드 실행 기록 조회 실패: {str(e)}"
         )
+
+
+legacy_router.add_api_route(
+    "/{run_id}/nodes",
+    get_node_executions,
+    methods=["GET"],
+    response_model=List[NodeExecutionResponse],
+    summary="노드 실행 기록 목록 조회",
+    description="(레거시 경로) 특정 워크플로우 실행의 모든 노드 실행 기록을 조회합니다."
+)
 
 
 @router.get(
@@ -320,6 +357,16 @@ async def get_node_execution_detail(
         )
 
 
+legacy_router.add_api_route(
+    "/{run_id}/nodes/{node_execution_id}",
+    get_node_execution_detail,
+    methods=["GET"],
+    response_model=NodeExecutionDetail,
+    summary="노드 실행 기록 상세 조회",
+    description="(레거시 경로) 특정 노드 실행 기록의 상세 정보를 조회합니다."
+)
+
+
 @router.get(
     "/statistics",
     response_model=WorkflowExecutionStatistics,
@@ -367,6 +414,16 @@ async def get_execution_statistics(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"실행 통계 조회 실패: {str(e)}"
         )
+
+
+legacy_router.add_api_route(
+    "/statistics",
+    get_execution_statistics,
+    methods=["GET"],
+    response_model=WorkflowExecutionStatistics,
+    summary="워크플로우 실행 통계 조회",
+    description="(레거시 경로) Bot의 워크플로우 실행 통계를 조회합니다."
+)
 
 
 @router.delete(
@@ -423,3 +480,13 @@ async def delete_execution_run(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"실행 기록 삭제 실패: {str(e)}"
         )
+
+
+legacy_router.add_api_route(
+    "/{run_id}",
+    delete_execution_run,
+    methods=["DELETE"],
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="워크플로우 실행 기록 삭제",
+    description="(레거시 경로) 특정 워크플로우 실행 기록을 삭제합니다."
+)

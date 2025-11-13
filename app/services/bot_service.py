@@ -369,10 +369,10 @@ class BotService:
             if request.workflow:
                 workflow_dict = request.workflow.model_dump(mode='json')
 
-                # workflow가 START/END만 있거나 비어있으면 기본 워크플로우 생성
+                # 노드가 전혀 없을 때만 서버에서 기본 워크플로우를 생성한다.
                 nodes = workflow_dict.get('nodes', [])
-                if len(nodes) <= 2:  # START와 END만 있는 경우
-                    logger.info("기본 워크플로우 자동 생성 (START/END만 존재)")
+                if not nodes:
+                    logger.info("제공된 워크플로우 노드가 없어 기본 워크플로우를 자동 생성합니다.")
                     workflow_dict = self._create_default_workflow(request.knowledge, bot_id)
             else:
                 # workflow가 없으면 기본 워크플로우 생성
