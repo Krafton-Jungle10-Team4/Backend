@@ -193,16 +193,25 @@ class WorkflowExecutor:
                     data["prompt_template"] = data["prompt"]
 
             if node_type == NodeType.KNOWLEDGE_RETRIEVAL.value:
+                # documentIds (camelCase) → document_ids (snake_case) 변환
+                if "document_ids" not in data and data.get("documentIds"):
+                    data["document_ids"] = data["documentIds"]
+
+                # dataset (레거시) → dataset_id 변환
                 if "dataset_id" not in data and data.get("dataset"):
                     data["dataset_id"] = data["dataset"]
-                if not data.get("dataset_id"):
+
+                # fallback: document_ids가 비어있고 dataset_id도 의미있는 값이 없을 때만 default 설정
+                # 빈 문자열도 "값이 없음"으로 처리
+                doc_ids = data.get("document_ids")
+                dataset_id = data.get("dataset_id")
+
+                if (not doc_ids or (isinstance(doc_ids, list) and len(doc_ids) == 0)) and \
+                   (not dataset_id or dataset_id == ""):
                     data["dataset_id"] = "default-dataset"
 
                 if "top_k" not in data and data.get("topK") is not None:
                     data["top_k"] = data["topK"]
-
-                if "document_ids" not in data and data.get("documentIds"):
-                    data["document_ids"] = data["documentIds"]
     @staticmethod
     def _infer_provider_from_model(model: Optional[str]) -> str:
         """모델명으로 Provider 추론"""

@@ -156,15 +156,18 @@ class LLMNode(BaseNode[LLMNodeConfig]):
         if self.config and self.config.use_context_from:
             target_nodes = self.config.use_context_from
         else:
-            # 모든 Knowledge 노드의 출력 사용
-            target_nodes = [node_id for node_id in node_outputs.keys()
-                           if "knowledge" in node_id.lower()]
+            # 모든 노드 출력에서 retrieved_documents가 있는 것을 사용
+            # (Knowledge 노드는 retrieved_documents를 반환함)
+            target_nodes = list(node_outputs.keys())
+
+        logger.info(f"[LLMNode] Collecting context from {len(target_nodes)} nodes: {target_nodes}")
 
         for node_id in target_nodes:
             if node_id in node_outputs:
                 output = node_outputs[node_id]
                 if isinstance(output, dict) and "retrieved_documents" in output:
                     docs = output["retrieved_documents"]
+                    logger.info(f"[LLMNode] Found {len(docs) if isinstance(docs, list) else 0} documents from node {node_id}")
                     if isinstance(docs, list):
                         for doc in docs:
                             if isinstance(doc, dict) and "content" in doc:
@@ -172,6 +175,7 @@ class LLMNode(BaseNode[LLMNodeConfig]):
                             elif isinstance(doc, str):
                                 combined_context.append(doc)
 
+        logger.info(f"[LLMNode] Total context pieces collected: {len(combined_context)}")
         return "\n\n".join(combined_context)
 
     def _create_prompt(self, question: str, context: str) -> str:

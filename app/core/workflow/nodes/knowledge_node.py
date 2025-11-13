@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 class KnowledgeNodeConfig(NodeConfig):
     """지식 검색 노드 설정"""
-    dataset_id: str = Field(..., description="데이터셋 ID")
+    dataset_id: Optional[str] = Field(None, description="데이터셋 ID (레거시)")
     dataset_name: Optional[str] = Field(None, description="데이터셋 이름")
+    document_ids: Optional[List[str]] = Field(default=None, description="검색할 문서 ID 리스트")
     mode: str = Field(default="semantic", description="검색 모드 (semantic, keyword)")
     top_k: int = Field(default=5, ge=1, le=20, description="검색 결과 개수")
 
@@ -91,7 +92,7 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
             if not db:
                 raise ValueError("Database session not found in context")
 
-            # 문서 검색 수행
+            # 문서 검색 수행 (document_ids 우선, dataset_id는 레거시 호환용)
             search_results = await self._perform_search(
                 vector_service,
                 user_message,
@@ -99,7 +100,8 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
                 db,
                 self.config.top_k,
                 self.config.mode,
-                self.config.dataset_id
+                self.config.dataset_id,
+                self.config.document_ids
             )
 
             result = NodeExecutionResult(
@@ -139,7 +141,8 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
         db: Any,
         top_k: int,
         mode: str,
-        dataset_id: str
+        dataset_id: Optional[str],
+        document_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
         실제 검색 수행
@@ -151,14 +154,16 @@ class KnowledgeNode(BaseNode[KnowledgeNodeConfig]):
             db: 데이터베이스 세션
             top_k: 검색 결과 개수
             mode: 검색 모드
-            dataset_id: 데이터셋 ID (특정 문서 필터링용)
+            dataset_id: 데이터셋 ID (레거시 호환용)
+            document_ids: 검색할 문서 ID 리스트 (우선 사용)
 
         Returns:
             검색 결과 리스트
         """
         try:
-            # dataset_id를 document_ids 리스트로 변환 (특정 문서만 검색)
-            document_ids = [dataset_id] if dataset_id else None
+            # document_ids 우선 사용, 없으면 dataset_id를 리스트로 변환 (레거시 호환)
+            if not document_ids and dataset_id:
+                document_ids = [dataset_id]
 
             # 벡터 검색 서비스의 search_similar_chunks 메서드 호출
             # (문서는 이미 Worker에 의해 임베딩되어 있음)
