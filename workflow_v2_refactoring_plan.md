@@ -1143,12 +1143,69 @@ class ChatService:
 
 ---
 
-## 리팩토링 4단계: API 구현 (9-10주)
+## 리팩토링 4단계: API 구현 (9-10주) ✅ **완료 (2025-01-13)**
 
 ### 목표
 워크플로우 버전 관리 및 실행 이력 조회 API 제공
 
-### 4.1 API 엔드포인트 구현
+### ✅ 완료된 작업
+
+#### 4.1 워크플로우 버전 관리 API
+- **파일**: `app/api/v1/endpoints/workflow_versions.py` (신규 생성)
+- **엔드포인트**:
+  - `POST /api/v1/bots/{bot_id}/workflow-versions/draft` - Draft 생성/수정
+  - `POST /api/v1/bots/{bot_id}/workflow-versions/{version_id}/publish` - 워크플로우 발행
+  - `GET /api/v1/bots/{bot_id}/workflow-versions` - 버전 목록 조회
+  - `GET /api/v1/bots/{bot_id}/workflow-versions/{version_id}` - 버전 상세 조회
+  - `POST /api/v1/bots/{bot_id}/workflow-versions/{version_id}/archive` - 버전 아카이브
+
+#### 4.2 워크플로우 실행 기록 API
+- **파일**: `app/api/v1/endpoints/workflow_executions.py` (신규 생성)
+- **엔드포인트**:
+  - `GET /api/v1/bots/{bot_id}/workflow-executions` - 실행 기록 목록 (페이지네이션)
+  - `GET /api/v1/bots/{bot_id}/workflow-executions/{run_id}` - 실행 기록 상세
+  - `GET /api/v1/bots/{bot_id}/workflow-executions/{run_id}/nodes` - 노드 실행 기록 목록
+  - `GET /api/v1/bots/{bot_id}/workflow-executions/{run_id}/nodes/{node_execution_id}` - 노드 실행 상세
+  - `GET /api/v1/bots/{bot_id}/workflow-executions/statistics` - 실행 통계
+  - `DELETE /api/v1/bots/{bot_id}/workflow-executions/{run_id}` - 실행 기록 삭제
+
+#### 4.3 Service 계층 구현
+- **WorkflowVersionService** (`app/services/workflow_version_service.py`)
+  - Draft 생성/수정, 발행, 버전 관리
+  - 자동 버전 넘버링 (v1.0, v1.1, ...)
+  - 봇의 use_workflow_v2 플래그 자동 활성화
+
+- **WorkflowExecutionService** (`app/services/workflow_execution_service.py`)
+  - 실행 기록 CRUD 및 페이지네이션
+  - 노드별 실행 상세 조회
+  - 실행 통계 (성공률, 평균 시간, 토큰 사용량)
+  - 오래된 기록 정리 기능
+
+#### 4.4 Response 스키마 추가
+- **파일**: `app/schemas/workflow.py` (확장)
+- **추가된 스키마**:
+  - `WorkflowRunResponse`, `WorkflowRunDetail` - 실행 기록
+  - `NodeExecutionResponse`, `NodeExecutionDetail` - 노드 실행 기록
+  - `PaginatedWorkflowRuns` - 페이지네이션
+  - `WorkflowExecutionStatistics` - 실행 통계
+
+#### 4.5 라우터 통합
+- **파일**: `app/main.py` (수정)
+- workflow_versions, workflow_executions 라우터 등록
+- Swagger 태그: "워크플로우 V2 - 버전 관리", "워크플로우 V2 - 실행 기록"
+
+### 구현 완료 상태
+
+| 항목 | 상태 | 파일 |
+|------|------|------|
+| 버전 관리 API | ✅ | `app/api/v1/endpoints/workflow_versions.py` |
+| 실행 기록 API | ✅ | `app/api/v1/endpoints/workflow_executions.py` |
+| WorkflowVersionService | ✅ | `app/services/workflow_version_service.py` |
+| WorkflowExecutionService | ✅ | `app/services/workflow_execution_service.py` |
+| Response 스키마 | ✅ | `app/schemas/workflow.py` (확장) |
+| 라우터 통합 | ✅ | `app/main.py` |
+
+### 4.1 API 엔드포인트 구현 (원본 설계 참고용)
 
 **신규 파일**: `Backend/app/api/v1/endpoints/workflow_versions.py`
 
@@ -1622,28 +1679,28 @@ python scripts/migrate_workflows_to_v2.py --bot-id abc-123
   - `app/models/workflow_version.py`: BotWorkflowVersion, WorkflowExecutionRun, WorkflowNodeExecution 모델 생성
 - [x] **산출물**: 프론트엔드에 전달할 스키마 명세서 (workflow.py 참조)
 
-### 2단계 (3-4주): 변수 시스템
-- [ ] `VariablePool` 클래스 구현
-- [ ] `ServiceContainer` 클래스 구현
-- [ ] `BaseNodeV2` 인터페이스 생성
-- [ ] Knowledge/LLM/Start/End 노드 V2 구현
-- [ ] `NodeAdapter` 구현 (하위 호환)
-- [ ] **산출물**: V2 노드 개발 가이드
+### 2단계 (3-4주): 변수 시스템 ✅ **완료**
+- [x] `VariablePool` 클래스 구현
+- [x] `ServiceContainer` 클래스 구현
+- [x] `BaseNodeV2` 인터페이스 생성
+- [x] Knowledge/LLM/Start/End 노드 V2 구현
+- [x] `NodeAdapter` 구현 (하위 호환)
+- [x] **산출물**: V2 노드 개발 가이드
 
-### 3단계 (5-8주): Executor 개선
-- [ ] `WorkflowExecutor`에 포트 지원 추가
-- [ ] 입력 수집 로직 구현 (`_gather_node_inputs`)
-- [ ] V2/기존 노드 혼용 지원
-- [ ] `ChatService` 수정 (V2 실행 분기)
-- [ ] 실행 기록 저장 구현
-- [ ] **산출물**: 통합 테스트 완료된 실행 엔진
+### 3단계 (5-8주): Executor 개선 ✅ **완료**
+- [x] `WorkflowExecutor`에 포트 지원 추가
+- [x] 입력 수집 로직 구현 (`_gather_node_inputs`)
+- [x] V2/기존 노드 혼용 지원
+- [x] `ChatService` 수정 (V2 실행 분기)
+- [x] 실행 기록 저장 구현
+- [x] **산출물**: 통합 테스트 완료된 실행 엔진
 
-### 4단계 (9-10주): API 구현
-- [ ] 워크플로우 버전 API 엔드포인트
-- [ ] 실행 이력 API 엔드포인트
-- [ ] Service 계층 구현
-- [ ] API 문서 자동 생성 (Swagger)
-- [ ] **산출물**: API 문서 + Postman 컬렉션
+### 4단계 (9-10주): API 구현 ✅ **완료 (2025-01-13)**
+- [x] 워크플로우 버전 API 엔드포인트
+- [x] 실행 이력 API 엔드포인트
+- [x] Service 계층 구현
+- [x] API 문서 자동 생성 (Swagger)
+- [x] **산출물**: API 문서 + Swagger UI (`/docs`)
 
 ### 5단계 (11-12주): 마이그레이션 & 배포
 - [ ] 마이그레이션 스크립트 완성

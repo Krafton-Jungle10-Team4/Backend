@@ -1,0 +1,328 @@
+"""
+워크플로우 버전 관리 API 엔드포인트
+
+워크플로우 버전의 생성, 수정, 발행, 조회 등의 기능을 제공합니다.
+"""
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import List, Optional
+import logging
+
+from app.core.database import get_db
+from app.core.auth.dependencies import get_current_user_from_jwt as get_current_user
+from app.models.user import User
+from app.schemas.workflow import (
+    WorkflowVersionCreate,
+    WorkflowVersionResponse,
+    WorkflowVersionDetail,
+    WorkflowVersionStatus
+)
+from app.services.workflow_version_service import WorkflowVersionService
+from app.services.bot_service import BotService
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(
+    prefix="/bots/{bot_id}/workflow-versions",
+    tags=["workflow-versions"]
+)
+
+
+@router.post(
+    "/draft",
+    response_model=WorkflowVersionResponse,
+    summary="Draft 워크플로우 생성/수정",
+    description="Bot의 draft 워크플로우를 생성하거나 기존 draft를 수정합니다."
+)
+async def create_or_update_draft(
+    bot_id: str,
+    request: WorkflowVersionCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> WorkflowVersionResponse:
+    """
+    Draft 워크플로우 생성/수정
+
+    - Bot당 하나의 draft만 존재
+    - 기존 draft가 있으면 업데이트
+    """
+    try:
+        # 봇 접근 권한 확인
+        bot_service = BotService()
+        bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
+        if not bot:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
+            )
+
+        # Draft 생성/수정
+        service = WorkflowVersionService(db)
+        version = await service.create_or_update_draft(
+            bot_id=bot_id,
+            graph=request.graph.dict(),
+            environment_variables=request.environment_variables,
+            conversation_variables=request.conversation_variables,
+            user_id=str(current_user.id)
+        )
+
+        return WorkflowVersionResponse(
+            id=str(version.id),
+            bot_id=version.bot_id,
+            version=version.version,
+            status=WorkflowVersionStatus(version.status),
+            created_at=version.created_at,
+            updated_at=version.updated_at,
+            published_at=version.published_at
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create/update draft workflow: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Draft 워크플로우 생성/수정 실패: {str(e)}"
+        )
+
+
+@router.post(
+    "/{version_id}/publish",
+    response_model=WorkflowVersionResponse,
+    summary="워크플로우 발행",
+    description="Draft 워크플로우를 발행하여 실제 사용 가능한 버전으로 만듭니다."
+)
+async def publish_workflow(
+    bot_id: str,
+    version_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> WorkflowVersionResponse:
+    """
+    Draft 발행
+
+    - 새 버전 번호 생성 (v1.0, v1.1 등)
+    - 해당 버전을 활성 워크플로우로 설정
+    - 새로운 빈 draft 자동 생성
+    """
+    try:
+        # 봇 접근 권한 확인
+        bot_service = BotService()
+        bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
+        if not bot:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
+            )
+
+        # Draft 발행
+        service = WorkflowVersionService(db)
+        version = await service.publish_draft(
+            bot_id=bot_id,
+            version_id=version_id,
+            user_id=str(current_user.id)
+        )
+
+        return WorkflowVersionResponse(
+            id=str(version.id),
+            bot_id=version.bot_id,
+            version=version.version,
+            status=WorkflowVersionStatus(version.status),
+            created_at=version.created_at,
+            updated_at=version.updated_at,
+            published_at=version.published_at
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to publish workflow: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"워크플로우 발행 실패: {str(e)}"
+        )
+
+
+@router.get(
+    "",
+    response_model=List[WorkflowVersionResponse],
+    summary="워크플로우 버전 목록 조회",
+    description="Bot의 모든 워크플로우 버전을 조회합니다."
+)
+async def list_workflow_versions(
+    bot_id: str,
+    status: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> List[WorkflowVersionResponse]:
+    """
+    워크플로우 버전 목록 조회
+
+    - status 파라미터로 필터링 가능 (draft, published, archived)
+    """
+    try:
+        # 봇 접근 권한 확인
+        bot_service = BotService()
+        bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
+        if not bot:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
+            )
+
+        # 버전 목록 조회
+        service = WorkflowVersionService(db)
+        versions = await service.list_versions(
+            bot_id=bot_id,
+            status=status
+        )
+
+        return [
+            WorkflowVersionResponse(
+                id=str(v.id),
+                bot_id=v.bot_id,
+                version=v.version,
+                status=WorkflowVersionStatus(v.status),
+                created_at=v.created_at,
+                updated_at=v.updated_at,
+                published_at=v.published_at
+            )
+            for v in versions
+        ]
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list workflow versions: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"워크플로우 버전 목록 조회 실패: {str(e)}"
+        )
+
+
+@router.get(
+    "/{version_id}",
+    response_model=WorkflowVersionDetail,
+    summary="워크플로우 버전 상세 조회",
+    description="특정 워크플로우 버전의 상세 정보를 조회합니다."
+)
+async def get_workflow_version(
+    bot_id: str,
+    version_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> WorkflowVersionDetail:
+    """
+    특정 버전 상세 조회
+
+    - 워크플로우 그래프, 환경 변수 등 모든 정보 포함
+    """
+    try:
+        # 봇 접근 권한 확인
+        bot_service = BotService()
+        bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
+        if not bot:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
+            )
+
+        # 버전 조회
+        service = WorkflowVersionService(db)
+        version = await service.get_version(version_id)
+
+        if not version or version.bot_id != bot_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="워크플로우 버전을 찾을 수 없습니다"
+            )
+
+        from app.schemas.workflow import WorkflowGraph
+        return WorkflowVersionDetail(
+            id=str(version.id),
+            bot_id=version.bot_id,
+            version=version.version,
+            status=WorkflowVersionStatus(version.status),
+            created_at=version.created_at,
+            updated_at=version.updated_at,
+            published_at=version.published_at,
+            graph=WorkflowGraph(**version.graph),
+            environment_variables=version.environment_variables,
+            conversation_variables=version.conversation_variables
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get workflow version: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"워크플로우 버전 조회 실패: {str(e)}"
+        )
+
+
+@router.post(
+    "/{version_id}/archive",
+    response_model=WorkflowVersionResponse,
+    summary="워크플로우 버전 아카이브",
+    description="특정 워크플로우 버전을 아카이브 상태로 변경합니다."
+)
+async def archive_workflow_version(
+    bot_id: str,
+    version_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> WorkflowVersionResponse:
+    """
+    버전 아카이브
+
+    - 사용하지 않는 버전을 아카이브 처리
+    """
+    try:
+        # 봇 접근 권한 확인
+        bot_service = BotService()
+        bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
+        if not bot:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
+            )
+
+        # 버전 아카이브
+        service = WorkflowVersionService(db)
+        version = await service.archive_version(version_id)
+
+        if version.bot_id != bot_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="이 워크플로우 버전에 접근할 권한이 없습니다"
+            )
+
+        return WorkflowVersionResponse(
+            id=str(version.id),
+            bot_id=version.bot_id,
+            version=version.version,
+            status=WorkflowVersionStatus(version.status),
+            created_at=version.created_at,
+            updated_at=version.updated_at,
+            published_at=version.published_at
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to archive workflow version: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"워크플로우 버전 아카이브 실패: {str(e)}"
+        )

@@ -323,3 +323,70 @@ class WorkflowVersionDetail(WorkflowVersionResponse):
     graph: WorkflowGraph = Field(..., description="워크플로우 그래프")
     environment_variables: Dict[str, Any] = Field(default_factory=dict, description="환경 변수")
     conversation_variables: Dict[str, Any] = Field(default_factory=dict, description="대화 변수")
+
+
+# ============ V2 스키마: 실행 기록 관리 ============
+
+class WorkflowRunResponse(BaseModel):
+    """워크플로우 실행 기록 응답"""
+    id: str = Field(..., description="실행 ID")
+    bot_id: str = Field(..., description="봇 ID")
+    workflow_version_id: Optional[str] = Field(None, description="워크플로우 버전 ID")
+    session_id: Optional[str] = Field(None, description="세션 ID")
+    status: str = Field(..., description="실행 상태")
+    error_message: Optional[str] = Field(None, description="에러 메시지")
+    started_at: datetime = Field(..., description="시작 시간")
+    finished_at: Optional[datetime] = Field(None, description="종료 시간")
+    elapsed_time: Optional[int] = Field(None, description="실행 시간 (milliseconds)")
+    total_tokens: int = Field(0, description="총 사용 토큰 수")
+    total_steps: int = Field(0, description="총 실행 단계 수")
+    created_at: datetime = Field(..., description="생성 시간")
+
+
+class WorkflowRunDetail(WorkflowRunResponse):
+    """워크플로우 실행 기록 상세"""
+    graph_snapshot: Dict[str, Any] = Field(..., description="실행 시점 그래프 스냅샷")
+    inputs: Optional[Dict[str, Any]] = Field(None, description="입력 데이터")
+    outputs: Optional[Dict[str, Any]] = Field(None, description="출력 데이터")
+
+
+class NodeExecutionResponse(BaseModel):
+    """노드 실행 기록 응답"""
+    id: str = Field(..., description="노드 실행 ID")
+    workflow_run_id: str = Field(..., description="워크플로우 실행 ID")
+    node_id: str = Field(..., description="노드 ID")
+    node_type: str = Field(..., description="노드 타입")
+    execution_order: Optional[int] = Field(None, description="실행 순서")
+    status: str = Field(..., description="실행 상태")
+    error_message: Optional[str] = Field(None, description="에러 메시지")
+    started_at: datetime = Field(..., description="시작 시간")
+    finished_at: Optional[datetime] = Field(None, description="종료 시간")
+    elapsed_time: Optional[int] = Field(None, description="실행 시간 (milliseconds)")
+    tokens_used: int = Field(0, description="사용 토큰 수")
+    is_truncated: bool = Field(False, description="데이터 잘림 여부")
+    created_at: datetime = Field(..., description="생성 시간")
+
+
+class NodeExecutionDetail(NodeExecutionResponse):
+    """노드 실행 기록 상세"""
+    inputs: Optional[Dict[str, Any]] = Field(None, description="입력 데이터")
+    outputs: Optional[Dict[str, Any]] = Field(None, description="출력 데이터")
+    process_data: Optional[Dict[str, Any]] = Field(None, description="처리 데이터")
+    truncated_fields: Optional[Dict[str, Any]] = Field(None, description="잘린 필드 정보")
+
+
+class PaginatedWorkflowRuns(BaseModel):
+    """페이지네이션된 워크플로우 실행 목록"""
+    items: List[WorkflowRunResponse] = Field(..., description="실행 목록")
+    total: int = Field(..., description="전체 개수")
+    limit: int = Field(..., description="페이지 크기")
+    offset: int = Field(..., description="오프셋")
+
+
+class WorkflowExecutionStatistics(BaseModel):
+    """워크플로우 실행 통계"""
+    total_runs: int = Field(..., description="총 실행 횟수")
+    succeeded_runs: int = Field(..., description="성공 횟수")
+    failed_runs: int = Field(..., description="실패 횟수")
+    avg_elapsed_time: float = Field(..., description="평균 실행 시간 (milliseconds)")
+    total_tokens: int = Field(..., description="총 토큰 사용량")
