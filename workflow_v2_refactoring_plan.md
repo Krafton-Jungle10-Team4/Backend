@@ -1537,11 +1537,20 @@ python scripts/migrate_workflows_to_v2.py --bot-id abc-123
 
 ## 실행 계획
 
-### 1단계 (1-2주): 스키마 & DB
-- [ ] `app/schemas/workflow.py`에 포트/변수 스키마 추가
-- [ ] Alembic 마이그레이션 작성 및 실행
-- [ ] 모델 파일 업데이트
-- [ ] **산출물**: 프론트엔드에 전달할 스키마 명세서
+### 1단계 (1-2주): 스키마 & DB ✅ **완료**
+- [x] `app/schemas/workflow.py`에 포트/변수 스키마 추가
+  - PortType, PortDefinition, NodePortSchema 추가
+  - ValueSelector, VariableMapping 추가
+  - WorkflowNode/WorkflowEdge에 V2 필드 추가 (ports, variable_mappings, source_port, target_port, data_type)
+  - WorkflowVersionStatus, WorkflowGraph, WorkflowVersionCreate/Response/Detail 추가
+- [x] Alembic 마이그레이션 작성 및 실행
+  - `j9k0l1m2n3o4_add_workflow_v2_tables.py` 생성
+  - bot_workflow_versions, workflow_execution_runs, workflow_node_executions 테이블 생성
+  - bots 테이블에 use_workflow_v2, legacy_workflow 필드 추가
+- [x] 모델 파일 업데이트
+  - `app/models/bot.py`: use_workflow_v2, legacy_workflow, workflow_versions relationship 추가
+  - `app/models/workflow_version.py`: BotWorkflowVersion, WorkflowExecutionRun, WorkflowNodeExecution 모델 생성
+- [x] **산출물**: 프론트엔드에 전달할 스키마 명세서 (workflow.py 참조)
 
 ### 2단계 (3-4주): 변수 시스템
 - [ ] `VariablePool` 클래스 구현

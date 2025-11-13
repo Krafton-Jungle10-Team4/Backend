@@ -4,12 +4,54 @@ Workflow 관련 스키마
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict, Any, Literal
 from enum import Enum
+from datetime import datetime
 
 
 class NodePosition(BaseModel):
     """노드 위치"""
     x: float = Field(..., description="X 좌표")
     y: float = Field(..., description="Y 좌표")
+
+
+# ============ V2 스키마: 포트 시스템 ============
+
+class PortType(str, Enum):
+    """포트 데이터 타입"""
+    STRING = "string"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+    ARRAY = "array"
+    OBJECT = "object"
+    FILE = "file"
+    ANY = "any"
+
+
+class PortDefinition(BaseModel):
+    """포트 정의"""
+    name: str = Field(..., description="포트 이름 (예: query, context, response)")
+    type: PortType = Field(..., description="데이터 타입")
+    required: bool = Field(True, description="필수 여부")
+    default_value: Optional[Any] = Field(None, description="기본값")
+    description: str = Field("", description="포트 설명")
+    display_name: str = Field("", description="UI 표시명")
+
+
+class NodePortSchema(BaseModel):
+    """노드의 입출력 포트 스키마"""
+    inputs: List[PortDefinition] = Field(default_factory=list)
+    outputs: List[PortDefinition] = Field(default_factory=list)
+
+
+class ValueSelector(BaseModel):
+    """다른 노드 출력 참조"""
+    variable: str = Field(..., description="형식: {node_id}.{port_name}")
+    value_type: PortType = Field(PortType.ANY, description="값 타입")
+
+
+class VariableMapping(BaseModel):
+    """노드 입력 포트와 데이터 소스 매핑"""
+    target_port: str = Field(..., description="대상 입력 포트")
+    source: ValueSelector = Field(..., description="소스 변수 참조")
 
 
 # 기존 호환성을 위한 노드 데이터 클래스들
@@ -62,6 +104,10 @@ class WorkflowNode(BaseModel):
     position: NodePosition = Field(..., description="노드 위치")
     data: Dict[str, Any] = Field(..., description="노드 데이터")
 
+    # V2 필드 (하위 호환성 위해 Optional)
+    ports: Optional[NodePortSchema] = Field(None, description="입출력 포트 스키마 (V2)")
+    variable_mappings: Dict[str, Any] = Field(default_factory=dict, description="변수 매핑 (V2)")
+
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -91,6 +137,11 @@ class WorkflowEdge(BaseModel):
     target: str = Field(..., description="타겟 노드 ID")
     type: str = Field("custom", description="엣지 타입")
     data: EdgeData = Field(..., description="엣지 데이터")
+
+    # V2 필드 (하위 호환성 위해 Optional)
+    source_port: Optional[str] = Field(None, description="소스 포트 이름 (V2)")
+    target_port: Optional[str] = Field(None, description="타겟 포트 이름 (V2)")
+    data_type: Optional[PortType] = Field(None, description="데이터 타입 (V2)")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -232,3 +283,43 @@ class ModelInfo(BaseModel):
 class ModelsResponse(BaseModel):
     """모델 목록 응답"""
     models: List[ModelInfo] = Field(..., description="모델 목록")
+
+
+# ============ V2 스키마: 워크플로우 버전 관리 ============
+
+class WorkflowVersionStatus(str, Enum):
+    """워크플로우 버전 상태"""
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    ARCHIVED = "archived"
+
+
+class WorkflowGraph(BaseModel):
+    """워크플로우 그래프 (V2)"""
+    nodes: List[WorkflowNode] = Field(..., description="노드 목록")
+    edges: List[WorkflowEdge] = Field(..., description="엣지 목록")
+
+
+class WorkflowVersionCreate(BaseModel):
+    """워크플로우 버전 생성 요청"""
+    graph: WorkflowGraph = Field(..., description="워크플로우 그래프")
+    environment_variables: Dict[str, Any] = Field(default_factory=dict, description="환경 변수")
+    conversation_variables: Dict[str, Any] = Field(default_factory=dict, description="대화 변수")
+
+
+class WorkflowVersionResponse(BaseModel):
+    """워크플로우 버전 응답"""
+    id: str = Field(..., description="버전 ID")
+    bot_id: str = Field(..., description="봇 ID")
+    version: str = Field(..., description="버전 번호")
+    status: WorkflowVersionStatus = Field(..., description="상태")
+    created_at: datetime = Field(..., description="생성 시간")
+    updated_at: datetime = Field(..., description="수정 시간")
+    published_at: Optional[datetime] = Field(None, description="발행 시간")
+
+
+class WorkflowVersionDetail(WorkflowVersionResponse):
+    """워크플로우 버전 상세"""
+    graph: WorkflowGraph = Field(..., description="워크플로우 그래프")
+    environment_variables: Dict[str, Any] = Field(default_factory=dict, description="환경 변수")
+    conversation_variables: Dict[str, Any] = Field(default_factory=dict, description="대화 변수")
