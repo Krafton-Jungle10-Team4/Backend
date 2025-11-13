@@ -7,7 +7,7 @@ from importlib import import_module
 from app.config import settings
 from app.core.llm_base import BaseLLMClient
 from app.core.llm_registry import LLMProviderRegistry
-from app.core.providers.config import OpenAIConfig, AnthropicConfig, GoogleConfig
+from app.core.providers.config import OpenAIConfig, AnthropicConfig, GoogleConfig, BedrockConfig
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,24 @@ def _build_provider_config(provider: str):
             api_key=settings.anthropic_api_key,
             default_model=settings.anthropic_model,
             system_prompt=None
+        )
+
+    if provider_key == "bedrock":
+        # AWS Bedrock은 IAM 자격증명 사용 (API Key 불필요)
+        return BedrockConfig(
+            region_name=settings.bedrock_region,
+            default_model=settings.bedrock_model,
+            system_prompt=None
+        )
+
+    if provider_key == "google":
+        if not settings.google_api_key:
+            raise ValueError(
+                "GOOGLE_API_KEY가 설정되지 않았습니다. .env.local 파일을 확인하세요."
+            )
+        return GoogleConfig(
+            api_key=settings.google_api_key,
+            default_model=settings.google_default_model
         )
 
     raise ValueError(f"지원하지 않는 LLM 제공자: {provider}")

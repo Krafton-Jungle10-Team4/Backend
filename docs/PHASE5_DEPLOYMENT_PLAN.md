@@ -64,9 +64,7 @@ Migration:
 - 기존 워크플로우는 legacy_workflow에 백업
 - V2 전환은 수동 활성화 (use_workflow_v2 플래그)
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
-Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
 ### 개별 파일 커밋 (선택사항)
@@ -88,9 +86,7 @@ git commit -m "feat: Phase 5 마이그레이션 스크립트 및 배포 계획 �
 - 운영 가이드 문서 (MIGRATION_GUIDE.md)
 - 배포 계획서 (PHASE5_DEPLOYMENT_PLAN.md)
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
-Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---

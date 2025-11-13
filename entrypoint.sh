@@ -185,16 +185,10 @@ try:
             else:
                 print("✅ embedded_at column already exists")
 
-        # 3. alembic_version 업데이트
+        # 3. alembic_version 확인 (자동 업데이트 제거 - alembic이 관리)
         result = conn.execute(text("SELECT version_num FROM alembic_version"))
         current_version = result.scalar()
-        if current_version != 'e4f5g6h7i8j9':
-            print(f"🔧 Updating alembic version from {current_version} to e4f5g6h7i8j9...")
-            conn.execute(text("UPDATE alembic_version SET version_num = 'e4f5g6h7i8j9'"))
-            conn.commit()
-            print("✅ Alembic version updated!")
-        else:
-            print("✅ Already at version e4f5g6h7i8j9")
+        print(f"ℹ️  Current alembic version: {current_version}")
 
 except Exception as e:
     print(f"⚠️  SQL migration failed (will retry with alembic): {e}")

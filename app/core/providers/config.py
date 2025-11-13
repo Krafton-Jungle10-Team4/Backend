@@ -53,6 +53,23 @@ class GoogleConfig(ProviderConfig):
     )
 
 
+class BedrockConfig(ProviderConfig):
+    """AWS Bedrock Provider 설정"""
+
+    region_name: str = Field(
+        default="ap-northeast-2",
+        description="AWS 리전 (서울)"
+    )
+    default_model: str = Field(
+        default="anthropic.claude-haiku-4-5-20251001-v1:0",
+        description="기본 모델 ID (Haiku 4.5 최신, 저렴)"
+    )
+    system_prompt: Optional[str] = Field(
+        default=None,
+        description="기본 시스템 프롬프트"
+    )
+
+
 class LLMConfig(BaseModel):
     """LLM 통합 설정"""
 
@@ -63,6 +80,7 @@ class LLMConfig(BaseModel):
     openai: Optional[OpenAIConfig] = None
     anthropic: Optional[AnthropicConfig] = None
     google: Optional[GoogleConfig] = None
+    bedrock: Optional[BedrockConfig] = None
 
     def get_provider_config(self, provider: str) -> Optional[ProviderConfig]:
         """Provider 이름으로 설정 조회"""
@@ -73,4 +91,6 @@ class LLMConfig(BaseModel):
             return self.anthropic
         if provider_key == "google":
             return self.google
+        if provider_key == "bedrock":
+            return self.bedrock
         return None
