@@ -397,10 +397,33 @@ class WorkflowNodeExecution(Base):
 
 ---
 
-## 리팩토링 2단계: 변수 시스템 구축 (3-4주)
+## 리팩토링 2단계: 변수 시스템 구축 (3-4주) ✅ **완료**
 
 ### 목표
 WorkflowExecutionContext를 분리하여 서비스 컨테이너와 데이터 풀을 독립시킴
+
+### 구현 완료 내역
+
+#### ✅ 구현된 파일
+- `app/core/workflow/variable_pool.py`: VariablePool 클래스
+- `app/core/workflow/service_container.py`: ServiceContainer 및 ServiceLocator 클래스
+- `app/core/workflow/base_node_v2.py`: BaseNodeV2 및 NodeExecutionContext 클래스
+- `app/core/workflow/nodes_v2/start_node_v2.py`: StartNodeV2 구현
+- `app/core/workflow/nodes_v2/knowledge_node_v2.py`: KnowledgeNodeV2 구현
+- `app/core/workflow/nodes_v2/llm_node_v2.py`: LLMNodeV2 구현
+- `app/core/workflow/nodes_v2/end_node_v2.py`: EndNodeV2 구현
+- `app/core/workflow/node_adapter.py`: NodeAdapter 및 NodeAdapterFactory 구현
+
+#### ✅ 주요 기능
+1. **VariablePool**: 포트 기반 변수 관리, ValueSelector 해석, 환경/대화/시스템 변수 관리
+2. **ServiceContainer**: 의존성 주입 패턴, 서비스 등록/조회, 싱글톤 지원
+3. **BaseNodeV2**: 포트 스키마 기반 인터페이스, execute_v2() 메서드, 서비스 컨테이너 통합
+4. **V2 노드들**: Start, Knowledge, LLM, End 노드의 포트 기반 구현
+5. **NodeAdapter**: V1-V2 호환성 계층, 기존 노드를 V2 인터페이스로 래핑
+
+---
+
+### 원본 설계
 
 ### 2.1 현재 컨텍스트 분석
 
@@ -800,10 +823,57 @@ class NodeAdapter:
 
 ---
 
-## 리팩토링 3단계: 실행 엔진 개선 (5-8주)
+## 리팩토링 3단계: 실행 엔진 개선 (5-8주) ✅ **완료 (2025-01-XX)**
 
 ### 목표
 WorkflowExecutor를 개선하여 포트 기반 데이터 흐름 지원
+
+### ✅ 완료된 작업
+
+#### 3.1 WorkflowExecutorV2 구현
+- **파일**: `app/core/workflow/executor_v2.py` (새로 생성)
+- **기능**:
+  - VariablePool과 ServiceContainer 기반 V2 실행 엔진
+  - 포트 기반 데이터 흐름 지원
+  - `_gather_node_inputs()`: variable_mappings에서 ValueSelector 해석
+  - `_execute_v2_nodes()`: 순차적 노드 실행 및 출력 저장
+  - 실행 기록 DB 저장 기능 (`WorkflowExecutionRun`, `WorkflowNodeExecution`)
+
+#### 3.2 NodeRegistryV2 구현
+- **파일**: `app/core/workflow/node_registry_v2.py` (새로 생성)
+- **기능**:
+  - V2 노드 타입 등록 및 관리
+  - 싱글톤 패턴으로 구현
+  - `create_node()`: 노드 인스턴스 생성
+  - `get_port_schema()`: 노드 포트 스키마 조회
+  - 4개 V2 노드 등록 (`StartNodeV2`, `KnowledgeNodeV2`, `LLMNodeV2`, `EndNodeV2`)
+
+#### 3.3 ChatService V1/V2 분기 처리
+- **파일**: `app/services/chat_service.py` (수정)
+- **변경사항**:
+  - `_execute_workflow()`: `bot.use_workflow_v2` 플래그 기반 executor 선택
+  - `_stream_workflow_response()`: 스트리밍에도 동일한 분기 처리
+  - V1과 V2가 동일한 인터페이스로 실행 가능
+
+#### 3.4 실행 기록 저장
+- **구현 위치**: `executor_v2.py`
+- **메서드**:
+  - `_create_execution_run()`: 워크플로우 실행 시작 시 DB 레코드 생성
+  - `_finalize_execution_run()`: 실행 완료 시 메트릭 업데이트 (elapsed_time, total_tokens)
+  - `_create_node_execution()`: 각 노드 실행마다 상세 기록 저장
+- **저장 데이터**:
+  - WorkflowExecutionRun: graph_snapshot, inputs, outputs, status, 실행 시간, 토큰 사용량
+  - WorkflowNodeExecution: inputs, outputs, status, error_message, 노드별 실행 시간
+
+### 구현 완료 상태
+
+| 항목 | 상태 | 파일 |
+|------|------|------|
+| WorkflowExecutorV2 | ✅ | `app/core/workflow/executor_v2.py` |
+| NodeRegistryV2 | ✅ | `app/core/workflow/node_registry_v2.py` |
+| ChatService 분기 | ✅ | `app/services/chat_service.py` |
+| 실행 기록 저장 | ✅ | `executor_v2.py` (내부 메서드) |
+| 입력 수집 로직 | ✅ | `_gather_node_inputs()` |
 
 ### 3.1 현재 Executor 분석
 

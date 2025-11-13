@@ -156,29 +156,49 @@ class ChatService:
             logger.info(f"[ChatService] Bot {request.bot_id}에 Workflow가 없어 기본 RAG 파이프라인 실행")
             return await self._execute_rag_pipeline(request, bot.bot_id, db)
 
-        # 새로운 Workflow Executor로 실행
-        from app.core.workflow.executor import WorkflowExecutor
+        # 서비스 초기화 (V1/V2 공통)
         from app.services.vector_service import VectorService
         from app.services.llm_service import LLMService
 
         vector_service = VectorService()
         llm_service = LLMService()
-
-        executor = WorkflowExecutor()
         workflow_data = self._prepare_workflow_data(bot, request)
 
-        # 워크플로우 실행
-        response_text = await executor.execute(
-            workflow_data=workflow_data,
-            session_id=request.session_id or "default",
-            user_message=request.message,
-            bot_id=bot.bot_id,
-            db=db,
-            vector_service=vector_service,
-            llm_service=llm_service,
-            stream_handler=None,
-            text_normalizer=strip_markdown
-        )
+        # V1/V2 분기 처리
+        if getattr(bot, 'use_workflow_v2', False):
+            # V2 Workflow Executor 실행
+            logger.info(f"[ChatService] V2 Workflow 실행: bot_id={request.bot_id}")
+            from app.core.workflow.executor_v2 import WorkflowExecutorV2
+
+            executor = WorkflowExecutorV2()
+            response_text = await executor.execute(
+                workflow_data=workflow_data,
+                session_id=request.session_id or "default",
+                user_message=request.message,
+                bot_id=bot.bot_id,
+                db=db,
+                vector_service=vector_service,
+                llm_service=llm_service,
+                stream_handler=None,
+                text_normalizer=strip_markdown
+            )
+        else:
+            # V1 Workflow Executor 실행 (기존 로직)
+            logger.info(f"[ChatService] V1 Workflow 실행: bot_id={request.bot_id}")
+            from app.core.workflow.executor import WorkflowExecutor
+
+            executor = WorkflowExecutor()
+            response_text = await executor.execute(
+                workflow_data=workflow_data,
+                session_id=request.session_id or "default",
+                user_message=request.message,
+                bot_id=bot.bot_id,
+                db=db,
+                vector_service=vector_service,
+                llm_service=llm_service,
+                stream_handler=None,
+                text_normalizer=strip_markdown
+            )
 
         # ChatResponse 형식으로 변환
         return ChatResponse(
@@ -315,14 +335,22 @@ class ChatService:
         db: AsyncSession
     ) -> AsyncGenerator[str, None]:
         """워크플로우 실행 결과를 실시간으로 전송"""
-        from app.core.workflow.executor import WorkflowExecutor
         from app.services.vector_service import VectorService
         from app.services.llm_service import LLMService
 
         workflow_data = self._prepare_workflow_data(bot, request)
         vector_service = VectorService()
         llm_service = LLMService()
-        executor = WorkflowExecutor()
+
+        # V1/V2 분기 처리
+        if getattr(bot, 'use_workflow_v2', False):
+            logger.info(f"[ChatService] V2 Workflow 스트리밍: bot_id={bot.bot_id}")
+            from app.core.workflow.executor_v2 import WorkflowExecutorV2
+            executor = WorkflowExecutorV2()
+        else:
+            logger.info(f"[ChatService] V1 Workflow 스트리밍: bot_id={bot.bot_id}")
+            from app.core.workflow.executor import WorkflowExecutor
+            executor = WorkflowExecutor()
 
         queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
 
