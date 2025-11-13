@@ -87,7 +87,6 @@ claude_config.json
 claude_logs/
 claude_history/
 .claude/
-
 *.txt
 # *.md
 # 로그
@@ -96,7 +95,7 @@ claude_history/
 *.tmp
 *.bak
 *.swp
-
+AWS_배포_종합_가이드.md
 !requirements.txt
 !package.json
 !pom.xml

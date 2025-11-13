@@ -1702,23 +1702,12 @@ python scripts/migrate_workflows_to_v2.py --bot-id abc-123
 - [x] API 문서 자동 생성 (Swagger)
 - [x] **산출물**: API 문서 + Swagger UI (`/docs`)
 
-### 5단계 (11-12주): 마이그레이션 & 배포 ✅ **완료 (2025-01-13)**
-- [x] 마이그레이션 스크립트 완성 (`scripts/migrate_workflows_to_v2.py`)
-- [x] 테스트 스크립트 작성 (`scripts/test_migration.py`)
-- [x] 운영 가이드 문서 작성 (`docs/MIGRATION_GUIDE.md`)
-- [x] 배포 계획서 작성 (`docs/PHASE5_DEPLOYMENT_PLAN.md`)
-- [ ] Staging 환경 테스트 (운영팀 수행)
-- [ ] 성능 벤치마킹 (운영팀 수행)
-- [ ] 점진적 롤아웃 (10% → 50% → 100%) (운영팀 수행)
-- [x] **산출물**: 마이그레이션 스크립트 + 테스트 + 운영 가이드 + 배포 계획서
-
-#### 배포 프로세스 (상세: docs/PHASE5_DEPLOYMENT_PLAN.md)
-1. **Git 커밋 및 푸시** (Phase 1-5 전체)
-2. **Docker 이미지 빌드** (`--platform linux/amd64` 필수)
-3. **ECR 푸시** (latest + phase5 태그)
-4. **ECS 배포** (force-new-deployment)
-5. **헬스 체크** (API 정상 작동 확인)
-6. **모니터링** (CloudWatch 대시보드)
+### 5단계 (11-12주): 마이그레이션 & 배포
+- [ ] 마이그레이션 스크립트 완성
+- [ ] Staging 환경 테스트
+- [ ] 성능 벤치마킹
+- [ ] 점진적 롤아웃 (10% → 50% → 100%)
+- [ ] **산출물**: 운영 가이드
 
 ---
 

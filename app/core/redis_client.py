@@ -35,9 +35,8 @@ class RedisClient:
 
             # 프로덕션 환경: SSL/TLS 설정 추가
             if settings.is_production or settings.redis_use_ssl:
-                import ssl
-                # redis-py는 ssl_cert_reqs를 직접 받음 (dict가 아닌 ssl 객체)
-                client_kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
+                # ElastiCache TLS: ssl_cert_reqs는 None으로 설정 (인증서 검증 비활성화)
+                client_kwargs["ssl_cert_reqs"] = None
                 logger.info("Redis: Production mode with TLS enabled")
             else:
                 logger.info("Redis: Development mode without TLS")
