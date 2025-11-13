@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     log_level: str = "info"
     use_structured_logging: bool = True  # 구조화된 로깅 사용 여부 (가독성 향상)
     environment: str = "development"  # development, staging, production
+    auto_run_migrations: bool = True  # 앱 기동 시 alembic upgrade 실행 여부
     
     #####################
     # Docker Hub diff
@@ -108,6 +109,16 @@ class Settings(BaseSettings):
             return f"{base_url}?ssl=require"
         else:
             return base_url
+
+    def get_database_url_sync(self) -> str:
+        """
+        Alembic 등 동기 드라이버에서 사용할 수 있는 Database URL
+        (asyncpg 접두사가 있으면 제거)
+        """
+        url = self.get_database_url()
+        if "+asyncpg" in url:
+            return url.replace("+asyncpg", "")
+        return url
 
     def get_redis_url(self) -> str:
         """

@@ -13,6 +13,7 @@ from app.core.middleware.rate_limit import (
     custom_rate_limit_handler
 )
 from app.core.middleware.audit_logging import AuditLoggingMiddleware
+from app.core.migration_runner import run_db_migrations
 from app.api.v1.endpoints import (
     upload,
     chat,
@@ -87,7 +88,9 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
 app.include_router(bots.router, prefix="/api/v1/bots", tags=["봇 관리"])
 app.include_router(workflows.router, prefix="/api/v1", tags=["워크플로우"])
 app.include_router(workflow_versions.router, prefix="/api/v1", tags=["워크플로우 V2 - 버전 관리"])
+app.include_router(workflow_versions.legacy_router, prefix="/api/v1", tags=["워크플로우 V2 - 버전 관리 (레거시 경로)"])
 app.include_router(workflow_executions.router, prefix="/api/v1", tags=["워크플로우 V2 - 실행 기록"])
+app.include_router(workflow_executions.legacy_router, prefix="/api/v1", tags=["워크플로우 V2 - 실행 기록 (레거시 경로)"])
 app.include_router(upload.router, prefix="/api/v1/documents", tags=["문서"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["챗봇"])
 app.include_router(deployment.router, prefix="/api/v1/bots", tags=["배포 관리"])
@@ -100,6 +103,9 @@ async def startup_event():
     logger.info(f"{settings.app_name} v{settings.app_version} 시작")
     logger.info(f"디버그 모드: {settings.debug}")
     logger.info(f"임베딩 모델: {settings.embedding_model}")
+
+    # 데이터베이스 스키마 최신화
+    await run_db_migrations()
 
     # 워크플로우 노드 등록
     logger.info("워크플로우 노드 등록 중...")
