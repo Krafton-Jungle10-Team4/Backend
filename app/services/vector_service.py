@@ -38,10 +38,24 @@ class VectorService:
         Returns:
             검색 결과 리스트
         """
+        if not bot_id:
+            raise ValueError("bot_id는 필수입니다")
+
         if document_ids:
-            logger.info(f"[VectorService] 벡터 검색: bot_id={bot_id}, query='{query[:50]}...', top_k={top_k}, document_ids={document_ids}")
+            logger.info(
+                "[VectorService] 벡터 검색: bot_id=%s, query='%s...', top_k=%s, document_ids=%s",
+                bot_id,
+                query[:50],
+                top_k,
+                document_ids
+            )
         else:
-            logger.info(f"[VectorService] 벡터 검색: bot_id={bot_id}, query='{query[:50]}...', top_k={top_k}")
+            logger.info(
+                "[VectorService] 벡터 검색: bot_id=%s, query='%s...', top_k=%s",
+                bot_id,
+                query[:50],
+                top_k
+            )
 
         # 1. 쿼리 임베딩 생성
         query_embedding = await self.embedding_service.embed_query(query)
@@ -76,9 +90,10 @@ class VectorService:
     async def search(
         self,
         query: str,
-        dataset_id: str,
+        bot_id: str,
         top_k: int = 5,
-        search_mode: str = "semantic"
+        search_mode: str = "semantic",
+        db: Optional[AsyncSession] = None
     ) -> List[Dict[str, Any]]:
         """
         Workflow에서 사용하는 검색 메서드
@@ -87,21 +102,24 @@ class VectorService:
 
         Args:
             query: 검색 쿼리
-            dataset_id: 데이터셋 ID (user_uuid와 동일)
+            bot_id: 검색할 봇 ID
             top_k: 검색할 문서 개수
             search_mode: 검색 모드 (semantic, keyword) - 현재는 semantic만 지원
 
         Returns:
             검색 결과 리스트
         """
-        logger.info(f"[VectorService.search] Workflow 검색 호출: dataset_id={dataset_id}, mode={search_mode}")
+        logger.info(
+            "[VectorService.search] Workflow 검색 호출: bot_id=%s, mode=%s",
+            bot_id,
+            search_mode
+        )
 
-        # search_similar_chunks 재사용 (db는 Optional이므로 None 전달)
         return await self.search_similar_chunks(
-            user_uuid=dataset_id,
+            bot_id=bot_id,
             query=query,
             top_k=top_k,
-            db=None
+            db=db
         )
 
 

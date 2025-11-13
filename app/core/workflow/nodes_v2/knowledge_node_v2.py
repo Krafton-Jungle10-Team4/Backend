@@ -103,25 +103,19 @@ class KnowledgeNodeV2(BaseNodeV2):
 
         logger.info(f"KnowledgeNodeV2: Searching with query='{query[:50]}...', top_k={top_k}")
 
+        target_bot_id = dataset_id or bot_id
+        if not target_bot_id:
+            raise ValueError("bot_id를 찾을 수 없습니다")
+
         # 벡터 검색 수행
         try:
-            # document_ids가 있으면 특정 문서에서만 검색
-            if document_ids:
-                results = await vector_service.search_in_documents(
-                    query=query,
-                    document_ids=document_ids,
-                    top_k=top_k,
-                    bot_id=bot_id,
-                    db=db_session
-                )
-            else:
-                # 전체 봇 지식에서 검색
-                results = await vector_service.search(
-                    query=query,
-                    top_k=top_k,
-                    bot_id=bot_id,
-                    db=db_session
-                )
+            results = await vector_service.search_similar_chunks(
+                bot_id=target_bot_id,
+                query=query,
+                top_k=top_k,
+                db=db_session,
+                document_ids=document_ids or None
+            )
 
             # 결과 처리
             if not results:

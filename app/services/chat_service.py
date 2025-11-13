@@ -162,7 +162,7 @@ class ChatService:
 
         vector_service = VectorService()
         llm_service = LLMService()
-        workflow_data = self._prepare_workflow_data(bot, request)
+        workflow_data = await self._prepare_workflow_data(bot, request, db)
 
         # V1/V2 분기 처리
         if getattr(bot, 'use_workflow_v2', False):
@@ -338,7 +338,7 @@ class ChatService:
         from app.services.vector_service import VectorService
         from app.services.llm_service import LLMService
 
-        workflow_data = self._prepare_workflow_data(bot, request)
+        workflow_data = await self._prepare_workflow_data(bot, request, db)
         vector_service = VectorService()
         llm_service = LLMService()
 
@@ -523,13 +523,24 @@ class ChatService:
                 }
             )
 
-    def _prepare_workflow_data(self, bot, request: ChatRequest) -> Dict[str, Any]:
+    async def _prepare_workflow_data(
+        self,
+        bot,
+        request: ChatRequest,
+        db: AsyncSession
+    ) -> Dict[str, Any]:
         """워크플로우 실행 전에 런타임 구성을 정리"""
-        workflow_data = copy.deepcopy(bot.workflow) if bot.workflow else {}
+        if getattr(bot, "use_workflow_v2", False):
+            workflow_data = await self._load_published_workflow(bot.bot_id, db)
+        else:
+            workflow_data = copy.deepcopy(bot.workflow) if bot.workflow else {}
+
+        workflow_data.setdefault("nodes", [])
+        workflow_data.setdefault("edges", [])
 
         override_model = self._resolve_model_name(request.model)
 
-        if override_model and workflow_data.get("nodes"):
+        if override_model and workflow_data["nodes"]:
             logger.info(f"[ChatService] 런타임 모델 오버라이드: {override_model}")
             for node in workflow_data["nodes"]:
                 if node.get("type") == "llm" and node.get("data"):
@@ -538,10 +549,36 @@ class ChatService:
                     logger.info(
                         f"[ChatService] LLM 노드 모델 변경: {original_model} → {override_model}"
                     )
-        elif workflow_data.get("nodes"):
+        elif workflow_data["nodes"]:
             for node in workflow_data["nodes"]:
                 if node.get("type") == "llm" and node.get("data"):
                     node["data"]["model"] = self._resolve_model_name(node["data"].get("model"))
+
+        return workflow_data
+
+    async def _load_published_workflow(
+        self,
+        bot_id: str,
+        db: AsyncSession
+    ) -> Dict[str, Any]:
+        """Published 워크플로우 버전을 로드하여 실행용 구조로 변환"""
+        from app.services.workflow_version_service import WorkflowVersionService
+
+        service = WorkflowVersionService(db)
+        version = await service.get_published_version(bot_id)
+
+        if not version or not version.graph:
+            raise ValueError("발행된 워크플로우 버전을 찾을 수 없습니다. 워크플로우를 먼저 발행하세요.")
+
+        graph = copy.deepcopy(version.graph)
+        workflow_data: Dict[str, Any] = {
+            **graph,
+            "nodes": graph.get("nodes", []),
+            "edges": graph.get("edges", []),
+            "environment_variables": version.environment_variables or graph.get("environment_variables", {}) or {},
+            "conversation_variables": version.conversation_variables or graph.get("conversation_variables", {}) or {},
+            "workflow_version_id": str(version.id)
+        }
 
         return workflow_data
 

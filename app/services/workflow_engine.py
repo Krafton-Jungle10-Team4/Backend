@@ -161,7 +161,7 @@ class WorkflowEngine:
 
         # 벡터 검색 실행
         results = await self.vector_service.search_similar_chunks(
-            user_uuid=user_uuid,
+            bot_id=user_uuid,
             query=context.user_message,
             top_k=top_k,
             db=db

@@ -37,6 +37,7 @@ class WorkflowExecutorV2:
         self.service_container: Optional[ServiceContainer] = None
         self.execution_run: Optional[WorkflowExecutionRun] = None
         self.run_start_time: Optional[datetime] = None
+        self.workflow_version_id: Optional[str] = None
 
     async def execute(
         self,
@@ -85,6 +86,8 @@ class WorkflowExecutorV2:
                 for warning in warnings:
                     logger.warning(f"V2 워크플로우 경고: {warning}")
 
+            self.workflow_version_id = workflow_data.get("workflow_version_id")
+
             # 변수 풀 초기화
             environment_vars = workflow_data.get("environment_variables", {})
             conversation_vars = workflow_data.get("conversation_variables", {})
@@ -126,7 +129,8 @@ class WorkflowExecutorV2:
                 session_id=session_id,
                 bot_id=bot_id,
                 user_message=user_message,
-                db=db
+                db=db,
+                workflow_version_id=self.workflow_version_id
             )
 
             # 노드 실행
@@ -134,7 +138,7 @@ class WorkflowExecutorV2:
 
             # 실행 기록 완료
             self._finalize_execution_run(
-                status="completed",
+                status="succeeded",
                 final_response=final_response,
                 db=db
             )
@@ -394,7 +398,8 @@ class WorkflowExecutorV2:
         session_id: str,
         bot_id: str,
         user_message: str,
-        db: Any
+        db: Any,
+        workflow_version_id: Optional[str] = None
     ) -> None:
         """
         워크플로우 실행 기록 생성
@@ -411,9 +416,17 @@ class WorkflowExecutorV2:
             return
 
         try:
+            version_uuid = None
+            if workflow_version_id:
+                try:
+                    version_uuid = uuid.UUID(str(workflow_version_id))
+                except (ValueError, TypeError):
+                    logger.warning("Invalid workflow_version_id provided: %s", workflow_version_id)
+
             self.execution_run = WorkflowExecutionRun(
                 id=uuid.uuid4(),
                 bot_id=bot_id,
+                workflow_version_id=version_uuid,
                 session_id=session_id,
                 graph_snapshot=workflow_data,
                 inputs={"user_message": user_message},

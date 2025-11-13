@@ -147,8 +147,18 @@ class LLMNodeV2(BaseNodeV2):
                 stream_handler=stream_handler
             )
 
-            response_text = result.get("response", "")
-            tokens_used = result.get("tokens", 0)
+            response_text: str
+            tokens_used: int = 0
+
+            if isinstance(result, dict):
+                response_text = (
+                    result.get("response")
+                    or result.get("text")
+                    or ""
+                )
+                tokens_used = result.get("tokens", 0)
+            else:
+                response_text = str(result)
 
             logger.info(f"LLMNodeV2: Generated response ({tokens_used} tokens)")
 
