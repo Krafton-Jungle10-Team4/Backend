@@ -96,6 +96,26 @@ class BedrockClient(BaseLLMClient):
 
             # 응답 파싱
             response_body = json.loads(response['body'].read())
+
+            # 토큰 사용량 추출 및 저장
+            usage = response_body.get('usage', {})
+            input_tokens = usage.get('input_tokens', 0)
+            output_tokens = usage.get('output_tokens', 0)
+
+            # 토큰 사용량 메타데이터 저장 (middleware에서 접근 가능)
+            self.last_usage = {
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens,
+                'total_tokens': input_tokens + output_tokens,
+                'cache_read_tokens': usage.get('cache_read_input_token_count', 0),
+                'cache_write_tokens': usage.get('cache_creation_input_token_count', 0),
+                'model': model_id
+            }
+
+            logger.info(
+                f"Bedrock 토큰 사용량 - 입력: {input_tokens}, 출력: {output_tokens}, 총: {input_tokens + output_tokens}"
+            )
+
             return response_body['content'][0]['text']
 
         except ClientError as e:
@@ -168,6 +188,9 @@ class BedrockClient(BaseLLMClient):
 
             # 스트림 처리
             stream = response.get('body')
+            total_input_tokens = 0
+            total_output_tokens = 0
+
             if stream:
                 for event in stream:
                     chunk = event.get('chunk')
@@ -181,6 +204,30 @@ class BedrockClient(BaseLLMClient):
                                 text = delta.get('text', '')
                                 if text:
                                     yield text
+
+                        # message_delta에서 토큰 사용량 추출
+                        elif chunk_data.get('type') == 'message_delta':
+                            usage = chunk_data.get('usage', {})
+                            total_output_tokens = usage.get('output_tokens', 0)
+
+                        # message_start에서 입력 토큰 추출
+                        elif chunk_data.get('type') == 'message_start':
+                            usage = chunk_data.get('message', {}).get('usage', {})
+                            total_input_tokens = usage.get('input_tokens', 0)
+
+            # 스트리밍 완료 후 토큰 사용량 저장
+            self.last_usage = {
+                'input_tokens': total_input_tokens,
+                'output_tokens': total_output_tokens,
+                'total_tokens': total_input_tokens + total_output_tokens,
+                'cache_read_tokens': 0,  # 스트리밍에서는 별도 필드 없음
+                'cache_write_tokens': 0,
+                'model': model_id
+            }
+
+            logger.info(
+                f"Bedrock 스트리밍 토큰 사용량 - 입력: {total_input_tokens}, 출력: {total_output_tokens}"
+            )
 
         except ClientError as e:
             error_code = e.response.get('Error', {}).get('Code', '')

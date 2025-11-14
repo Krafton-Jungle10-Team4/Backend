@@ -23,7 +23,8 @@ from app.api.v1.endpoints import (
     deployment,
     widget,
     workflow_versions,
-    workflow_executions
+    workflow_executions,
+    cost_monitoring
 )
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -95,6 +96,7 @@ app.include_router(upload.router, prefix="/api/v1/documents", tags=["문서"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["챗봇"])
 app.include_router(deployment.router, prefix="/api/v1/bots", tags=["배포 관리"])
 app.include_router(widget.router, prefix="/api/v1/widget", tags=["Widget"])
+app.include_router(cost_monitoring.router, prefix="/api/v1/cost", tags=["비용 모니터링"])
 
 
 @app.on_event("startup")

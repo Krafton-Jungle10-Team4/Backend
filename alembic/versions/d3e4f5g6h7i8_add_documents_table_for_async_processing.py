@@ -17,61 +17,59 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # DocumentStatus enum 타입 생성
-    documentstatus_enum = postgresql.ENUM(
-        'uploaded', 'queued', 'processing', 'done', 'failed',
-        name='documentstatus'
-    )
-    documentstatus_enum.create(op.get_bind(), checkfirst=True)
+    # DocumentStatus enum 타입 생성 (IF NOT EXISTS for idempotency)
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE documentstatus AS ENUM ('uploaded', 'queued', 'processing', 'done', 'failed');
+        EXCEPTION
+            WHEN duplicate_object THEN null;
+        END $$;
+    """)
 
-    # documents 테이블 생성
-    op.create_table(
-        'documents',
-        sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('document_id', sa.String(length=36), nullable=False),
-        sa.Column('bot_id', sa.String(length=50), nullable=False),
-        sa.Column('user_uuid', sa.String(length=36), nullable=False),
-        sa.Column('original_filename', sa.String(length=255), nullable=False),
-        sa.Column('file_extension', sa.String(length=10), nullable=False),
-        sa.Column('file_size', sa.Integer(), nullable=False),
-        sa.Column('s3_uri', sa.Text(), nullable=True),
-        sa.Column('status', documentstatus_enum, nullable=False, server_default='queued'),
-        sa.Column('error_message', sa.Text(), nullable=True),
-        sa.Column('retry_count', sa.Integer(), nullable=False, server_default='0'),
-        sa.Column('chunk_count', sa.Integer(), nullable=True),
-        sa.Column('processing_time', sa.Integer(), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('queued_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('processing_started_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint('id')
-    )
+    # documents 테이블 생성 (IF NOT EXISTS for idempotency)
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS documents (
+            id SERIAL PRIMARY KEY,
+            document_id VARCHAR(36) NOT NULL,
+            bot_id VARCHAR(50) NOT NULL,
+            user_uuid VARCHAR(36) NOT NULL,
+            original_filename VARCHAR(255) NOT NULL,
+            file_extension VARCHAR(10) NOT NULL,
+            file_size INTEGER NOT NULL,
+            s3_uri TEXT,
+            status documentstatus DEFAULT 'queued' NOT NULL,
+            error_message TEXT,
+            retry_count INTEGER DEFAULT 0 NOT NULL,
+            chunk_count INTEGER,
+            processing_time INTEGER,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+            updated_at TIMESTAMP WITH TIME ZONE,
+            queued_at TIMESTAMP WITH TIME ZONE,
+            processing_started_at TIMESTAMP WITH TIME ZONE,
+            completed_at TIMESTAMP WITH TIME ZONE
+        );
+    """)
 
-    # 인덱스 생성
-    op.create_index('ix_documents_id', 'documents', ['id'])
-    op.create_index('ix_documents_document_id', 'documents', ['document_id'], unique=True)
-    op.create_index('ix_documents_bot_id', 'documents', ['bot_id'])
-    op.create_index('ix_documents_user_uuid', 'documents', ['user_uuid'])
-    op.create_index('ix_documents_status', 'documents', ['status'])
-    op.create_index('ix_documents_created_at', 'documents', ['created_at'])
+    # 인덱스 생성 (IF NOT EXISTS for idempotency)
+    op.execute("CREATE INDEX IF NOT EXISTS ix_documents_id ON documents (id);")
+    op.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_documents_document_id ON documents (document_id);")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_documents_bot_id ON documents (bot_id);")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_documents_user_uuid ON documents (user_uuid);")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_documents_status ON documents (status);")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_documents_created_at ON documents (created_at);")
 
 
 def downgrade() -> None:
-    # 인덱스 삭제
-    op.drop_index('ix_documents_created_at', table_name='documents')
-    op.drop_index('ix_documents_status', table_name='documents')
-    op.drop_index('ix_documents_user_uuid', table_name='documents')
-    op.drop_index('ix_documents_bot_id', table_name='documents')
-    op.drop_index('ix_documents_document_id', table_name='documents')
-    op.drop_index('ix_documents_id', table_name='documents')
+    # 인덱스 삭제 (IF EXISTS for idempotency)
+    op.execute("DROP INDEX IF EXISTS ix_documents_created_at;")
+    op.execute("DROP INDEX IF EXISTS ix_documents_status;")
+    op.execute("DROP INDEX IF EXISTS ix_documents_user_uuid;")
+    op.execute("DROP INDEX IF EXISTS ix_documents_bot_id;")
+    op.execute("DROP INDEX IF EXISTS ix_documents_document_id;")
+    op.execute("DROP INDEX IF EXISTS ix_documents_id;")
 
-    # 테이블 삭제
-    op.drop_table('documents')
+    # 테이블 삭제 (IF EXISTS for idempotency)
+    op.execute("DROP TABLE IF EXISTS documents CASCADE;")
 
-    # Enum 타입 삭제
-    documentstatus_enum = postgresql.ENUM(
-        'uploaded', 'queued', 'processing', 'done', 'failed',
-        name='documentstatus'
-    )
-    documentstatus_enum.drop(op.get_bind(), checkfirst=True)
+    # Enum 타입 삭제 (IF EXISTS for idempotency)
+    op.execute("DROP TYPE IF EXISTS documentstatus;")
