@@ -35,9 +35,10 @@ RUN mkdir -p /app/data/uploads /app/data/huggingface_cache
 # entrypoint 스크립트 line ending 수정 및 실행 권한 부여
 RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh || echo "Warning: entrypoint.sh not found, using inline script"
 
-# Python 패키지 경로 설정
+# Python 패키지 경로 및 로깅 설정
 ENV PATH=/root/.local/bin:$PATH \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
 
 EXPOSE 8001
 

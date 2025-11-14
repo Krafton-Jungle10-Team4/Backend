@@ -87,7 +87,7 @@ async def create_or_update_draft(
             graph=graph_payload,
             environment_variables=request.environment_variables,
             conversation_variables=request.conversation_variables,
-            user_id=str(current_user.id)
+            user_id=current_user.uuid
         )
 
         return WorkflowVersionResponse(
@@ -154,7 +154,7 @@ async def publish_workflow(
         version = await service.publish_draft(
             bot_id=bot_id,
             version_id=version_id,
-            user_id=str(current_user.id)
+            user_id=current_user.uuid
         )
 
         return WorkflowVersionResponse(

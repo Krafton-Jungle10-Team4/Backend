@@ -35,7 +35,7 @@ AsyncSessionLocal = async_sessionmaker(
 async def get_db() -> AsyncSession:
     """
     데이터베이스 세션 의존성
-    FastAPI 엔드포인트에서 사용 (JPA의 @Repository와 유사)
+    FastAPI 엔드포인트에서 사용 (JPA의 EntityManager와 유사)
 
     Usage:
         @router.get("/users")
@@ -44,11 +44,19 @@ async def get_db() -> AsyncSession:
 
     Raises:
         DatabaseTransactionError: 트랜잭션 처리 중 오류 발생 시
+
+    Note:
+        Spring의 @Transactional과 유사하게 동작합니다.
+        세션에 변경사항(dirty/new/deleted)이 있을 때만 commit을 수행합니다.
+        읽기 전용 쿼리의 경우 불필요한 commit을 방지하여 성능과 안정성을 향상시킵니다.
     """
     async with AsyncSessionLocal() as session:
         try:
             yield session
-            await session.commit()
+            # 영속성 컨텍스트에 변경사항이 있을 때만 commit 수행
+            # dirty: 수정된 엔티티, new: 새로 추가된 엔티티, deleted: 삭제된 엔티티
+            if session.dirty or session.new or session.deleted:
+                await session.commit()
         except SQLAlchemyError as e:
             await session.rollback()
             raise DatabaseTransactionError(

@@ -107,7 +107,9 @@ async def startup_event():
     logger.info(f"임베딩 모델: {settings.embedding_model}")
 
     # 데이터베이스 스키마 최신화
-    await run_db_migrations()
+    # NOTE: entrypoint.sh에서 이미 실행되므로 여기서는 스킵
+    # await run_db_migrations()
+    logger.info("⏭️ 마이그레이션은 entrypoint.sh에서 실행됨")
 
     # 워크플로우 노드 등록
     logger.info("워크플로우 노드 등록 중...")

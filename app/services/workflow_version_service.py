@@ -11,6 +11,7 @@ import logging
 
 from app.models.workflow_version import BotWorkflowVersion
 from app.models.bot import Bot
+from app.models.user import User
 from app.schemas.workflow import WorkflowVersionStatus, WorkflowGraph
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ class WorkflowVersionService:
             graph: 워크플로우 그래프
             environment_variables: 환경 변수
             conversation_variables: 대화 변수
-            user_id: 사용자 ID
+            user_id: 사용자 UUID
 
         Returns:
             BotWorkflowVersion: 생성/업데이트된 draft 버전
@@ -66,6 +67,9 @@ class WorkflowVersionService:
             logger.info(f"Updated draft workflow for bot {bot_id}")
             return existing_draft
         else:
+            # user_id 검증 및 fallback 처리
+            creator_uuid = await self._get_valid_creator_uuid(bot_id, user_id)
+
             # 신규 생성
             draft = BotWorkflowVersion(
                 bot_id=bot_id,
@@ -74,7 +78,7 @@ class WorkflowVersionService:
                 graph=graph,
                 environment_variables=environment_variables,
                 conversation_variables=conversation_variables,
-                created_by=user_id
+                created_by=creator_uuid
             )
             self.db.add(draft)
             await self.db.commit()
@@ -152,6 +156,9 @@ class WorkflowVersionService:
         await self.db.commit()
         await self.db.refresh(draft)
 
+        # user_id 검증 및 fallback 처리
+        creator_uuid = await self._get_valid_creator_uuid(bot_id, user_id)
+
         # 새 빈 draft 생성
         new_draft = BotWorkflowVersion(
             bot_id=bot_id,
@@ -160,7 +167,7 @@ class WorkflowVersionService:
             graph=draft.graph,  # 기존 그래프 복사
             environment_variables=draft.environment_variables,
             conversation_variables=draft.conversation_variables,
-            created_by=user_id
+            created_by=creator_uuid
         )
         self.db.add(new_draft)
         await self.db.commit()
@@ -275,3 +282,45 @@ class WorkflowVersionService:
 
         logger.info(f"Archived workflow version {version.version} (id: {version_id})")
         return version
+
+    async def _get_valid_creator_uuid(self, bot_id: str, user_id: str) -> str:
+        """
+        유효한 creator UUID 반환 (fallback 포함)
+        
+        Args:
+            bot_id: 봇 ID
+            user_id: 사용자 UUID (검증 필요)
+            
+        Returns:
+            str: 유효한 사용자 UUID
+            
+        Raises:
+            ValueError: 유효한 creator를 찾을 수 없는 경우
+        """
+        # 1. 제공된 user_id가 유효한 UUID인지 확인
+        stmt = select(User).where(User.uuid == user_id)
+        result = await self.db.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if user:
+            return user.uuid
+        
+        # 2. fallback: 봇의 creator UUID 사용
+        logger.warning(f"User UUID {user_id} not found, falling back to bot creator")
+        stmt = select(Bot).where(Bot.bot_id == bot_id)
+        result = await self.db.execute(stmt)
+        bot = result.scalar_one_or_none()
+        
+        if not bot:
+            raise ValueError(f"Bot {bot_id} not found")
+        
+        # Bot의 user 관계를 통해 creator UUID 가져오기
+        stmt = select(User).where(User.id == bot.user_id)
+        result = await self.db.execute(stmt)
+        bot_creator = result.scalar_one_or_none()
+        
+        if not bot_creator:
+            raise ValueError(f"Bot creator not found for bot {bot_id}")
+        
+        logger.info(f"Using bot creator UUID {bot_creator.uuid} for workflow version")
+        return bot_creator.uuid

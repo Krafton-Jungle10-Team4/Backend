@@ -238,9 +238,9 @@ def setup_logging(log_level: str = "INFO", use_structured: bool = True):
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
 
-    # uvicorn 로거 레벨 조정 (너무 자세한 로그 방지)
-    logging.getLogger("uvicorn").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # uvicorn 로거 레벨 조정
+    logging.getLogger("uvicorn").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.access").setLevel(logging.INFO)
     logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 
     # 외부 라이브러리 로거 레벨 조정 (과도한 DEBUG 로그 방지)
