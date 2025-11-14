@@ -129,7 +129,7 @@ class WorkflowVersionService:
             )
         ).order_by(BotWorkflowVersion.created_at.desc())
         result = await self.db.execute(stmt)
-        last_version = result.scalar_one_or_none()
+        last_version = result.scalars().first()
 
         # 새 버전 번호 생성
         if last_version:
@@ -147,7 +147,7 @@ class WorkflowVersionService:
         # Bot의 use_workflow_v2 활성화
         stmt = select(Bot).where(Bot.bot_id == bot_id)
         result = await self.db.execute(stmt)
-        bot = result.scalar_one_or_none()
+        bot = result.scalars().first()
 
         if bot:
             bot.use_workflow_v2 = True
@@ -236,15 +236,20 @@ class WorkflowVersionService:
         Returns:
             Optional[BotWorkflowVersion]: 발행된 버전 또는 None
         """
-        stmt = select(BotWorkflowVersion).where(
-            and_(
-                BotWorkflowVersion.bot_id == bot_id,
-                BotWorkflowVersion.status == WorkflowVersionStatus.PUBLISHED.value
+        stmt = (
+            select(BotWorkflowVersion)
+            .where(
+                and_(
+                    BotWorkflowVersion.bot_id == bot_id,
+                    BotWorkflowVersion.status == WorkflowVersionStatus.PUBLISHED.value
+                )
             )
-        ).order_by(BotWorkflowVersion.published_at.desc())
+            .order_by(BotWorkflowVersion.published_at.desc())
+            .limit(1)
+        )
 
         result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     async def archive_version(
         self,
@@ -309,7 +314,7 @@ class WorkflowVersionService:
         logger.warning(f"User UUID {user_id} not found, falling back to bot creator")
         stmt = select(Bot).where(Bot.bot_id == bot_id)
         result = await self.db.execute(stmt)
-        bot = result.scalar_one_or_none()
+        bot = result.scalars().first()
         
         if not bot:
             raise ValueError(f"Bot {bot_id} not found")
