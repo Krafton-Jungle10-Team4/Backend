@@ -5,6 +5,8 @@
 이를 통해 V1과 V2 노드를 같은 워크플로우에서 혼용할 수 있습니다.
 """
 
+from __future__ import annotations
+
 from typing import Any, Dict, List, Optional
 from app.core.workflow.base_node import BaseNode, NodeExecutionResult, NodeStatus
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext

@@ -4,6 +4,8 @@
 벡터 DB에서 관련 문서를 검색하는 노드입니다.
 """
 
+from __future__ import annotations
+
 from typing import Any, Dict, List, Optional
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
 from app.schemas.workflow import NodePortSchema, PortDefinition, PortType

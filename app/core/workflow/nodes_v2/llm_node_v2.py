@@ -4,6 +4,8 @@
 대형 언어 모델을 호출하여 응답을 생성하는 노드입니다.
 """
 
+from __future__ import annotations
+
 from typing import Any, Dict, List, Optional
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
 from app.schemas.workflow import NodePortSchema, PortDefinition, PortType

@@ -4,6 +4,8 @@
 워크플로우의 종료점을 나타내는 노드입니다.
 """
 
+from __future__ import annotations
+
 from typing import Any, Dict, Optional
 from app.core.workflow.base_node import (
     BaseNode,

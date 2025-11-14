@@ -5,6 +5,8 @@
 각 노드는 실행, 검증, 스키마 제공 기능을 구현해야 합니다.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, TypeVar, Generic
 from pydantic import BaseModel, Field

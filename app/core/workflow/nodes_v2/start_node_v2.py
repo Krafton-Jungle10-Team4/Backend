@@ -4,6 +4,8 @@
 사용자 입력을 받아 워크플로우를 시작하는 노드입니다.
 """
 
+from __future__ import annotations
+
 from typing import Any, Dict, List
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
 from app.schemas.workflow import NodePortSchema, PortDefinition, PortType

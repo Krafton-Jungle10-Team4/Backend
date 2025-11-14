@@ -4,6 +4,8 @@
 워크플로우의 최종 결과를 반환하는 노드입니다.
 """
 
+from __future__ import annotations
+
 from typing import Any, Dict, List, Optional
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
 from app.schemas.workflow import NodePortSchema, PortDefinition, PortType

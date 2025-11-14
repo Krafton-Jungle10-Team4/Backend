@@ -4,6 +4,8 @@ LLM 노드 구현
 언어 모델을 사용하여 응답을 생성하는 노드입니다.
 """
 
+from __future__ import annotations
+
 from typing import Any, Dict, Optional, List
 from pydantic import Field
 from app.core.workflow.base_node import (

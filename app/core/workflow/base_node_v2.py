@@ -5,6 +5,8 @@
 모든 V2 노드는 이 클래스를 상속받아 구현해야 합니다.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel

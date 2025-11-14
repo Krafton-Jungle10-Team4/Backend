@@ -4,6 +4,8 @@
 업로드된 문서에서 관련 정보를 검색하는 노드입니다.
 """
 
+from __future__ import annotations
+
 from typing import Any, Dict, Optional, List
 from pydantic import Field
 from datetime import datetime
