@@ -7,6 +7,11 @@ from app.models.deployment import BotDeployment, WidgetSession, WidgetMessage, W
 from app.models.document_embeddings import DocumentEmbedding
 from app.models.document import Document, DocumentStatus
 from app.models.llm_usage import LLMUsageLog, ModelPricing
+from app.models.workflow_version import (
+    BotWorkflowVersion,
+    WorkflowExecutionRun,
+    WorkflowNodeExecution
+)
 
 __all__ = [
     "User",
@@ -24,4 +29,7 @@ __all__ = [
     "DocumentStatus",
     "LLMUsageLog",
     "ModelPricing",
+    "BotWorkflowVersion",
+    "WorkflowExecutionRun",
+    "WorkflowNodeExecution",
 ]

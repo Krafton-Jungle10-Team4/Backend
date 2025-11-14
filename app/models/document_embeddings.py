@@ -1,7 +1,7 @@
 """
 문서 임베딩 데이터베이스 모델 (pgvector 사용)
 """
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
@@ -37,6 +37,15 @@ class DocumentEmbedding(Base):
 
     # Relationships
     bot = relationship("Bot", back_populates="document_embeddings")
+
+    # 명시적 인덱스 정의
+    __table_args__ = (
+        # HNSW 벡터 인덱스 (pgvector 성능 최적화)
+        Index('document_embeddings_embedding_idx', 'embedding',
+              postgresql_using='hnsw',
+              postgresql_with={'m': 16, 'ef_construction': 64},
+              postgresql_ops={'embedding': 'vector_cosine_ops'}),
+    )
 
     def __repr__(self):
         return f"<DocumentEmbedding(id={self.id}, bot_id={self.bot_id}, chunk_index={self.chunk_index})>"
