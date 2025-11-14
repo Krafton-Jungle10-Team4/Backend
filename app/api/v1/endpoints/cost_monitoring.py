@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.models.llm_usage import LLMUsageLog, ModelPricing
 from app.models.user import User
-from app.core.auth.dependencies import get_current_user
+from app.core.auth.dependencies import get_current_user_from_jwt
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -65,7 +65,7 @@ async def get_bot_usage_stats(
     bot_id: str,
     start_date: Optional[datetime] = Query(None, description="시작 날짜 (YYYY-MM-DD)"),
     end_date: Optional[datetime] = Query(None, description="종료 날짜 (YYYY-MM-DD)"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_jwt),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -122,7 +122,7 @@ async def get_bot_usage_breakdown(
     bot_id: str,
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_jwt),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -176,7 +176,7 @@ async def get_bot_usage_breakdown(
 async def get_bot_daily_costs(
     bot_id: str,
     days: int = Query(30, ge=1, le=365, description="조회 일수 (최대 365일)"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_jwt),
     db: AsyncSession = Depends(get_db)
 ):
     """
