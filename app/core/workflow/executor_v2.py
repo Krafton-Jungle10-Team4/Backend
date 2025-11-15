@@ -264,6 +264,11 @@ class WorkflowExecutorV2:
 
                 # 노드 실행 기록 저장
                 node_end_time = datetime.utcnow()
+                execution_metadata = None
+                if context and context.metadata:
+                    answer_meta = context.metadata.get("answer")
+                    if isinstance(answer_meta, dict):
+                        execution_metadata = answer_meta.get(node_id)
                 self._create_node_execution(
                     node_id=node_id,
                     node_type=node.__class__.__name__,
@@ -273,7 +278,8 @@ class WorkflowExecutorV2:
                     status=result.status.value,
                     error_message=result.error,
                     started_at=node_start_time,
-                    finished_at=node_end_time
+                    finished_at=node_end_time,
+                    execution_metadata=execution_metadata
                 )
 
                 if result.status == NodeStatus.FAILED:
@@ -285,6 +291,11 @@ class WorkflowExecutorV2:
 
                 # 실패한 노드 기록 저장
                 node_end_time = datetime.utcnow()
+                execution_metadata = None
+                if 'context' in locals() and context and context.metadata:
+                    answer_meta = context.metadata.get("answer")
+                    if isinstance(answer_meta, dict):
+                        execution_metadata = answer_meta.get(node_id)
                 self._create_node_execution(
                     node_id=node_id,
                     node_type=node.__class__.__name__,
@@ -294,7 +305,8 @@ class WorkflowExecutorV2:
                     status=NodeStatus.FAILED.value,
                     error_message=str(e),
                     started_at=node_start_time,
-                    finished_at=node_end_time
+                    finished_at=node_end_time,
+                    execution_metadata=execution_metadata
                 )
 
                 if stream_handler:
@@ -504,7 +516,8 @@ class WorkflowExecutorV2:
         status: str,
         error_message: Optional[str],
         started_at: datetime,
-        finished_at: datetime
+        finished_at: datetime,
+        execution_metadata: Optional[Dict[str, Any]] = None
     ) -> None:
         """
         노드 실행 기록 생성
@@ -519,6 +532,7 @@ class WorkflowExecutorV2:
             error_message: 에러 메시지
             started_at: 시작 시간
             finished_at: 종료 시간
+            execution_metadata: 실행 메타데이터 (Answer 노드 렌더링 정보 등)
         """
         if not self.execution_run:
             return
@@ -531,6 +545,11 @@ class WorkflowExecutorV2:
             if node_type == "LLMNodeV2" and outputs:
                 tokens_used = outputs.get("tokens", 0)
 
+            # 출력 데이터에 실행 메타데이터 병합
+            final_outputs = outputs.copy() if outputs else {}
+            if execution_metadata:
+                final_outputs["_execution_metadata"] = execution_metadata
+
             node_execution = WorkflowNodeExecution(
                 id=uuid.uuid4(),
                 workflow_run_id=self.execution_run.id,
@@ -538,7 +557,7 @@ class WorkflowExecutorV2:
                 node_type=node_type,
                 execution_order=execution_order,
                 inputs=inputs,
-                outputs=outputs,
+                outputs=final_outputs,
                 status=status,
                 error_message=error_message,
                 started_at=started_at,
