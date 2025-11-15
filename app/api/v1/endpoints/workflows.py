@@ -76,6 +76,16 @@ V2_NODE_METADATA = {
         "category": "Logic",
         "description": "질문 분류 노드",
     },
+    "answer": {
+        "type": "answer",
+        "label": "응답",
+        "description": "워크플로우의 최종 응답을 생성합니다",
+        "category": "System",
+        "icon": "message-square",
+        "color": "#10b981",
+        "is_required": True,
+        "supports_file_var": True
+    },
 }
 
 

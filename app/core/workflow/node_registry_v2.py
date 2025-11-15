@@ -226,6 +226,7 @@ def _register_default_nodes():
     from app.core.workflow.nodes_v2.question_classifier_node_v2 import QuestionClassifierNodeV2
     from app.core.workflow.nodes_v2.tavily_search_node_v2 import TavilySearchNodeV2
     from app.core.workflow.nodes_v2.assigner_node_v2 import AssignerNodeV2
+    from app.core.workflow.nodes_v2.answer_node_v2 import AnswerNodeV2
 
     node_registry_v2.register("start", StartNodeV2)
     node_registry_v2.register("knowledge-retrieval", KnowledgeNodeV2)
@@ -235,6 +236,7 @@ def _register_default_nodes():
     node_registry_v2.register("question-classifier", QuestionClassifierNodeV2)
     node_registry_v2.register("tavily-search", TavilySearchNodeV2)
     node_registry_v2.register("assigner", AssignerNodeV2)
+    node_registry_v2.register("answer", AnswerNodeV2)
 
 # 기본 노드 등록
 _register_default_nodes()
