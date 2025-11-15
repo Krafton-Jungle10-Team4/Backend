@@ -140,14 +140,24 @@ class LLMNodeV2(BaseNodeV2):
 
         # LLM 호출
         try:
-            result = await llm_service.generate(
-                prompt=prompt,
-                model=model,
-                provider=provider,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream_handler=stream_handler
-            )
+            # stream_handler가 있으면 스트리밍 사용, 없으면 일반 생성 사용
+            if stream_handler:
+                result = await llm_service.generate_stream(
+                    prompt=prompt,
+                    model=model,
+                    provider=provider,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    on_chunk=stream_handler.emit_content_chunk
+                )
+            else:
+                result = await llm_service.generate(
+                    prompt=prompt,
+                    model=model,
+                    provider=provider,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
 
             response_text: str
             tokens_used: int = 0
