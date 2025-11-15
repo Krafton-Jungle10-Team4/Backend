@@ -1,7 +1,7 @@
 """
 OpenAI API 클라이언트 구현
 """
-from typing import List, Dict, AsyncGenerator
+from typing import List, Dict, AsyncGenerator, Any, Optional
 import logging
 from openai import AsyncOpenAI
 from openai import APIError, RateLimitError, APITimeoutError
@@ -33,6 +33,7 @@ class OpenAIClient(BaseLLMClient):
             or "당신은 유능한 AI 어시스턴트입니다. 사용자에게 친절하고 명확하게 답변해야 합니다."
         )
         logger.info("OpenAI Client 초기화: 모델=%s", self.model)
+        self.last_usage: Optional[Dict[str, Any]] = None
 
     async def generate(
         self,
@@ -59,11 +60,13 @@ class OpenAIClient(BaseLLMClient):
                 stream=False
             )
 
+            self.last_usage = None
             response = await self.client.chat.completions.create(
                 model=model_name,
                 messages=final_messages,
                 **request_kwargs
             )
+            self._capture_usage(getattr(response, "usage", None), model_name)
             return response.choices[0].message.content
         except RateLimitError as e:
             logger.error(f"OpenAI API 사용량 제한: {e}")
@@ -135,6 +138,7 @@ class OpenAIClient(BaseLLMClient):
                 stream=True
             )
 
+            self.last_usage = None
             stream = await self.client.chat.completions.create(
                 model=model_name,
                 messages=final_messages,
@@ -143,6 +147,9 @@ class OpenAIClient(BaseLLMClient):
             async for chunk in stream:
                 if chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
+                usage_payload = getattr(chunk, "usage", None)
+                if usage_payload:
+                    self._capture_usage(usage_payload, model_name)
         except RateLimitError as e:
             logger.error(f"OpenAI API 사용량 제한 (스트리밍): {e}")
             raise LLMRateLimitError(
@@ -250,5 +257,31 @@ class OpenAIClient(BaseLLMClient):
 
         if stream:
             request_kwargs["stream"] = True
+            request_kwargs.setdefault("stream_options", {"include_usage": True})
 
         return request_kwargs
+
+    def _capture_usage(self, usage: Optional[Any], model_name: str) -> None:
+        """토큰 사용량 메타데이터 저장"""
+        if not usage:
+            self.last_usage = None
+            return
+
+        if isinstance(usage, dict):
+            prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+            total_tokens = int(usage.get("total_tokens", prompt_tokens + completion_tokens) or 0)
+        else:
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+            reported_total = getattr(usage, "total_tokens", None)
+            total_tokens = int(reported_total or (prompt_tokens + completion_tokens))
+
+        self.last_usage = {
+            "input_tokens": prompt_tokens,
+            "output_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "cache_write_tokens": 0,
+            "cache_read_tokens": 0,
+            "model": model_name
+        }

@@ -33,6 +33,8 @@ from app.core.exceptions import (
     VectorStoreError,
     LLMRateLimitError
 )
+from app.services.llm_cost_wrapper import get_llm_service_with_tracking
+from app.services.cost_tracking_service import CostTrackingService
 
 logger = logging.getLogger(__name__)
 
@@ -154,14 +156,17 @@ class ChatService:
         # Workflow가 없으면 기본 RAG 파이프라인으로 fallback (단, V2 사용 시에는 published 버전 사용)
         if not getattr(bot, "use_workflow_v2", False) and not bot.workflow:
             logger.info(f"[ChatService] Bot {request.bot_id}에 Workflow가 없어 기본 RAG 파이프라인 실행")
-            return await self._execute_rag_pipeline(request, bot.bot_id, db)
+            return await self._execute_rag_pipeline(request, bot.bot_id, db, bot.user_id)
 
         # 서비스 초기화 (V1/V2 공통)
         from app.services.vector_service import VectorService
-        from app.services.llm_service import LLMService
 
         vector_service = VectorService()
-        llm_service = LLMService()
+        llm_service = get_llm_service_with_tracking(
+            db=db,
+            bot_id=bot.bot_id,
+            user_id=bot.user_id
+        )
         workflow_data = await self._prepare_workflow_data(bot, request, db)
 
         # V1/V2 분기 처리
@@ -294,6 +299,13 @@ class ChatService:
                     sources_event = SourcesEvent(data=sources)
                     yield json.dumps(sources_event.model_dump(), ensure_ascii=False)
 
+            await self._track_usage_from_client(
+                db=db,
+                bot_id=bot.bot_id,
+                owner_user_id=bot.user_id,
+                model_name=resolved_model
+            )
+
         except ValueError as e:
             logger.error(f"[ChatService] 입력 검증 실패: {e}")
             error_event = ErrorEvent(
@@ -338,11 +350,14 @@ class ChatService:
     ) -> AsyncGenerator[str, None]:
         """워크플로우 실행 결과를 실시간으로 전송"""
         from app.services.vector_service import VectorService
-        from app.services.llm_service import LLMService
 
         workflow_data = await self._prepare_workflow_data(bot, request, db)
         vector_service = VectorService()
-        llm_service = LLMService()
+        llm_service = get_llm_service_with_tracking(
+            db=db,
+            bot_id=bot.bot_id,
+            user_id=bot.user_id
+        )
 
         # V1/V2 분기 처리
         if getattr(bot, 'use_workflow_v2', False):
@@ -404,7 +419,8 @@ class ChatService:
         self,
         request: ChatRequest,
         bot_id: str,
-        db: AsyncSession
+        db: AsyncSession,
+        bot_owner_id: Optional[int] = None
     ) -> ChatResponse:
         """기본 RAG 파이프라인 실행"""
         # 봇별 벡터 스토어 가져오기
@@ -459,13 +475,31 @@ class ChatService:
                 context=context
             )
 
+            resolved_model = self._resolve_model_name(request.model)
+            tracked_llm = None
+            provider_key = None
+            client = self.llm_client
+
+            if bot_owner_id:
+                tracked_llm = get_llm_service_with_tracking(
+                    db=db,
+                    bot_id=bot_id,
+                    user_id=bot_owner_id
+                )
+                provider_key = tracked_llm._resolve_provider(None, resolved_model)
+                client = tracked_llm._get_client(provider_key)
+
             # 6. LLM 호출
             logger.info("LLM API 호출 중...")
-            llm_response = await self.llm_client.generate(
+            llm_response = await client.generate(
                 messages=messages,
                 temperature=settings.chat_temperature,
-                max_tokens=settings.chat_max_tokens
+                max_tokens=settings.chat_max_tokens,
+                model=resolved_model
             )
+
+            if tracked_llm and provider_key is not None:
+                await tracked_llm._track_usage(provider_key, resolved_model)
 
             logger.info(f"LLM 응답 생성 완료 ({len(llm_response)} 글자)")
 
@@ -666,6 +700,43 @@ class ChatService:
             ))
 
         return sources
+
+    def _default_provider_key(self) -> str:
+        return (settings.llm_provider or "openai").lower()
+
+    async def _track_usage_from_client(
+        self,
+        db: AsyncSession,
+        bot_id: str,
+        owner_user_id: Optional[int],
+        model_name: Optional[str] = None
+    ) -> None:
+        """LLM 클라이언트의 마지막 사용량을 비용 로그로 저장"""
+        if not db or not bot_id or not owner_user_id:
+            return
+
+        client = getattr(self, "llm_client", None)
+        if not client:
+            return
+
+        usage = getattr(client, "last_usage", None)
+        if not usage:
+            return
+
+        try:
+            cost_service = CostTrackingService(db)
+            await cost_service.log_usage(
+                bot_id=bot_id,
+                user_id=owner_user_id,
+                provider=self._default_provider_key(),
+                model_name=usage.get("model") or model_name or "unknown",
+                input_tokens=int(usage.get("input_tokens", 0) or 0),
+                output_tokens=int(usage.get("output_tokens", 0) or 0),
+                cache_read_tokens=int(usage.get("cache_read_tokens", 0) or 0),
+                cache_write_tokens=int(usage.get("cache_write_tokens", 0) or 0)
+            )
+        except Exception as exc:
+            logger.error(f"[ChatService] 비용 추적 기록 실패: {exc}")
 
     def _clean_response(self, response: str) -> str:
         """LLM 응답에서 Sources 섹션과 그 이후 모든 내용 제거"""

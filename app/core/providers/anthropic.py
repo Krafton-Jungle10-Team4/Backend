@@ -1,7 +1,7 @@
 """
 Anthropic Claude API 클라이언트 구현
 """
-from typing import List, Dict, AsyncGenerator, Optional
+from typing import List, Dict, AsyncGenerator, Optional, Any
 import logging
 import httpx
 from anthropic import AsyncAnthropic
@@ -35,6 +35,7 @@ class AnthropicClient(BaseLLMClient):
             or "당신은 유능한 AI 어시스턴트입니다. 사용자에게 친절하고 명확하게 답변해야 합니다."
         )
         logger.info("Anthropic Client 초기화: 모델=%s", self.model)
+        self.last_usage: Optional[Dict[str, Any]] = None
 
     def _convert_messages(
         self, messages: List[Dict[str, str]]
@@ -77,6 +78,8 @@ class AnthropicClient(BaseLLMClient):
             # 런타임 모델 오버라이드 지원
             model_name = kwargs.pop("model", None) or self.model
 
+            self.last_usage = None
+
             # Anthropic API 호출
             response = await self.client.messages.create(
                 model=model_name,
@@ -86,6 +89,8 @@ class AnthropicClient(BaseLLMClient):
                 max_tokens=max_tokens,
                 **kwargs
             )
+
+            self._capture_usage(getattr(response, "usage", None), model_name)
 
             # 응답 텍스트 추출
             return response.content[0].text
@@ -134,6 +139,8 @@ class AnthropicClient(BaseLLMClient):
             # 런타임 모델 오버라이드 지원
             model_name = kwargs.pop("model", None) or self.model
 
+            self.last_usage = None
+
             # Anthropic 스트리밍 API 호출
             async with self.client.messages.stream(
                 model=model_name,
@@ -145,6 +152,12 @@ class AnthropicClient(BaseLLMClient):
             ) as stream:
                 async for text in stream.text_stream:
                     yield text
+
+                try:
+                    final_response = await stream.get_final_response()
+                    self._capture_usage(getattr(final_response, "usage", None), model_name)
+                except Exception as capture_exc:  # pragma: no cover
+                    logger.warning("Anthropic 스트리밍 사용량 추적 실패: %s", capture_exc)
 
         except RateLimitError as e:
             logger.error(f"Anthropic API 사용량 제한 (스트리밍): {e}")
@@ -177,3 +190,28 @@ class AnthropicClient(BaseLLMClient):
                     "error": str(e)
                 }
             )
+
+    def _capture_usage(self, usage: Optional[Any], model_name: str) -> None:
+        """토큰 사용량 메타데이터 저장"""
+        if not usage:
+            self.last_usage = None
+            return
+
+        def _safe_get(field: str) -> int:
+            if isinstance(usage, dict):
+                return int(usage.get(field, 0) or 0)
+            return int(getattr(usage, field, 0) or 0)
+
+        input_tokens = _safe_get("input_tokens")
+        output_tokens = _safe_get("output_tokens")
+        cache_creation = _safe_get("cache_creation_input_tokens")
+        cache_read = _safe_get("cache_read_input_tokens")
+
+        self.last_usage = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "cache_write_tokens": cache_creation,
+            "cache_read_tokens": cache_read,
+            "model": model_name
+        }
