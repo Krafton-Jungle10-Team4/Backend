@@ -27,6 +27,32 @@ class PortType(str, Enum):
     ANY = "any"
 
 
+class WriteMode(str, Enum):
+    """작업 타입 열거형"""
+    # 기본 작업
+    OVERWRITE = "over-write"
+    CLEAR = "clear"
+    SET = "set"
+
+    # 배열 작업
+    APPEND = "append"
+    EXTEND = "extend"
+    REMOVE_FIRST = "remove-first"
+    REMOVE_LAST = "remove-last"
+
+    # 산술 작업 (number 전용)
+    INCREMENT = "+="
+    DECREMENT = "-="
+    MULTIPLY = "*="
+    DIVIDE = "/="
+
+
+class AssignerInputType(str, Enum):
+    """입력 타입"""
+    VARIABLE = "variable"  # 포트 연결로 받음
+    CONSTANT = "constant"  # config에서 상수 값 사용
+
+
 class PortDefinition(BaseModel):
     """포트 정의"""
     name: str = Field(..., description="포트 이름 (예: query, context, response)")
@@ -395,3 +421,107 @@ class WorkflowExecutionStatistics(BaseModel):
     failed_runs: int = Field(..., description="실패 횟수")
     avg_elapsed_time: float = Field(..., description="평균 실행 시간 (milliseconds)")
     total_tokens: int = Field(..., description="총 토큰 사용량")
+
+
+# ============ Assigner Node V2 스키마 ============
+
+class AssignerOperation(BaseModel):
+    """단일 작업 정의"""
+    write_mode: WriteMode = Field(..., description="수행할 작업 타입")
+    input_type: AssignerInputType = Field(
+        default=AssignerInputType.VARIABLE,
+        description="입력 방식 (variable: 포트 연결, constant: 상수)"
+    )
+    constant_value: Optional[Any] = Field(
+        default=None,
+        description="input_type이 constant일 때 사용할 값"
+    )
+
+    model_config = ConfigDict(use_enum_values=True)
+
+
+class AssignerNodeConfig(BaseModel):
+    """Assigner 노드 설정"""
+    version: Literal["2"] = "2"
+    operations: List[AssignerOperation] = Field(
+        default_factory=list,
+        description="작업 목록"
+    )
+
+    model_config = ConfigDict(use_enum_values=True)
+
+
+class AssignerNodeInput(BaseModel):
+    """실행 시 입력 (동적 필드)"""
+    # operation_0_target, operation_0_value, operation_1_target, ...
+
+    model_config = ConfigDict(extra="allow")  # 동적 필드 허용
+
+
+class AssignerNodeOutput(BaseModel):
+    """실행 결과 (동적 필드)"""
+    # operation_0_result, operation_1_result, ...
+
+    model_config = ConfigDict(extra="allow")
+
+
+# ============ Export ============
+
+__all__ = [
+    # Enums
+    "PortType",
+    "WriteMode",
+    "AssignerInputType",
+    "WorkflowVersionStatus",
+
+    # Port 시스템
+    "PortDefinition",
+    "NodePortSchema",
+    "ValueSelector",
+    "VariableMapping",
+
+    # 노드 데이터
+    "NodePosition",
+    "StartNodeData",
+    "KnowledgeRetrievalNodeData",
+    "LLMNodeData",
+    "EndNodeData",
+
+    # 워크플로우 구조
+    "WorkflowNode",
+    "EdgeData",
+    "WorkflowEdge",
+    "Workflow",
+
+    # 검증
+    "WorkflowValidationRequest",
+    "WorkflowValidationResponse",
+
+    # 노드 타입 정보
+    "NodeTypeInfo",
+    "NodeTypesResponse",
+
+    # 모델 정보
+    "ModelInfo",
+    "ModelsResponse",
+
+    # V2 버전 관리
+    "WorkflowGraph",
+    "WorkflowVersionCreate",
+    "WorkflowVersionResponse",
+    "WorkflowVersionDetail",
+
+    # V2 실행 기록
+    "WorkflowRunResponse",
+    "WorkflowRunDetail",
+    "NodeExecutionResponse",
+    "NodeExecutionDetail",
+    "PaginatedWorkflowRuns",
+    "WorkflowExecutionStatistics",
+
+    # Assigner Node V2
+    "AssignerOperation",
+    "AssignerNodeConfig",
+    "AssignerNodeInput",
+    "AssignerNodeOutput",
+]
