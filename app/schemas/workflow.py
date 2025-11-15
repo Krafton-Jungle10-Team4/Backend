@@ -265,6 +265,10 @@ class NodeTypeInfo(BaseModel):
     max_instances: int = Field(..., description="최대 인스턴스 수 (-1은 무제한)")
     configurable: bool = Field(..., description="설정 가능 여부")
     config_schema: Optional[Dict[str, Any]] = Field(None, description="설정 스키마")
+    category: Optional[str] = Field(None, description="노드 카테고리 (예: Tools, LLM)")
+    description: Optional[str] = Field(None, description="노드 설명")
+    input_ports: Optional[List[PortDefinition]] = Field(None, description="입력 포트 목록")
+    output_ports: Optional[List[PortDefinition]] = Field(None, description="출력 포트 목록")
 
 
 class NodeTypesResponse(BaseModel):

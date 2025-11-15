@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.auth.dependencies import get_current_user_from_jwt as get_current_user
 from app.core.workflow.node_registry import node_registry
+from app.core.workflow.node_registry_v2 import node_registry_v2
 from app.core.workflow.validator import WorkflowValidator
 from app.models.user import User
 from app.schemas.workflow import (
@@ -20,7 +21,8 @@ from app.schemas.workflow import (
     NodeTypeInfo,
     NodeTypesResponse,
     ModelInfo,
-    ModelsResponse
+    ModelsResponse,
+    PortDefinition
 )
 from app.services.bot_service import BotService
 from app.config import settings
@@ -29,6 +31,52 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/workflows")
+
+# V2 노드 메타데이터 (label, icon, category, description)
+V2_NODE_METADATA = {
+    "tavily-search": {
+        "label": "Tavily Search",
+        "icon": "search",
+        "category": "Tools",
+        "description": "실시간 웹 검색을 수행하는 노드",
+    },
+    "start": {
+        "label": "Start",
+        "icon": "play",
+        "category": "System",
+        "description": "워크플로우 시작 노드",
+    },
+    "end": {
+        "label": "End",
+        "icon": "flag",
+        "category": "System",
+        "description": "워크플로우 종료 노드",
+    },
+    "llm": {
+        "label": "LLM",
+        "icon": "brain",
+        "category": "AI",
+        "description": "언어 모델 응답 생성 노드",
+    },
+    "knowledge-retrieval": {
+        "label": "Knowledge Retrieval",
+        "icon": "book",
+        "category": "Data",
+        "description": "지식베이스 검색 노드",
+    },
+    "if-else": {
+        "label": "If-Else",
+        "icon": "git-branch",
+        "category": "Logic",
+        "description": "조건 분기 노드",
+    },
+    "question-classifier": {
+        "label": "Question Classifier",
+        "icon": "filter",
+        "category": "Logic",
+        "description": "질문 분류 노드",
+    },
+}
 
 
 @router.get(
@@ -41,21 +89,19 @@ async def get_node_types(
     current_user: User = Depends(get_current_user)
 ) -> NodeTypesResponse:
     """
-    노드 타입 목록 조회
+    노드 타입 목록 조회 (V1 + V2 병합)
 
     Returns:
         NodeTypesResponse: 노드 타입 정보 목록
     """
     try:
-        # 레지스트리에서 모든 노드 스키마 가져오기
-        schemas = node_registry.list_schemas()
-
         node_types = []
-        for schema in schemas:
-            # NodeSchema를 NodeTypeInfo로 변환
-            config_schema = schema.config_schema
+        processed_types = set()
 
-            # config_schema가 dict인지 확인
+        # V1 레지스트리에서 노드 스키마 가져오기
+        v1_schemas = node_registry.list_schemas()
+        for schema in v1_schemas:
+            config_schema = schema.config_schema
             if config_schema and not isinstance(config_schema, dict):
                 config_schema = config_schema.dict() if hasattr(config_schema, 'dict') else None
 
@@ -68,6 +114,41 @@ async def get_node_types(
                 config_schema=config_schema
             )
             node_types.append(node_type_info)
+            processed_types.add(schema.type.value)
+
+        # V2 레지스트리에서 노드 타입 가져오기
+        v2_node_types = node_registry_v2.list_types()
+        for node_type_str in v2_node_types:
+            # 이미 V1에서 처리된 노드는 건너뛰기
+            if node_type_str in processed_types:
+                continue
+
+            # V2 노드 인스턴스 생성 (포트 스키마 조회용)
+            try:
+                node_instance = node_registry_v2.create_node(node_type_str, f"temp_{node_type_str}")
+                port_schema = node_instance.get_port_schema()
+
+                # 메타데이터 조회
+                metadata = V2_NODE_METADATA.get(node_type_str, {})
+
+                node_type_info = NodeTypeInfo(
+                    type=node_type_str,
+                    label=metadata.get("label", node_type_str.replace("-", " ").title()),
+                    icon=metadata.get("icon", "cog"),
+                    max_instances=-1,  # V2 노드는 무제한
+                    configurable=True,
+                    config_schema=None,  # V2는 config_schema 대신 포트로 관리
+                    category=metadata.get("category"),
+                    description=metadata.get("description"),
+                    input_ports=port_schema.inputs if port_schema else None,
+                    output_ports=port_schema.outputs if port_schema else None
+                )
+                node_types.append(node_type_info)
+                processed_types.add(node_type_str)
+
+            except Exception as e:
+                logger.warning(f"Failed to get V2 node info for {node_type_str}: {e}")
+                continue
 
         return NodeTypesResponse(node_types=node_types)
 
@@ -90,7 +171,7 @@ async def get_node_type(
     current_user: User = Depends(get_current_user)
 ) -> NodeTypeInfo:
     """
-    특정 노드 타입 정보 조회
+    특정 노드 타입 정보 조회 (V1 + V2 지원)
 
     Args:
         node_type: 노드 타입
@@ -101,7 +182,33 @@ async def get_node_type(
     try:
         from app.core.workflow.base_node import NodeType
 
-        # 문자열을 NodeType enum으로 변환
+        # V2 레지스트리에서 먼저 확인
+        if node_type in node_registry_v2.list_types():
+            try:
+                node_instance = node_registry_v2.create_node(node_type, f"temp_{node_type}")
+                port_schema = node_instance.get_port_schema()
+                metadata = V2_NODE_METADATA.get(node_type, {})
+
+                return NodeTypeInfo(
+                    type=node_type,
+                    label=metadata.get("label", node_type.replace("-", " ").title()),
+                    icon=metadata.get("icon", "cog"),
+                    max_instances=-1,
+                    configurable=True,
+                    config_schema=None,
+                    category=metadata.get("category"),
+                    description=metadata.get("description"),
+                    input_ports=port_schema.inputs if port_schema else None,
+                    output_ports=port_schema.outputs if port_schema else None
+                )
+            except Exception as e:
+                logger.error(f"Failed to get V2 node info for {node_type}: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"V2 노드 정보 조회 실패: {str(e)}"
+                )
+
+        # V1 레지스트리에서 확인
         try:
             node_type_enum = NodeType(node_type)
         except ValueError:
@@ -110,7 +217,6 @@ async def get_node_type(
                 detail=f"노드 타입 '{node_type}'를 찾을 수 없습니다"
             )
 
-        # 스키마 조회
         schema = node_registry.get_schema(node_type_enum)
         if not schema:
             raise HTTPException(
