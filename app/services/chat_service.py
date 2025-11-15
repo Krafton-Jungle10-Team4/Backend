@@ -58,14 +58,16 @@ class WorkflowStreamHandler:
         node_type: str,
         status: str,
         message: Optional[str] = None,
-        output_preview: Optional[str] = None
+        output_preview: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         event = WorkflowNodeEvent(
             node_id=node_id,
             node_type=node_type,
             status=status,
             message=message,
-            output_preview=output_preview
+            output_preview=output_preview,
+            metadata=metadata,
         )
         await self._emit_fn(event.model_dump())
 

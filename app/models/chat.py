@@ -150,6 +150,7 @@ class WorkflowNodeEvent(BaseModel):
     status: str = Field(..., description="노드 상태")
     message: Optional[str] = Field(None, description="상태 메시지")
     output_preview: Optional[str] = Field(None, description="출력 요약")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="노드 실행 메타데이터")
 
     model_config = ConfigDict(
         json_schema_extra={

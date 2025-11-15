@@ -10,6 +10,11 @@ from typing import Any, Dict, List, Optional
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
 from app.schemas.workflow import NodePortSchema, PortDefinition, PortType
 from app.services.llm_service import LLMService
+from app.core.workflow.nodes_v2.utils.template_renderer import (
+    TemplateRenderer,
+    TemplateRenderError,
+)
+from app.core.workflow.nodes_v2.utils.variable_template_parser import VariableTemplateParser
 import logging
 import re
 
@@ -122,18 +127,25 @@ class LLMNodeV2(BaseNodeV2):
         provider = self.config.get("provider", "openai")
         temperature = self.config.get("temperature", 0.7)
         max_tokens = self.config.get("max_tokens", 4000)
-        prompt_template = self.config.get("prompt_template", "{context}\n\nQuestion: {query}\nAnswer:")
+        prompt_template = (self.config.get("prompt_template") or "").strip()
 
         logger.info(f"LLMNodeV2: model={model}, provider={provider}, temp={temperature}")
 
         # 프롬프트 템플릿 처리
         try:
-            prompt = self._render_prompt(
-                template=prompt_template,
-                query=query,
-                context=context_text,
-                system_prompt=system_prompt
-            )
+            if prompt_template:
+                prompt_group = self._render_template_with_variable_pool(
+                    template=prompt_template,
+                    context=context,
+                )
+                prompt = prompt_group.text
+            else:
+                prompt = self._render_prompt(
+                    template="{context}\n\nQuestion: {query}\nAnswer:",
+                    query=query,
+                    context=context_text,
+                    system_prompt=system_prompt
+                )
         except Exception as e:
             logger.error(f"Prompt rendering failed: {str(e)}")
             raise ValueError(f"Failed to render prompt template: {str(e)}")
@@ -246,3 +258,22 @@ class LLMNodeV2(BaseNodeV2):
     def get_required_services(self) -> List[str]:
         """필요한 서비스 목록"""
         return ["llm_service"]
+
+    def _render_template_with_variable_pool(
+        self,
+        template: str,
+        context: NodeExecutionContext,
+    ):
+        """
+        TemplateRenderer를 사용해 {{ }} 템플릿을 렌더링한다.
+        """
+        try:
+            parser = VariableTemplateParser(template)
+            selectors = parser.extract_variable_selectors()
+            rendered_group, metadata = TemplateRenderer.render(template, context.variable_pool)
+            metadata["selectors"] = selectors
+            context.metadata.setdefault("llm_prompt", {})[self.node_id] = metadata
+            return rendered_group
+        except TemplateRenderError as exc:
+            logger.error("LLMNodeV2 template render failed: %s", exc)
+            raise ValueError(f"Failed to render prompt template: {exc}") from exc

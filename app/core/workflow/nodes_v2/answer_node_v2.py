@@ -57,7 +57,7 @@ class AnswerNodeV2(BaseNodeV2):
         start_time = time.time()
 
         # 템플릿 렌더링
-        rendered_output, metadata = TemplateRenderer.render(
+        rendered_group, metadata = TemplateRenderer.render(
             self.template,
             context.variable_pool
         )
@@ -78,4 +78,4 @@ class AnswerNodeV2(BaseNodeV2):
             f"{metadata['output_length']} chars"
         )
 
-        return {"final_output": rendered_output}
+        return {"final_output": rendered_group.text}

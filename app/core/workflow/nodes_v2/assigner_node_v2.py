@@ -149,6 +149,11 @@ class AssignerNodeV2(BaseNodeV2):
                     source_value=source_value
                 )
                 outputs[f"operation_{i}_result"] = result
+                self._maybe_update_conversation_variable(
+                    operation_index=i,
+                    value=result,
+                    context=context
+                )
             except Exception as e:
                 raise ValueError(
                     f"작업 {i} 실행 실패 (작업 타입: {write_mode}): {str(e)}"
@@ -347,3 +352,43 @@ class AssignerNodeV2(BaseNodeV2):
 
         else:
             raise ValueError(f"지원하지 않는 작업 타입: {write_mode}")
+
+    def _maybe_update_conversation_variable(
+        self,
+        operation_index: int,
+        value: Any,
+        context: NodeExecutionContext
+    ) -> None:
+        """
+        대상 selector가 conversation.* 인 경우 conversation_variables에 결과를 저장
+        """
+        selector = self._get_selector_for_port(f"operation_{operation_index}_target")
+        if not selector:
+            return
+
+        lowered = selector.lower()
+        if lowered.startswith("conv.") or lowered.startswith("conversation."):
+            parts = selector.split(".", 1)
+            if len(parts) == 2 and parts[1]:
+                context.variable_pool.set_conversation_variable(parts[1], value)
+
+    def _get_selector_for_port(self, port_name: str) -> Optional[str]:
+        """
+        variable_mappings에서 포트에 연결된 selector 추출
+        """
+        mapping = self.variable_mappings.get(port_name)
+        if mapping is None:
+            return None
+
+        if isinstance(mapping, str):
+            return mapping
+
+        if isinstance(mapping, dict):
+            if isinstance(mapping.get("variable"), str):
+                return mapping["variable"]
+            source = mapping.get("source") or {}
+            variable = source.get("variable")
+            if isinstance(variable, str):
+                return variable
+
+        return None

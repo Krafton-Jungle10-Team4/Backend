@@ -22,6 +22,8 @@ def mock_db_session():
     db.add = MagicMock()
     db.commit = MagicMock()
     db.rollback = MagicMock()
+    db.execute = AsyncMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
+    db.flush = AsyncMock()
     return db
 
 
@@ -51,6 +53,102 @@ def mock_llm_service():
     service.generate = AsyncMock(return_value="파이썬은 간결하고 읽기 쉬운 프로그래밍 언어입니다.")
     service.get_token_count = AsyncMock(return_value=150)
     return service
+
+
+@pytest.fixture
+def branching_workflow():
+    """IF/ELSE 분기 워크플로우"""
+    return {
+        "nodes": [
+            {"id": "start-1", "type": "start", "data": {}, "variable_mappings": {}, "ports": {}},
+            {
+                "id": "if-1",
+                "type": "if-else",
+                "data": {
+                    "cases": [
+                        {
+                            "case_id": "case_if",
+                            "logical_operator": "and",
+                            "conditions": [
+                                {
+                                    "variable_selector": "sys.user_message",
+                                    "comparison_operator": "=",
+                                    "value": "branch-a",
+                                    "varType": "string",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "variable_mappings": {},
+                "ports": {
+                    "inputs": [
+                        {
+                            "name": "sys.user_message",
+                            "type": "string",
+                            "required": False,
+                        }
+                    ],
+                    "outputs": [
+                        {"name": "if", "type": "boolean", "required": True},
+                        {"name": "else", "type": "boolean", "required": True},
+                    ],
+                },
+            },
+            {
+                "id": "answer-if",
+                "type": "answer",
+                "data": {
+                    "type": "answer",
+                    "template": "IF BRANCH",
+                },
+                "ports": {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "name": "final_output",
+                            "type": "string",
+                            "required": True,
+                        }
+                    ],
+                },
+            },
+            {
+                "id": "answer-else",
+                "type": "answer",
+                "data": {
+                    "type": "answer",
+                    "template": "ELSE BRANCH",
+                },
+                "ports": {
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "name": "final_output",
+                            "type": "string",
+                            "required": True,
+                        }
+                    ],
+                },
+            },
+            {
+                "id": "end-1",
+                "type": "end",
+                "data": {},
+                "variable_mappings": {
+                    "response": "start-1.query",
+                },
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "start-1", "target": "if-1"},
+            {"id": "e2", "source": "start-1", "target": "end-1"},
+            {"id": "e3", "source": "if-1", "target": "answer-if", "source_port": "if"},
+            {"id": "e4", "source": "if-1", "target": "answer-else", "source_port": "else"},
+        ],
+        "environment_variables": {},
+        "conversation_variables": {},
+    }
 
 
 @pytest.fixture
@@ -317,6 +415,46 @@ async def test_v2_port_based_connections(
     assert llm_response is not None
 
     print("✅ 포트 기반 연결 검증 완료")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "user_message,expected",
+    [
+        ("branch-a", "IF BRANCH"),
+        ("other", "ELSE BRANCH"),
+    ],
+)
+async def test_v2_if_else_branch_routing(
+    branching_workflow,
+    mock_db_session,
+    mock_vector_service,
+    mock_llm_service,
+    user_message,
+    expected,
+):
+    """동적 분기 실행 여부 검증"""
+
+    executor = WorkflowExecutorV2()
+    await executor.execute(
+        workflow_data=branching_workflow,
+        session_id=f"session-{user_message}",
+        user_message=user_message,
+        bot_id="bot-branch",
+        db=mock_db_session,
+        vector_service=mock_vector_service,
+        llm_service=mock_llm_service,
+    )
+
+    answer_if = executor.variable_pool.get_node_output("answer-if", "final_output")
+    answer_else = executor.variable_pool.get_node_output("answer-else", "final_output")
+
+    if expected == "IF BRANCH":
+        assert answer_if == expected
+        assert answer_else is None
+    else:
+        assert answer_else == expected
+        assert answer_if is None
 
 
 @pytest.mark.asyncio
