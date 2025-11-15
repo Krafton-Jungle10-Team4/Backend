@@ -205,7 +205,7 @@ class AssignerNodeV2(BaseNodeV2):
         source_value: Optional[Any] = None
     ) -> Any:
         """
-        개별 작업 실행 (Phase 3에서 구현 예정)
+        개별 작업 실행
 
         Args:
             operation_index: 작업 인덱스
@@ -217,9 +217,135 @@ class AssignerNodeV2(BaseNodeV2):
             작업 결과 값
 
         Raises:
-            NotImplementedError: Phase 3에서 구현 예정
+            ValueError: 타입 불일치, 경계 조건 위반 등
         """
-        # Phase 3에서 11가지 작업 타입별 로직 구현
-        raise NotImplementedError(
-            f"작업 {operation_index} ({write_mode}) 실행 로직은 Phase 3에서 구현됩니다."
-        )
+        # 기본 작업
+        if write_mode == WriteMode.OVERWRITE:
+            return source_value
+
+        elif write_mode == WriteMode.CLEAR:
+            # 타입에 따라 적절한 초기값으로 설정
+            if isinstance(target_value, str):
+                return ""
+            elif isinstance(target_value, list):
+                return []
+            elif isinstance(target_value, bool):
+                return False
+            elif isinstance(target_value, dict):
+                return {}
+            elif isinstance(target_value, (int, float)):
+                return 0
+            else:
+                # 기타 타입은 None으로 초기화
+                return None
+
+        elif write_mode == WriteMode.SET:
+            return source_value
+
+        # 배열 작업
+        elif write_mode == WriteMode.APPEND:
+            if not isinstance(target_value, list):
+                raise ValueError(
+                    f"APPEND 작업은 배열 타입이 필요합니다. "
+                    f"현재 타입: {type(target_value).__name__}"
+                )
+            result = target_value.copy()
+            result.append(source_value)
+            return result
+
+        elif write_mode == WriteMode.EXTEND:
+            if not isinstance(target_value, list):
+                raise ValueError(
+                    f"EXTEND 작업의 대상은 배열 타입이어야 합니다. "
+                    f"현재 타입: {type(target_value).__name__}"
+                )
+            if not isinstance(source_value, list):
+                raise ValueError(
+                    f"EXTEND 작업의 소스는 배열 타입이어야 합니다. "
+                    f"현재 타입: {type(source_value).__name__}"
+                )
+            result = target_value.copy()
+            result.extend(source_value)
+            return result
+
+        elif write_mode == WriteMode.REMOVE_FIRST:
+            if not isinstance(target_value, list):
+                raise ValueError(
+                    f"REMOVE_FIRST 작업은 배열 타입이 필요합니다. "
+                    f"현재 타입: {type(target_value).__name__}"
+                )
+            if len(target_value) == 0:
+                raise ValueError("빈 배열에서 첫 번째 요소를 제거할 수 없습니다.")
+            result = target_value.copy()
+            result.pop(0)
+            return result
+
+        elif write_mode == WriteMode.REMOVE_LAST:
+            if not isinstance(target_value, list):
+                raise ValueError(
+                    f"REMOVE_LAST 작업은 배열 타입이 필요합니다. "
+                    f"현재 타입: {type(target_value).__name__}"
+                )
+            if len(target_value) == 0:
+                raise ValueError("빈 배열에서 마지막 요소를 제거할 수 없습니다.")
+            result = target_value.copy()
+            result.pop()
+            return result
+
+        # 산술 작업
+        elif write_mode == WriteMode.INCREMENT:
+            if not isinstance(target_value, (int, float)):
+                raise ValueError(
+                    f"INCREMENT 작업의 대상은 숫자 타입이어야 합니다. "
+                    f"현재 타입: {type(target_value).__name__}"
+                )
+            if not isinstance(source_value, (int, float)):
+                raise ValueError(
+                    f"INCREMENT 작업의 소스는 숫자 타입이어야 합니다. "
+                    f"현재 타입: {type(source_value).__name__}"
+                )
+            return target_value + source_value
+
+        elif write_mode == WriteMode.DECREMENT:
+            if not isinstance(target_value, (int, float)):
+                raise ValueError(
+                    f"DECREMENT 작업의 대상은 숫자 타입이어야 합니다. "
+                    f"현재 타입: {type(target_value).__name__}"
+                )
+            if not isinstance(source_value, (int, float)):
+                raise ValueError(
+                    f"DECREMENT 작업의 소스는 숫자 타입이어야 합니다. "
+                    f"현재 타입: {type(source_value).__name__}"
+                )
+            return target_value - source_value
+
+        elif write_mode == WriteMode.MULTIPLY:
+            if not isinstance(target_value, (int, float)):
+                raise ValueError(
+                    f"MULTIPLY 작업의 대상은 숫자 타입이어야 합니다. "
+                    f"현재 타입: {type(target_value).__name__}"
+                )
+            if not isinstance(source_value, (int, float)):
+                raise ValueError(
+                    f"MULTIPLY 작업의 소스는 숫자 타입이어야 합니다. "
+                    f"현재 타입: {type(source_value).__name__}"
+                )
+            return target_value * source_value
+
+        elif write_mode == WriteMode.DIVIDE:
+            if not isinstance(target_value, (int, float)):
+                raise ValueError(
+                    f"DIVIDE 작업의 대상은 숫자 타입이어야 합니다. "
+                    f"현재 타입: {type(target_value).__name__}"
+                )
+            if not isinstance(source_value, (int, float)):
+                raise ValueError(
+                    f"DIVIDE 작업의 소스는 숫자 타입이어야 합니다. "
+                    f"현재 타입: {type(source_value).__name__}"
+                )
+            if source_value == 0:
+                raise ValueError("0으로 나눌 수 없습니다.")
+            return target_value / source_value
+
+        else:
+            raise ValueError(f"지원하지 않는 작업 타입: {write_mode}")
