@@ -150,6 +150,9 @@ class WorkflowValidator:
                     self.warnings.append(f"알 수 없는 노드 타입: {node_type}")
 
             except ValueError:
+                # V2 노드는 NodeType enum에 존재하지 않을 수 있으므로 포트 정보가 있으면 통과
+                if node.get("ports"):
+                    continue
                 self.errors.append(f"유효하지 않은 노드 타입: {node_type}")
 
     def _validate_edges(

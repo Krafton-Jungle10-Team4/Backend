@@ -218,12 +218,16 @@ from app.core.workflow.nodes_v2 import (
     StartNodeV2,
     KnowledgeNodeV2,
     LLMNodeV2,
-    EndNodeV2
+    EndNodeV2,
+    IfElseNodeV2,
+    QuestionClassifierNodeV2,
 )
 
 node_registry_v2.register("start", StartNodeV2)
 node_registry_v2.register("knowledge-retrieval", KnowledgeNodeV2)
 node_registry_v2.register("llm", LLMNodeV2)
 node_registry_v2.register("end", EndNodeV2)
+node_registry_v2.register("if-else", IfElseNodeV2)
+node_registry_v2.register("question-classifier", QuestionClassifierNodeV2)
 
 logger.info(f"V2 node registry initialized with {len(node_registry_v2)} node types")
