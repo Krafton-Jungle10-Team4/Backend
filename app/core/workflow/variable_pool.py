@@ -5,9 +5,12 @@
 포트 기반 데이터 흐름을 지원하며, ValueSelector를 통해 다른 노드의 출력을 참조할 수 있습니다.
 """
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Set, Tuple, TYPE_CHECKING
 from app.schemas.workflow import PortType
 import logging
+
+if TYPE_CHECKING:
+    from app.core.workflow.nodes_v2.utils.template_renderer import SegmentGroup
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,7 @@ class VariablePool:
         # 각종 변수들
         self._environment_variables = environment_variables or {}
         self._conversation_variables = conversation_variables or {}
+        self._conversation_dirty: Set[str] = set()
         self._system_variables = system_variables or {}
 
         logger.debug("VariablePool initialized")
@@ -145,9 +149,10 @@ class VariablePool:
 
         ValueSelector 형식:
         - {node_id}.{port_name}: 노드 출력 참조
-        - env.{var_name}: 환경 변수 참조
-        - conv.{var_name}: 대화 변수 참조
-        - sys.{var_name}: 시스템 변수 참조
+        - env/environment.{var_name}: 환경 변수 참조
+        - conv/conversation.{var_name}: 대화 변수 참조
+        - sys/system.{var_name}: 시스템 변수 참조
+        - node_id.port.attr: 중첩 속성/배열 접근
 
         Args:
             selector: ValueSelector 문자열
@@ -165,27 +170,78 @@ class VariablePool:
             logger.warning(f"Invalid selector: {selector}")
             return None
 
-        parts = selector.split(".", 1)
-        if len(parts) != 2:
+        cleaned = selector.strip()
+        if not cleaned:
             logger.warning(f"Invalid selector format: {selector}")
             return None
 
-        prefix, name = parts
+        parts = [part for part in cleaned.split(".") if part]
+        if not parts:
+            logger.warning(f"Invalid selector format: {selector}")
+            return None
 
-        # 환경 변수
-        if prefix == "env":
-            return self.get_environment_variable(name)
+        prefix = parts[0]
+        remainder = parts[1:]
 
-        # 대화 변수
-        if prefix == "conv":
-            return self.get_conversation_variable(name)
+        # 환경/대화/시스템 변수 별칭
+        special_prefix_map = {
+            ("env", "environment"): self.get_environment_variable,
+            ("conv", "conversation"): self.get_conversation_variable,
+            ("sys", "system"): self.get_system_variable,
+        }
 
-        # 시스템 변수
-        if prefix == "sys":
-            return self.get_system_variable(name)
+        for aliases, getter in special_prefix_map.items():
+            if prefix in aliases:
+                if not remainder:
+                    logger.warning(f"Missing key for selector: {selector}")
+                    return None
+                key = ".".join(remainder)
+                return getter(key)
 
-        # 노드 출력 (prefix가 node_id)
-        return self.get_node_output(prefix, name)
+        if len(parts) < 2:
+            logger.warning(f"Invalid selector format: {selector}")
+            return None
+
+        node_id = prefix
+        port_name = parts[1]
+        value = self.get_node_output(node_id, port_name)
+
+        if value is None or len(parts) == 2:
+            return value
+
+        for attr in parts[2:]:
+            value = self._resolve_nested_value(value, attr)
+            if value is None:
+                break
+
+        return value
+
+    @staticmethod
+    def _resolve_nested_value(value: Any, attr: str) -> Optional[Any]:
+        """
+        dict/list/객체의 중첩 속성과 배열 인덱스를 순회
+        """
+        if value is None:
+            return None
+
+        if isinstance(value, dict):
+            return value.get(attr)
+
+        if isinstance(value, list):
+            try:
+                index = int(attr)
+            except (TypeError, ValueError):
+                logger.warning(f"List index must be integer, got '{attr}'")
+                return None
+            if index < 0 or index >= len(value):
+                logger.warning(f"List index out of range: {index}")
+                return None
+            return value[index]
+
+        if hasattr(value, attr):
+            return getattr(value, attr)
+
+        return None
 
     def resolve_value_selectors(self, selectors: List[str]) -> List[Any]:
         """
@@ -255,11 +311,26 @@ class VariablePool:
             value: 변수 값
         """
         self._conversation_variables[key] = value
+        self._conversation_dirty.add(key)
         logger.debug(f"Set conversation variable: {key}")
 
     def get_all_conversation_variables(self) -> Dict[str, Any]:
         """모든 대화 변수 조회"""
         return self._conversation_variables.copy()
+
+    def get_dirty_conversation_variables(self) -> Dict[str, Any]:
+        """
+        최근 변경된 대화 변수 조회
+        """
+        return {
+            key: self._conversation_variables[key]
+            for key in self._conversation_dirty
+            if key in self._conversation_variables
+        }
+
+    def clear_conversation_variable_dirty(self) -> None:
+        """대화 변수 변경 플래그 초기화"""
+        self._conversation_dirty.clear()
 
     # ========== 시스템 변수 관리 ==========
 
@@ -289,6 +360,43 @@ class VariablePool:
     def get_all_system_variables(self) -> Dict[str, Any]:
         """모든 시스템 변수 조회"""
         return self._system_variables.copy()
+
+    # ========== 템플릿 렌더링 ==========
+
+    def convert_template(self, template: str) -> Tuple["SegmentGroup", Dict[str, Any]]:
+        """
+        템플릿 문자열을 렌더링하여 변수를 실제 값으로 치환 (Dify 호환 API)
+
+        템플릿 문법:
+        - {{ node_id.port_name }}: 노드 출력 참조
+        - {{#node_id.port_name#}}: Dify 스타일 변수 참조
+        - {{ conv.variable_name }}: 대화 변수 참조
+        - {{ env.variable_name }}: 환경 변수 참조
+        - {{ sys.variable_name }}: 시스템 변수 참조
+
+        Args:
+            template: 렌더링할 템플릿 문자열
+
+        Returns:
+            Tuple[SegmentGroup, Dict[str, Any]]:
+                - SegmentGroup: 렌더링된 결과 (text/markdown 속성 제공)
+                - Dict: 렌더링 메타데이터 (used_variables, output_length 등)
+
+        Raises:
+            TemplateRenderError: 템플릿이 비어있거나 변수를 찾을 수 없는 경우
+
+        Example:
+            >>> pool = VariablePool()
+            >>> pool.set_node_output("llm-1", "response", "안녕하세요")
+            >>> result, metadata = pool.convert_template("답변: {{ llm-1.response }}")
+            >>> result.text
+            "답변: 안녕하세요"
+            >>> metadata["variable_count"]
+            1
+        """
+        from app.core.workflow.nodes_v2.utils.template_renderer import TemplateRenderer
+
+        return TemplateRenderer.render(template, self)
 
     # ========== 유틸리티 ==========
 
