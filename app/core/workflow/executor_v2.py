@@ -5,6 +5,7 @@
 """
 
 from typing import Dict, List, Any, Optional, Callable
+from collections import deque, defaultdict
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
 from app.core.workflow.variable_pool import VariablePool
 from app.core.workflow.service_container import ServiceContainer
@@ -14,9 +15,11 @@ from app.core.workflow.base_node import NodeStatus
 from app.services.vector_service import VectorService
 from app.services.llm_service import LLMService
 from app.models.workflow_version import WorkflowExecutionRun, WorkflowNodeExecution
+from app.models.conversation_variable import ConversationVariable
 import logging
 from datetime import datetime
 import uuid
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,7 @@ class WorkflowExecutorV2:
         """실행 엔진 초기화"""
         self.validator = WorkflowValidator()
         self.nodes: Dict[str, BaseNodeV2] = {}
+        self.edges: List[Dict[str, Any]] = []
         self.execution_order: List[str] = []
         self.variable_pool: Optional[VariablePool] = None
         self.service_container: Optional[ServiceContainer] = None
@@ -90,11 +94,17 @@ class WorkflowExecutorV2:
 
             # 변수 풀 초기화
             environment_vars = workflow_data.get("environment_variables", {})
-            conversation_vars = workflow_data.get("conversation_variables", {})
+            conversation_vars = workflow_data.get("conversation_variables", {}) or {}
+            persisted_conversation_vars = await self._load_conversation_variables(
+                db=db,
+                session_id=session_id,
+                bot_id=bot_id
+            )
+            merged_conversation_vars = {**conversation_vars, **persisted_conversation_vars}
 
             self.variable_pool = VariablePool(
                 environment_variables=environment_vars,
-                conversation_variables=conversation_vars
+                conversation_variables=merged_conversation_vars
             )
 
             # 시스템 변수 설정
@@ -114,6 +124,7 @@ class WorkflowExecutorV2:
 
             # V2 노드 인스턴스 생성
             self._create_v2_nodes(nodes_data, edges_data)
+            self.edges = edges_data
 
             # 실행 순서 결정
             self.execution_order = self.validator.get_execution_order(nodes_data, edges_data)
@@ -135,6 +146,19 @@ class WorkflowExecutorV2:
 
             # 노드 실행
             final_response = await self._execute_v2_nodes(stream_handler, text_normalizer)
+
+            # 대화 변수 저장
+            try:
+                await self._persist_conversation_variables(
+                    db=db,
+                    bot_id=bot_id,
+                    session_id=session_id
+                )
+            except Exception as persist_error:
+                logger.error(
+                    "Failed to persist conversation variables: %s",
+                    persist_error
+                )
 
             # 실행 기록 완료
             self._finalize_execution_run(
@@ -208,7 +232,20 @@ class WorkflowExecutorV2:
         """
         final_response = "V2 워크플로우 실행 완료"
 
+        incoming_counts = self._build_incoming_counts()
+        edges_by_source = self._group_edges_by_source()
+        ready_queue: deque[str] = deque()
+        executed_nodes: set[str] = set()
+
         for node_id in self.execution_order:
+            if incoming_counts.get(node_id, 0) == 0:
+                ready_queue.append(node_id)
+
+        while ready_queue:
+            node_id = ready_queue.popleft()
+            if node_id in executed_nodes:
+                continue
+
             node = self.nodes.get(node_id)
             if not node:
                 logger.warning(f"V2 노드 {node_id}를 찾을 수 없습니다")
@@ -240,6 +277,8 @@ class WorkflowExecutorV2:
 
                 # 노드 실행
                 result = await node.execute(context)
+                edge_handles = result.metadata.get("edge_handles", []) if result.metadata else []
+                process_data = self._extract_process_data(context, node_id)
 
                 # 결과 처리
                 if result.status == NodeStatus.COMPLETED and result.output:
@@ -259,7 +298,8 @@ class WorkflowExecutorV2:
                         node_type=node.__class__.__name__,
                         status=result.status.value,
                         message="V2 node completed" if result.status == NodeStatus.COMPLETED else "V2 node finished",
-                        output_preview=output_preview
+                        output_preview=output_preview,
+                        metadata=process_data
                     )
 
                 # 노드 실행 기록 저장
@@ -279,11 +319,24 @@ class WorkflowExecutorV2:
                     error_message=result.error,
                     started_at=node_start_time,
                     finished_at=node_end_time,
-                    execution_metadata=execution_metadata
+                    execution_metadata=execution_metadata,
+                    process_data=process_data
                 )
+
+                context.metadata.clear()
 
                 if result.status == NodeStatus.FAILED:
                     raise RuntimeError(result.error or f"V2 Node {node_id} failed")
+
+                executed_nodes.add(node_id)
+                outgoing_edges = self._select_outgoing_edges(edges_by_source.get(node_id, []), edge_handles)
+                for edge in outgoing_edges:
+                    target = edge.get("target")
+                    if target not in self.nodes:
+                        continue
+                    incoming_counts[target] = max(incoming_counts.get(target, 0) - 1, 0)
+                    if incoming_counts[target] == 0:
+                        ready_queue.append(target)
 
             except Exception as e:
                 logger.error(f"V2 노드 {node_id} 실행 실패: {str(e)}")
@@ -292,10 +345,12 @@ class WorkflowExecutorV2:
                 # 실패한 노드 기록 저장
                 node_end_time = datetime.utcnow()
                 execution_metadata = None
+                process_data = None
                 if 'context' in locals() and context and context.metadata:
                     answer_meta = context.metadata.get("answer")
                     if isinstance(answer_meta, dict):
                         execution_metadata = answer_meta.get(node_id)
+                    process_data = self._extract_process_data(context, node_id)
                 self._create_node_execution(
                     node_id=node_id,
                     node_type=node.__class__.__name__,
@@ -306,7 +361,8 @@ class WorkflowExecutorV2:
                     error_message=str(e),
                     started_at=node_start_time,
                     finished_at=node_end_time,
-                    execution_metadata=execution_metadata
+                    execution_metadata=execution_metadata,
+                    process_data=process_data
                 )
 
                 if stream_handler:
@@ -314,11 +370,123 @@ class WorkflowExecutorV2:
                         node_id=node_id,
                         node_type=node.__class__.__name__,
                         status=NodeStatus.FAILED.value,
-                        message=str(e)
+                        message=str(e),
+                        metadata=process_data
                     )
+                if 'context' in locals() and context:
+                    context.metadata.clear()
                 raise
 
         return final_response
+
+    async def _load_conversation_variables(
+        self,
+        db: Any,
+        session_id: str,
+        bot_id: str,
+    ) -> Dict[str, Any]:
+        """DB에서 대화 변수 로드"""
+        if not db or not session_id:
+            return {}
+
+        stmt = (
+            select(ConversationVariable)
+            .where(ConversationVariable.conversation_id == session_id)
+            .where(ConversationVariable.bot_id == bot_id)
+        )
+        result = await db.execute(stmt)
+        records = result.scalars().all()
+        return {record.key: record.value for record in records}
+
+    async def _persist_conversation_variables(
+        self,
+        db: Any,
+        bot_id: str,
+        session_id: str,
+    ) -> None:
+        """변경된 대화 변수를 DB에 저장"""
+        if not db or not self.variable_pool or not session_id:
+            return
+
+        dirty_vars = self.variable_pool.get_dirty_conversation_variables()
+        if not dirty_vars:
+            return
+
+        for key, value in dirty_vars.items():
+            stmt = (
+                select(ConversationVariable)
+                .where(ConversationVariable.conversation_id == session_id)
+                .where(ConversationVariable.bot_id == bot_id)
+                .where(ConversationVariable.key == key)
+            )
+            result = await db.execute(stmt)
+            record = result.scalar_one_or_none()
+
+            if record:
+                record.value = value
+                record.updated_at = datetime.utcnow()
+            else:
+                db.add(
+                    ConversationVariable(
+                        conversation_id=session_id,
+                        bot_id=bot_id,
+                        key=key,
+                        value=value,
+                    )
+                )
+
+        await db.flush()
+        self.variable_pool.clear_conversation_variable_dirty()
+
+    def _build_incoming_counts(self) -> Dict[str, int]:
+        counts: Dict[str, int] = {node_id: 0 for node_id in self.nodes.keys()}
+        for edge in self.edges:
+            source = edge.get("source")
+            target = edge.get("target")
+            if source in self.nodes and target in self.nodes:
+                counts[target] = counts.get(target, 0) + 1
+                counts.setdefault(source, counts.get(source, 0))
+        return counts
+
+    def _group_edges_by_source(self) -> Dict[str, List[Dict[str, Any]]]:
+        mapping: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for edge in self.edges:
+            source = edge.get("source")
+            target = edge.get("target")
+            if source in self.nodes and target in self.nodes:
+                mapping[source].append(edge)
+        return mapping
+
+    def _select_outgoing_edges(
+        self,
+        edges: List[Dict[str, Any]],
+        handles: Optional[List[str]]
+    ) -> List[Dict[str, Any]]:
+        if not edges:
+            return []
+        if not handles:
+            return edges
+
+        normalized = [handle for handle in handles if handle]
+        if not normalized:
+            return edges
+
+        selected = [edge for edge in edges if edge.get("source_port") in normalized]
+        if selected:
+            return selected
+        return edges
+
+    @staticmethod
+    def _extract_process_data(context: Optional[NodeExecutionContext], node_id: str) -> Optional[Dict[str, Any]]:
+        if not context or not context.metadata:
+            return None
+        data: Dict[str, Any] = {}
+        for key, value in context.metadata.items():
+            if isinstance(value, dict) and node_id in value:
+                data[key] = value[node_id]
+            elif key == node_id:
+                data[key] = value
+        return data or None
 
     def _gather_node_inputs(self, node: BaseNodeV2) -> Dict[str, Any]:
         """
@@ -517,7 +685,8 @@ class WorkflowExecutorV2:
         error_message: Optional[str],
         started_at: datetime,
         finished_at: datetime,
-        execution_metadata: Optional[Dict[str, Any]] = None
+        execution_metadata: Optional[Dict[str, Any]] = None,
+        process_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         노드 실행 기록 생성
@@ -558,6 +727,7 @@ class WorkflowExecutorV2:
                 execution_order=execution_order,
                 inputs=inputs,
                 outputs=final_outputs,
+                process_data=process_data,
                 status=status,
                 error_message=error_message,
                 started_at=started_at,

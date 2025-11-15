@@ -12,6 +12,7 @@ from app.models.workflow_version import (
     WorkflowExecutionRun,
     WorkflowNodeExecution
 )
+from app.models.conversation_variable import ConversationVariable
 
 __all__ = [
     "User",
@@ -32,4 +33,5 @@ __all__ = [
     "BotWorkflowVersion",
     "WorkflowExecutionRun",
     "WorkflowNodeExecution",
+    "ConversationVariable",
 ]
