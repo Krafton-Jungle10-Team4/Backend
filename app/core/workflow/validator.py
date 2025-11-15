@@ -9,6 +9,7 @@ from typing import Dict, List, Set, Tuple, Optional, Any
 from collections import defaultdict, deque
 from app.core.workflow.base_node import BaseNode, NodeType
 from app.core.workflow.node_registry import node_registry
+from app.core.workflow.node_registry_v2 import node_registry_v2
 import logging
 
 logger = logging.getLogger(__name__)
@@ -230,17 +231,9 @@ class WorkflowValidator:
         node_map: Dict[str, Dict]
     ) -> None:
         """포트, 엣지, 변수 매핑 등 V2 전용 스키마 검증"""
-        port_map: Dict[str, Dict[str, Dict[str, Any]]] = {}
-
-        for node in nodes:
-            node_id = node.get("id")
-            ports = node.get("ports") or {}
-            inputs = {p.get("name"): p for p in ports.get("inputs", []) if p.get("name")}
-            outputs = {p.get("name"): p for p in ports.get("outputs", []) if p.get("name")}
-            port_map[node_id] = {
-                "inputs": inputs,
-                "outputs": outputs
-            }
+        port_map: Dict[str, Dict[str, Dict[str, Any]]] = {
+            node.get("id"): self._resolve_port_map(node) for node in nodes if node.get("id")
+        }
 
         # 엣지 포트 매핑 검증
         for edge in edges:
@@ -263,8 +256,9 @@ class WorkflowValidator:
         # 변수 매핑 및 필수 입력 검증
         for node in nodes:
             node_id = node.get("id")
+            port_entry = port_map.get(node_id) or {"inputs": {}, "outputs": {}}
             required_inputs = {
-                name: meta for name, meta in port_map.get(node_id, {}).get("inputs", {}).items()
+                name: meta for name, meta in port_entry.get("inputs", {}).items()
                 if meta.get("required", True)
             }
             variable_mappings: Dict[str, Any] = node.get("variable_mappings") or {}
@@ -308,6 +302,48 @@ class WorkflowValidator:
                     self.errors.append(
                         f"노드 {node_id}의 포트 '{target_port}'가 노드 {source_node}의 출력 포트 '{source_port}'를 찾을 수 없습니다"
                     )
+
+    @staticmethod
+    def _map_schema_ports(ports: List[Any]) -> Dict[str, Dict[str, Any]]:
+        mapped: Dict[str, Dict[str, Any]] = {}
+        for port in ports or []:
+            name = getattr(port, "name", None)
+            if not name and isinstance(port, dict):
+                name = port.get("name")
+            if not name:
+                continue
+
+            if hasattr(port, "model_dump"):
+                mapped[name] = port.model_dump()
+            elif isinstance(port, dict):
+                mapped[name] = port
+            else:
+                mapped[name] = {"name": name}
+        return mapped
+
+    def _resolve_port_map(self, node: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        ports = node.get("ports") or {}
+        inputs = {
+            p.get("name"): p for p in ports.get("inputs", []) if p.get("name")
+        }
+        outputs = {
+            p.get("name"): p for p in ports.get("outputs", []) if p.get("name")
+        }
+        if inputs or outputs:
+            return {"inputs": inputs, "outputs": outputs}
+
+        node_type = node.get("type")
+        if not node_type:
+            return {"inputs": {}, "outputs": {}}
+
+        schema = node_registry_v2.get_schema(node_type)
+        if not schema:
+            return {"inputs": {}, "outputs": {}}
+
+        return {
+            "inputs": self._map_schema_ports(schema.inputs),
+            "outputs": self._map_schema_ports(schema.outputs),
+        }
 
     @staticmethod
     def _extract_selector(mapping: Any) -> Optional[str]:
