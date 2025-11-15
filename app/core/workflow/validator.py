@@ -147,6 +147,9 @@ class WorkflowValidator:
                         except Exception as e:
                             self.errors.append(f"노드 {node_id}의 설정이 유효하지 않습니다: {str(e)}")
                 else:
+                    # V2 노드는 node_registry에 등록되지 않을 수 있으므로 ports가 있으면 경고 생략
+                    if node.get("ports"):
+                        continue
                     self.warnings.append(f"알 수 없는 노드 타입: {node_type}")
 
             except ValueError:

@@ -29,6 +29,7 @@ class NodeType(str, Enum):
     LOOP = "loop"
     HTTP_REQUEST = "http-request"
     DATA_TRANSFORM = "data-transform"
+    TAVILY_SEARCH = "tavily-search"
 
 
 class NodeStatus(str, Enum):

@@ -10,6 +10,7 @@ from app.core.workflow.nodes_v2.llm_node_v2 import LLMNodeV2
 from app.core.workflow.nodes_v2.end_node_v2 import EndNodeV2
 from app.core.workflow.nodes_v2.if_else_node_v2 import IfElseNodeV2
 from app.core.workflow.nodes_v2.question_classifier_node_v2 import QuestionClassifierNodeV2
+from app.core.workflow.nodes_v2.tavily_search_node_v2 import TavilySearchNodeV2
 
 __all__ = [
     "StartNodeV2",
@@ -18,4 +19,5 @@ __all__ = [
     "EndNodeV2",
     "IfElseNodeV2",
     "QuestionClassifierNodeV2",
+    "TavilySearchNodeV2",
 ]
