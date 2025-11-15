@@ -24,7 +24,8 @@ from app.api.v1.endpoints import (
     widget,
     workflow_versions,
     workflow_executions,
-    cost_monitoring
+    cost_monitoring,
+    tavily
 )
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -97,6 +98,7 @@ app.include_router(chat.router, prefix="/api/v1/chat", tags=["챗봇"])
 app.include_router(deployment.router, prefix="/api/v1/bots", tags=["배포 관리"])
 app.include_router(widget.router, prefix="/api/v1/widget", tags=["Widget"])
 app.include_router(cost_monitoring.router, prefix="/api/v1/cost", tags=["비용 모니터링"])
+app.include_router(tavily.router, prefix="/api/v1/tavily", tags=["Tavily Search"])
 
 
 @app.on_event("startup")
