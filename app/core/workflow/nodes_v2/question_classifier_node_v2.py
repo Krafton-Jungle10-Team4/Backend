@@ -13,6 +13,10 @@ import logging
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
 from app.schemas.workflow import NodePortSchema, PortDefinition, PortType
 from app.services.llm_service import LLMService
+from app.core.workflow.nodes_v2.utils.template_renderer import (
+    TemplateRenderer,
+    TemplateRenderError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +92,15 @@ class QuestionClassifierNodeV2(BaseNodeV2):
 
     async def execute_v2(self, context: NodeExecutionContext) -> Dict[str, Any]:
         query = context.get_input("query")
+        query_template = (self.config.get("query_template") or "").strip()
+
+        if query_template:
+            query = self._render_query_template(
+                context=context,
+                template=query_template,
+                fallback=query if isinstance(query, str) else "",
+            )
+
         if not query or not isinstance(query, str):
             raise ValueError("Question Classifier 노드에는 query 입력이 필요합니다")
 
@@ -134,6 +147,10 @@ class QuestionClassifierNodeV2(BaseNodeV2):
 
         for topic in classes:
             outputs[f"class_{topic['id']}_branch"] = topic["name"] == resolved_class
+
+        matched_topic = next((topic for topic in classes if topic["name"] == resolved_class), None)
+        if matched_topic:
+            context.set_next_edge_handle([f"class_{matched_topic['id']}_branch"])
 
         return outputs
 
@@ -248,3 +265,25 @@ class QuestionClassifierNodeV2(BaseNodeV2):
             .replace("__", "_")
             .strip("_")
         )
+
+    def _render_query_template(
+        self,
+        context: NodeExecutionContext,
+        template: str,
+        fallback: str,
+    ) -> str:
+        """
+        TemplateRenderer를 사용해 query_template을 렌더링한다.
+        """
+        try:
+            rendered_group, metadata = TemplateRenderer.render(template, context.variable_pool)
+            context.metadata.setdefault("question_classifier", {})[self.node_id] = metadata
+            return rendered_group.text
+        except TemplateRenderError as exc:
+            logger.error(
+                "QuestionClassifierNodeV2 failed to render query template: %s",
+                exc,
+            )
+            if fallback:
+                return fallback
+            raise ValueError(f"Failed to render query_template: {exc}") from exc

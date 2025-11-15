@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Iterable, Union
 from pydantic import BaseModel
 from app.schemas.workflow import NodePortSchema, PortDefinition, PortType
 from app.core.workflow.variable_pool import VariablePool
@@ -46,6 +46,7 @@ class NodeExecutionContext:
         self.variable_pool = variable_pool
         self.service_container = service_container
         self.metadata = metadata or {}
+        self._edge_handles: List[str] = []
 
     def get_input(self, port_name: str) -> Optional[Any]:
         """
@@ -82,6 +83,22 @@ class NodeExecutionContext:
             서비스 인스턴스 또는 None
         """
         return self.service_container.get(service_name)
+
+    def set_next_edge_handle(self, handle: Union[Optional[str], Iterable[str]]) -> None:
+        """다음에 실행할 엣지 핸들 기록"""
+        if handle is None:
+            return
+        if isinstance(handle, str):
+            values = [handle]
+        else:
+            values = [item for item in handle if item]
+        self._edge_handles.extend(values)
+
+    def consume_edge_handles(self) -> List[str]:
+        """저장된 엣지 핸들을 반환하고 초기화"""
+        handles = self._edge_handles.copy()
+        self._edge_handles.clear()
+        return handles
 
 
 class BaseNodeV2(ABC):
@@ -248,6 +265,7 @@ class BaseNodeV2(ABC):
 
             # V2 실행
             outputs = await self.execute_v2(context)
+            edge_handles = context.consume_edge_handles()
 
             # 출력을 variable_pool에 저장
             for port_name, value in outputs.items():
@@ -255,10 +273,14 @@ class BaseNodeV2(ABC):
 
             self.set_status(NodeStatus.COMPLETED)
 
+            metadata = {"node_id": self.node_id}
+            if edge_handles:
+                metadata["edge_handles"] = edge_handles
+
             return NodeExecutionResult(
                 status=NodeStatus.COMPLETED,
                 output=outputs,
-                metadata={"node_id": self.node_id}
+                metadata=metadata
             )
 
         except Exception as e:

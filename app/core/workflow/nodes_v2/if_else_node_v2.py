@@ -77,6 +77,19 @@ class IfElseNodeV2(BaseNodeV2):
             outputs[port_name] = matched_index == index
 
         outputs["else"] = matched_index is None
+
+        handle_candidates = []
+        if matched_index is not None:
+            port_name = "if" if matched_index == 0 else f"elif_{matched_index}"
+            handle_candidates.append(port_name)
+            case = cases[matched_index]
+            case_id = case.get("case_id")
+            if case_id:
+                handle_candidates.append(case_id)
+        else:
+            handle_candidates.append("else")
+
+        context.set_next_edge_handle(handle_candidates)
         return outputs
 
     def _get_cases(self) -> List[Dict[str, Any]]:
