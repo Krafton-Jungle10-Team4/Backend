@@ -19,7 +19,7 @@ from app.config import settings
 from app.core.logging_config import get_logger
 from app.core.aws_clients import get_s3_client, get_sqs_client
 from app.models.document import Document, DocumentStatus
-from app.core.embeddings import get_embedding_service
+from app.core.embeddings import get_embedding_service, CircuitBreakerOpenError
 from app.core.vector_store import get_vector_store
 from app.core.document_processor import DocumentProcessor
 from app.core.chunking import get_text_chunker
@@ -203,7 +203,19 @@ class EmbeddingWorker:
 
                     # 6. 임베딩 생성
                     logger.info(f"임베딩 생성 시작: {len(chunks)}개 청크")
-                    embeddings = await self.embedding_service.embed_documents(chunks)
+                    try:
+                        embeddings = await self.embedding_service.embed_documents(chunks)
+                    except CircuitBreakerOpenError as e:
+                        # Circuit Breaker가 열린 경우: 메시지를 다시 큐로 반환 (재시도)
+                        logger.warning(f"Circuit Breaker 열림: {e}")
+                        await self._update_document_status(
+                            db=db,
+                            document_id=document_id,
+                            status=DocumentStatus.PENDING,
+                            error_message=f"Circuit Breaker 작동 - 재시도 대기 중"
+                        )
+                        # 메시지를 삭제하지 않으면 자동으로 재시도됨
+                        raise
 
                     # 7. 메타데이터 생성
                     file_size = os.path.getsize(temp_file_path)

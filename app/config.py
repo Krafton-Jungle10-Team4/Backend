@@ -162,6 +162,18 @@ class Settings(BaseSettings):
     bedrock_model_id: str = "amazon.titan-embed-text-v2:0"  # Titan Embeddings v2
     bedrock_dimensions: int = 1024  # 임베딩 차원 (256, 384, 1024 선택 가능)
     bedrock_normalize: bool = True  # 벡터 정규화 (검색 성능 향상)
+
+    # Bedrock API 재시도 및 Rate Limiting 설정
+    bedrock_max_retries: int = 5  # 최대 재시도 횟수
+    bedrock_retry_multiplier: int = 2  # Exponential backoff 배수
+    bedrock_retry_min_wait: int = 1  # 최소 대기 시간 (초)
+    bedrock_retry_max_wait: int = 60  # 최대 대기 시간 (초)
+    bedrock_max_concurrent_requests: int = 3  # 동시 요청 제한 (rate limit 보호)
+    bedrock_request_interval: float = 0.1  # 요청 간 최소 간격 (초)
+
+    # Circuit Breaker 설정
+    bedrock_circuit_failure_threshold: int = 10  # Circuit open 임계값 (연속 실패 횟수)
+    bedrock_circuit_recovery_timeout: int = 60  # Circuit 복구 대기 시간 (초)
     
     # 문서 처리
     max_file_size: int = 10485760  # 10MB

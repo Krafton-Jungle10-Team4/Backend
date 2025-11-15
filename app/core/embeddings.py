@@ -5,13 +5,27 @@ import logging
 import asyncio
 import threading
 import json
+import time
 from typing import List
 from concurrent.futures import ThreadPoolExecutor
 import boto3
 from botocore.exceptions import ClientError
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+    after_log
+)
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class CircuitBreakerOpenError(Exception):
+    """Circuit Breaker가 열린 상태에서 요청 시도 시 발생하는 예외"""
+    pass
 
 
 class EmbeddingService:
@@ -24,9 +38,20 @@ class EmbeddingService:
         self.dimensions = settings.bedrock_dimensions
         self.normalize = settings.bedrock_normalize
         self.batch_size = settings.batch_size
+
         # 임베딩 작업용 스레드 풀 (병렬 처리 최적화)
-        self.executor = ThreadPoolExecutor(max_workers=4)
+        # Rate limit 보호를 위해 workers 감소: 4 → 2
+        self.executor = ThreadPoolExecutor(max_workers=2)
         self._lock = threading.Lock()  # 스레드 안전성을 위한 락
+
+        # Rate Limiting: Bedrock API 동시 요청 제한
+        self._semaphore = asyncio.Semaphore(settings.bedrock_max_concurrent_requests)
+        self._last_request_time = 0.0  # 마지막 요청 시간 (rate limit 제어)
+
+        # Circuit Breaker: 연속 실패 시 일시적으로 요청 차단
+        self._circuit_failures = 0  # 연속 실패 횟수
+        self._circuit_opened_at = 0.0  # Circuit 열린 시간
+        self._circuit_is_open = False  # Circuit 상태
 
         # Mock 임베딩 모드 설정
         self.use_mock = False
@@ -70,8 +95,93 @@ class EmbeddingService:
 
             logger.info("Bedrock 클라이언트 초기화 완료")
 
+    def _should_retry_error(self, exception: Exception) -> bool:
+        """재시도 가능한 에러인지 판단
+
+        Args:
+            exception: 발생한 예외
+
+        Returns:
+            재시도 가능 여부
+        """
+        if not isinstance(exception, ClientError):
+            return False
+
+        error_code = exception.response.get('Error', {}).get('Code', '')
+        # Throttling 및 일시적 실패는 재시도 가능
+        return error_code in [
+            'ThrottlingException',
+            'ServiceUnavailableException',
+            'TooManyRequestsException',
+            'RequestLimitExceeded'
+        ]
+
+    def _check_circuit_breaker(self):
+        """Circuit Breaker 상태 확인
+
+        Raises:
+            CircuitBreakerOpenError: Circuit이 열린 상태인 경우
+        """
+        if not self._circuit_is_open:
+            return
+
+        # Circuit 복구 시간 확인
+        elapsed = time.time() - self._circuit_opened_at
+        if elapsed >= settings.bedrock_circuit_recovery_timeout:
+            # Circuit 복구 (Half-Open 상태)
+            logger.info(f"Circuit Breaker 복구 시도 (대기 시간: {elapsed:.1f}초)")
+            self._circuit_is_open = False
+            self._circuit_failures = 0
+        else:
+            # Circuit 여전히 열림
+            remaining = settings.bedrock_circuit_recovery_timeout - elapsed
+            raise CircuitBreakerOpenError(
+                f"Circuit Breaker가 열려있습니다. {remaining:.1f}초 후 복구됩니다."
+            )
+
+    def _record_success(self):
+        """성공 기록: Circuit Breaker 초기화"""
+        self._circuit_failures = 0
+        self._circuit_is_open = False
+
+    def _record_failure(self):
+        """실패 기록: Circuit Breaker 임계값 확인"""
+        self._circuit_failures += 1
+
+        if self._circuit_failures >= settings.bedrock_circuit_failure_threshold:
+            # Circuit Open
+            self._circuit_is_open = True
+            self._circuit_opened_at = time.time()
+            logger.error(
+                f"Circuit Breaker 작동: 연속 {self._circuit_failures}회 실패 "
+                f"({settings.bedrock_circuit_recovery_timeout}초 대기)"
+            )
+
+    def _enforce_rate_limit(self):
+        """Rate limit 제어: 요청 간 최소 간격 보장"""
+        current_time = time.time()
+        elapsed = current_time - self._last_request_time
+
+        if elapsed < settings.bedrock_request_interval:
+            sleep_time = settings.bedrock_request_interval - elapsed
+            time.sleep(sleep_time)
+
+        self._last_request_time = time.time()
+
+    @retry(
+        stop=stop_after_attempt(settings.bedrock_max_retries),
+        wait=wait_exponential(
+            multiplier=settings.bedrock_retry_multiplier,
+            min=settings.bedrock_retry_min_wait,
+            max=settings.bedrock_retry_max_wait
+        ),
+        retry=retry_if_exception_type(ClientError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        after=after_log(logger, logging.DEBUG),
+        reraise=True
+    )
     def _invoke_bedrock(self, text: str) -> List[float]:
-        """Bedrock API 호출 (단일 텍스트 임베딩)
+        """Bedrock API 호출 (단일 텍스트 임베딩) - Exponential Backoff 적용
 
         Args:
             text: 임베딩할 텍스트
@@ -80,12 +190,19 @@ class EmbeddingService:
             임베딩 벡터 (List[float])
 
         Raises:
-            ClientError: Bedrock API 호출 실패
+            ClientError: Bedrock API 호출 실패 (최종)
+            CircuitBreakerOpenError: Circuit Breaker가 열린 상태
         """
+        # Circuit Breaker 상태 확인
+        self._check_circuit_breaker()
+
         if self.client is None:
             with self._lock:  # 클라이언트 초기화 시 동시성 제어
                 if self.client is None:
                     self._init_client()
+
+        # Rate Limiting: 요청 간 최소 간격 보장
+        self._enforce_rate_limit()
 
         # Bedrock API 요청 본문 구성
         request_body = {
@@ -95,7 +212,7 @@ class EmbeddingService:
         }
 
         try:
-            # Bedrock API 호출 (재시도 로직 포함)
+            # Bedrock API 호출
             response = self.client.invoke_model(
                 modelId=self.model_id,
                 body=json.dumps(request_body)
@@ -105,23 +222,29 @@ class EmbeddingService:
             result = json.loads(response['body'].read())
             embedding = result['embedding']
 
+            # 성공 기록
+            self._record_success()
+
             return embedding
 
         except ClientError as e:
             error_code = e.response['Error']['Code']
             error_message = e.response['Error']['Message']
 
-            # 에러 로깅 및 재시도 가능한 에러 처리
+            # 에러 로깅
             logger.error(f"Bedrock API 호출 실패: {error_code} - {error_message}")
 
-            # 재시도 가능한 에러 (throttling, temporary failure)
-            if error_code in ['ThrottlingException', 'ServiceUnavailableException', 'TooManyRequestsException']:
-                logger.warning(f"재시도 가능한 에러 발생: {error_code}, 1초 후 재시도")
-                import time
-                time.sleep(1)
-                return self._invoke_bedrock(text)  # 재귀 호출 (1회 재시도)
+            # 실패 기록 (Circuit Breaker)
+            if self._should_retry_error(e):
+                self._record_failure()
+
+            # 재시도 가능한 에러인 경우 tenacity가 자동 재시도
+            if self._should_retry_error(e):
+                logger.warning(f"재시도 가능한 에러: {error_code}")
+                raise  # tenacity가 재시도 처리
 
             # 재시도 불가능한 에러 (권한, 잘못된 요청)
+            logger.error(f"재시도 불가능한 에러: {error_code}")
             raise
 
     def _get_mock_embedding_sync(self, text: str) -> List[float]:
