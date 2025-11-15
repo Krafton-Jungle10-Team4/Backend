@@ -278,10 +278,9 @@ async def validate_workflow(
     """
     try:
         validator = WorkflowValidator()
-
-        # 노드와 엣지를 딕셔너리로 변환
-        nodes = [node.dict() for node in request.nodes]
-        edges = [edge.dict() for edge in request.edges]
+        workflow_data = request.model_dump()
+        nodes = workflow_data.get("nodes", [])
+        edges = workflow_data.get("edges", [])
 
         # 검증 수행
         is_valid, errors, warnings = validator.validate(nodes, edges)
@@ -332,9 +331,10 @@ async def update_bot_workflow(
     """
     try:
         # 워크플로우 검증
+        workflow_data = workflow.model_dump()
         validator = WorkflowValidator()
-        nodes = [node.dict() for node in workflow.nodes]
-        edges = [edge.dict() for edge in workflow.edges]
+        nodes = workflow_data.get("nodes", [])
+        edges = workflow_data.get("edges", [])
 
         is_valid, errors, warnings = validator.validate(nodes, edges)
 
@@ -355,7 +355,7 @@ async def update_bot_workflow(
         success = await bot_service.update_bot_workflow(
             bot_id=bot_id,
             user_id=current_user.id,
-            workflow=workflow.dict(),
+            workflow=workflow_data,
             db=db
         )
 
@@ -414,10 +414,10 @@ async def validate_bot_workflow(
                 detail="봇을 찾을 수 없습니다"
             )
 
-        # 워크플로우 검증
+        workflow_data = workflow.model_dump()
         validator = WorkflowValidator()
-        nodes = [node.dict() for node in workflow.nodes]
-        edges = [edge.dict() for edge in workflow.edges]
+        nodes = workflow_data.get("nodes", [])
+        edges = workflow_data.get("edges", [])
 
         is_valid, errors, warnings = validator.validate(nodes, edges)
 

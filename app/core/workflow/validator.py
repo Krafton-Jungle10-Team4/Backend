@@ -77,6 +77,7 @@ class WorkflowValidator:
 
         # V2 포트/변수 검증 (필요 시)
         if self._is_v2_workflow(nodes, edges):
+            self._normalize_v2_graph(nodes, edges, node_map)
             self._validate_v2_connections(nodes, edges)
             self._validate_v2_schema(nodes, edges, node_map)
 
@@ -270,6 +271,158 @@ class WorkflowValidator:
             if edge.get("source_port") or edge.get("target_port"):
                 return True
         return False
+
+    def _normalize_v2_graph(
+        self,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]],
+        node_map: Dict[str, Dict[str, Any]]
+    ) -> None:
+        """V2 그래프 포트/변수 정보를 보강"""
+        port_map: Dict[str, Dict[str, Dict[str, Any]]] = {
+            node.get("id"): self._resolve_port_map(node)
+            for node in nodes if node.get("id")
+        }
+
+        self._normalize_edge_ports(edges, port_map)
+        self._normalize_variable_mappings(nodes, edges, port_map)
+
+        for node in nodes:
+            node_id = node.get("id")
+            if node_id:
+                node_map[node_id] = node
+
+    def _normalize_edge_ports(
+        self,
+        edges: List[Dict[str, Any]],
+        port_map: Dict[str, Dict[str, Dict[str, Any]]]
+    ) -> None:
+        """placeholder 포트 핸들을 스키마 기반 포트명으로 대체"""
+        placeholders = {"source", "target", "default", "input", "output"}
+
+        for edge in edges:
+            source_id = edge.get("source")
+            target_id = edge.get("target")
+            if not source_id or not target_id:
+                continue
+
+            source_ports = port_map.get(source_id, {}).get("outputs", {})
+            target_ports = port_map.get(target_id, {}).get("inputs", {})
+
+            source_port = edge.get("source_port")
+            normalized_source = self._infer_port_name(source_port, source_ports, placeholders)
+            if normalized_source:
+                edge["source_port"] = normalized_source
+
+            target_port = edge.get("target_port")
+            normalized_target = self._infer_port_name(target_port, target_ports, placeholders)
+            if normalized_target:
+                edge["target_port"] = normalized_target
+
+            if not edge.get("data_type") and normalized_source in source_ports:
+                edge["data_type"] = source_ports[normalized_source].get("type")
+
+    @staticmethod
+    def _infer_port_name(
+        provided: Optional[str],
+        available: Dict[str, Dict[str, Any]],
+        placeholders: Set[str]
+    ) -> Optional[str]:
+        """포트 이름을 추론"""
+        if not available:
+            return provided
+
+        provided_name = provided or ""
+
+        if provided_name and provided_name in available:
+            return provided_name
+
+        lowered = provided_name.lower() if isinstance(provided_name, str) else ""
+        should_infer = (not provided_name) or (lowered in placeholders)
+
+        if not should_infer:
+            return provided
+
+        inferred = WorkflowValidator._pick_preferred_port_name(available)
+        return inferred or provided
+
+    @staticmethod
+    def _pick_preferred_port_name(ports: Dict[str, Dict[str, Any]]) -> Optional[str]:
+        """필수 포트를 우선으로 기본 포트를 선택"""
+        for name, meta in ports.items():
+            if meta.get("required", True):
+                return name
+        for name in ports.keys():
+            return name
+        return None
+
+    def _normalize_variable_mappings(
+        self,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]],
+        port_map: Dict[str, Dict[str, Dict[str, Any]]]
+    ) -> None:
+        """필수 입력 포트에 대한 variable_mappings 자동 생성"""
+        incoming_edges: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for edge in edges:
+            target_id = edge.get("target")
+            if target_id:
+                incoming_edges[target_id].append(edge)
+
+        for node in nodes:
+            node_id = node.get("id")
+            if not node_id:
+                continue
+
+            normalized_mappings = self._coerce_variable_mappings(node.get("variable_mappings"))
+            node["variable_mappings"] = normalized_mappings
+
+            input_ports = port_map.get(node_id, {}).get("inputs", {})
+            for port_name, meta in input_ports.items():
+                if not meta.get("required", True):
+                    continue
+
+                existing_selector = self._extract_selector(normalized_mappings.get(port_name))
+                if existing_selector:
+                    continue
+
+                candidate_edge = next(
+                    (
+                        edge for edge in incoming_edges.get(node_id, [])
+                        if edge.get("target_port") == port_name
+                        and edge.get("source")
+                        and edge.get("source_port")
+                    ),
+                    None
+                )
+
+                if candidate_edge:
+                    normalized_mappings[port_name] = (
+                        f"{candidate_edge['source']}.{candidate_edge['source_port']}"
+                    )
+
+    def _coerce_variable_mappings(self, mapping: Any) -> Dict[str, Any]:
+        """variable_mappings를 dict[str, Any] 형태로 변환"""
+        if mapping is None:
+            return {}
+        if isinstance(mapping, dict):
+            return dict(mapping)
+
+        normalized: Dict[str, Any] = {}
+        if isinstance(mapping, list):
+            for entry in mapping:
+                if not isinstance(entry, dict):
+                    continue
+                target_port = entry.get("target_port") or entry.get("target")
+                selector = self._extract_selector(entry)
+                if not target_port or not selector:
+                    continue
+                source_value = entry.get("source")
+                if source_value is not None:
+                    normalized[target_port] = source_value
+                else:
+                    normalized[target_port] = selector
+        return normalized
 
     def _validate_v2_connections(
         self,
