@@ -15,7 +15,6 @@ from app.core.workflow.base_node_v2 import (
 )
 from app.core.workflow.base_node import NodeConfig
 from app.schemas.workflow import NodePortSchema, PortDefinition, PortType
-from app.core.workflow.node_registry_v2 import register_node_v2
 from app.core.providers.tavily import TavilyClient, TavilySearchRequest
 from app.config import settings
 import logging
@@ -37,7 +36,6 @@ class TavilySearchNodeConfig(NodeConfig):
     include_raw_content: bool = Field(default=False)
 
 
-@register_node_v2("tavily-search")
 class TavilySearchNodeV2(BaseNodeV2):
     """Tavily Search V2 노드"""
 

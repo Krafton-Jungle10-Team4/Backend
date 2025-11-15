@@ -8,7 +8,6 @@ variable_mappings와 NodeExecutionContext 기반으로 입력을 해석합니다
 from typing import Any, Dict, List, Optional
 
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
-from app.core.workflow.node_registry_v2 import register_node_v2
 from app.schemas.workflow import (
     NodePortSchema,
     PortDefinition,
@@ -19,7 +18,6 @@ from app.schemas.workflow import (
 )
 
 
-@register_node_v2("assigner")
 class AssignerNodeV2(BaseNodeV2):
     """
     Assigner Node V2 - 포트 기반 변수 조작 노드
