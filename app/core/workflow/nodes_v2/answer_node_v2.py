@@ -48,10 +48,34 @@ class AnswerNodeV2(BaseNodeV2):
 
     async def execute_v2(self, context: NodeExecutionContext) -> Dict[str, Any]:
         """
-        Phase 2의 템플릿 렌더링 로직을 호출해 문자열을 생성한다.
-        BaseNodeV2.execute가 NodeExecutionResult로 감쌈을 처리하므로
-        여기서는 dict만 반환한다.
+        템플릿을 렌더링하여 최종 응답 생성.
+        BaseNodeV2.execute가 status/metadata를 래핑하므로 Dict만 반환한다.
         """
-        # Phase 2에서 TemplateRenderer 적용 예정 (stub)
-        rendered = self.template or ""
-        return {"final_output": rendered}
+        import time
+        from app.core.workflow.nodes_v2.utils.template_renderer import TemplateRenderer
+
+        start_time = time.time()
+
+        # 템플릿 렌더링
+        rendered_output, metadata = TemplateRenderer.render(
+            self.template,
+            context.variable_pool
+        )
+
+        # 실행 시간 메타데이터는 context.metadata에 저장하여
+        # executor가 NodeExecutionResult(metadata=...)에 병합하도록 한다.
+        if not hasattr(context, 'metadata'):
+            context.metadata = {}
+
+        context.metadata.setdefault("answer", {})[self.node_id] = {
+            **metadata,
+            "rendering_time_ms": int((time.time() - start_time) * 1000),
+        }
+
+        logger.info(
+            f"Answer node {self.node_id} rendered: "
+            f"{metadata['variable_count']} variables, "
+            f"{metadata['output_length']} chars"
+        )
+
+        return {"final_output": rendered_output}
