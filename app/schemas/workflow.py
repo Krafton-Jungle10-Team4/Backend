@@ -124,6 +124,35 @@ class EndNodeData(BaseModel):
     type: Literal["end"] = Field("end", description="노드 타입")
 
 
+class AnswerNodeData(BaseModel):
+    """Answer 노드의 데이터 스키마"""
+    type: Literal["answer"] = Field("answer", description="노드 타입")
+    template: str = Field(..., min_length=1, description="응답 템플릿 (필수)")
+    description: Optional[str] = Field(None, description="노드 설명")
+    output_format: Literal["text", "json"] = Field("text", description="출력 형식")
+
+    @classmethod
+    def __get_validators__(cls):
+        yield cls.validate_model
+
+    @classmethod
+    def validate_model(cls, values):
+        """템플릿 유효성 검사"""
+        if isinstance(values, dict):
+            template = values.get("template", "")
+        else:
+            template = getattr(values, "template", "")
+
+        if not template or template.strip() == "":
+            raise ValueError("템플릿은 비어있을 수 없습니다")
+
+        # 길이 제한
+        if len(template) > 20 * 1024:
+            raise ValueError("템플릿 길이가 20KB를 초과할 수 없습니다")
+
+        return values
+
+
 class WorkflowNode(BaseModel):
     """Workflow 노드"""
     id: str = Field(..., description="노드 ID")
@@ -486,6 +515,7 @@ __all__ = [
     "KnowledgeRetrievalNodeData",
     "LLMNodeData",
     "EndNodeData",
+    "AnswerNodeData",
 
     # 워크플로우 구조
     "WorkflowNode",

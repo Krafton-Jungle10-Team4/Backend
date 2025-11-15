@@ -10,6 +10,10 @@ from collections import defaultdict, deque
 from app.core.workflow.base_node import BaseNode, NodeType
 from app.core.workflow.node_registry import node_registry
 from app.core.workflow.node_registry_v2 import node_registry_v2
+from app.core.workflow.nodes_v2.utils.template_renderer import (
+    TemplateRenderer,
+    TemplateRenderError
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -73,6 +77,7 @@ class WorkflowValidator:
 
         # V2 포트/변수 검증 (필요 시)
         if self._is_v2_workflow(nodes, edges):
+            self._validate_v2_connections(nodes, edges)
             self._validate_v2_schema(nodes, edges, node_map)
 
         is_valid = len(self.errors) == 0
@@ -119,8 +124,22 @@ class WorkflowValidator:
         elif end_count > 1:
             self.errors.append("End 노드는 하나만 있어야 합니다")
 
+        # Answer 노드 검증 (V2 그래프에만 적용)
+        if self._is_v2_workflow(nodes=nodes, edges=[]):
+            answer_nodes = [
+                node for node in nodes
+                if node.get("data", {}).get("type") == "answer"
+            ]
+            if not answer_nodes:
+                self.errors.append(
+                    "워크플로우에 Answer 노드가 필요합니다. "
+                    "최종 응답을 생성하려면 Answer 노드를 추가하세요."
+                )
+
     def _validate_node_configurations(self, nodes: List[Dict[str, Any]]):
         """각 노드의 설정 검증"""
+        node_ids = {node.get("id") for node in nodes}
+
         for node in nodes:
             node_id = node.get("id")
             node_type = node.get("type")
@@ -133,6 +152,34 @@ class WorkflowValidator:
             if not node_type:
                 self.errors.append(f"노드 {node_id}의 타입이 없습니다")
                 continue
+
+            # Answer 노드 특별 검증
+            if node_data.get("type") == "answer":
+                template = node_data.get("template", "")
+                if not template or template.strip() == "":
+                    self.errors.append(
+                        f"Answer 노드 '{node_id}'의 템플릿이 비어있습니다. "
+                        "최종 응답 내용을 입력하세요."
+                    )
+                    continue
+
+                try:
+                    variables = TemplateRenderer.parse_template(template)
+                except TemplateRenderError as exc:
+                    self.errors.append(
+                        f"Answer 노드 '{node_id}'의 템플릿 문법 오류: {exc}"
+                    )
+                    continue
+
+                for var_ref in variables:
+                    prefix = var_ref.split(".", 1)[0]
+                    if prefix in {"sys", "env", "conv"}:
+                        continue
+                    if prefix not in node_ids:
+                        self.errors.append(
+                            f"Answer 노드의 변수 참조 '{var_ref}'에서 "
+                            f"노드 '{prefix}'를 찾을 수 없습니다."
+                        )
 
             # 노드 타입별 설정 검증
             try:
@@ -223,6 +270,33 @@ class WorkflowValidator:
             if edge.get("source_port") or edge.get("target_port"):
                 return True
         return False
+
+    def _validate_v2_connections(
+        self,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]]
+    ) -> None:
+        """Answer → End 연결을 검증"""
+        answer_ids = {
+            node.get("id") for node in nodes
+            if node.get("data", {}).get("type") == "answer"
+        }
+        end_ids = {
+            node.get("id") for node in nodes
+            if node.get("data", {}).get("type") == "end"
+        }
+        if not answer_ids or not end_ids:
+            return
+
+        connected = any(
+            edge.get("source") in answer_ids and edge.get("target") in end_ids
+            for edge in edges
+        )
+        if not connected:
+            self.errors.append(
+                "Answer 노드가 End 노드에 연결되지 않았습니다. "
+                "워크플로우가 정상적으로 종료되도록 연결하세요."
+            )
 
     def _validate_v2_schema(
         self,
