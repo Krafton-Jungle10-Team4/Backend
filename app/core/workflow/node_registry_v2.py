@@ -221,6 +221,8 @@ from app.core.workflow.nodes_v2 import (
     EndNodeV2,
     IfElseNodeV2,
     QuestionClassifierNodeV2,
+    TavilySearchNodeV2,
+    AssignerNodeV2,
 )
 
 node_registry_v2.register("start", StartNodeV2)
@@ -229,5 +231,7 @@ node_registry_v2.register("llm", LLMNodeV2)
 node_registry_v2.register("end", EndNodeV2)
 node_registry_v2.register("if-else", IfElseNodeV2)
 node_registry_v2.register("question-classifier", QuestionClassifierNodeV2)
+node_registry_v2.register("tavily-search", TavilySearchNodeV2)
+node_registry_v2.register("assigner", AssignerNodeV2)
 
 logger.info(f"V2 node registry initialized with {len(node_registry_v2)} node types")
