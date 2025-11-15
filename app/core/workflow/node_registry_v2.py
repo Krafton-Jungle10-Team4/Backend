@@ -213,25 +213,26 @@ def register_node_v2(node_type: str):
     return decorator
 
 
-# V2 노드들 등록
-from app.core.workflow.nodes_v2 import (
-    StartNodeV2,
-    KnowledgeNodeV2,
-    LLMNodeV2,
-    EndNodeV2,
-    IfElseNodeV2,
-    QuestionClassifierNodeV2,
-    TavilySearchNodeV2,
-    AssignerNodeV2,
-)
+# V2 노드들은 executor_v2.py에서 필요할 때 자동으로 import되고 등록됩니다.
+# 순환 import 방지를 위해 여기서는 기본 노드만 직접 등록합니다.
 
-node_registry_v2.register("start", StartNodeV2)
-node_registry_v2.register("knowledge-retrieval", KnowledgeNodeV2)
-node_registry_v2.register("llm", LLMNodeV2)
-node_registry_v2.register("end", EndNodeV2)
-node_registry_v2.register("if-else", IfElseNodeV2)
-node_registry_v2.register("question-classifier", QuestionClassifierNodeV2)
-node_registry_v2.register("tavily-search", TavilySearchNodeV2)
-node_registry_v2.register("assigner", AssignerNodeV2)
+def _register_default_nodes():
+    """기본 V2 노드들을 등록합니다."""
+    from app.core.workflow.nodes_v2.start_node_v2 import StartNodeV2
+    from app.core.workflow.nodes_v2.knowledge_node_v2 import KnowledgeNodeV2
+    from app.core.workflow.nodes_v2.llm_node_v2 import LLMNodeV2
+    from app.core.workflow.nodes_v2.end_node_v2 import EndNodeV2
+    from app.core.workflow.nodes_v2.if_else_node_v2 import IfElseNodeV2
+    from app.core.workflow.nodes_v2.question_classifier_node_v2 import QuestionClassifierNodeV2
+
+    node_registry_v2.register("start", StartNodeV2)
+    node_registry_v2.register("knowledge-retrieval", KnowledgeNodeV2)
+    node_registry_v2.register("llm", LLMNodeV2)
+    node_registry_v2.register("end", EndNodeV2)
+    node_registry_v2.register("if-else", IfElseNodeV2)
+    node_registry_v2.register("question-classifier", QuestionClassifierNodeV2)
+
+# 기본 노드 등록
+_register_default_nodes()
 
 logger.info(f"V2 node registry initialized with {len(node_registry_v2)} node types")
