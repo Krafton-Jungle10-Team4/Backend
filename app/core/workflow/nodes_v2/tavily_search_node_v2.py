@@ -150,6 +150,8 @@ class TavilySearchNodeV2(BaseNodeV2):
         if not api_key:
             raise ValueError("Tavily API key is not configured")
 
+        logger.info(f"[TavilySearchNodeV2] 검색 시작: query='{query}', topic={cfg.topic}, max_results={cfg.max_results}")
+        
         async with TavilyClient(api_key=api_key) as tavily_client:
             search_result = await tavily_client.search(
                 TavilySearchRequest(
@@ -166,6 +168,17 @@ class TavilySearchNodeV2(BaseNodeV2):
                     include_raw_content=cfg.include_raw_content,
                 )
             )
+
+        # 검색 결과 로깅
+        result_count = len(search_result.results)
+        logger.info(f"[TavilySearchNodeV2] 검색 완료: {result_count}개 결과, response_time={search_result.response_time}s")
+        
+        if result_count == 0:
+            logger.warning(f"[TavilySearchNodeV2] 검색 결과가 없습니다. query='{query}', topic={cfg.topic}")
+        else:
+            # 첫 번째 결과의 일부만 로깅 (너무 길지 않게)
+            first_result = search_result.results[0]
+            logger.info(f"[TavilySearchNodeV2] 첫 번째 결과: title='{first_result.title[:50]}...', url={first_result.url}, content_length={len(first_result.content)}")
 
         # LLM 노드 호환 문서 배열 생성
         retrieved_documents = [
@@ -185,6 +198,8 @@ class TavilySearchNodeV2(BaseNodeV2):
             f"[{idx+1}] {item.title}\n{item.content}\nURL: {item.url}"
             for idx, item in enumerate(search_result.results)
         )
+        
+        logger.info(f"[TavilySearchNodeV2] Context 생성 완료: {len(context_text)} chars, {result_count} results")
 
         # 출력 구성
         output: Dict[str, Any] = {

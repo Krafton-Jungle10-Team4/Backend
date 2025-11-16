@@ -139,17 +139,55 @@ class LLMNodeV2(BaseNodeV2):
         # 프롬프트 템플릿 처리
         try:
             if prompt_template:
+                # 템플릿 내용 로깅
+                logger.info(f"[LLMNodeV2] 프롬프트 템플릿 사용: {len(prompt_template)} chars")
+                logger.debug(f"[LLMNodeV2] 프롬프트 템플릿 내용: {prompt_template[:200]}...")
+                
+                # context 변수가 템플릿에 포함되어 있는지 확인
+                has_context_var = "context" in prompt_template.lower() or any(
+                    "context" in str(selector).lower() 
+                    for selector in self.variable_mappings.values()
+                    if isinstance(selector, (str, dict))
+                )
+                
+                if not has_context_var and context_text:
+                    logger.warning(
+                        f"[LLMNodeV2] 프롬프트 템플릿에 context 변수가 없지만 context가 제공되었습니다. "
+                        f"context 길이: {len(context_text)} chars. "
+                        f"템플릿에 {{{{1763265553497.context}}}} 또는 context 변수를 추가하세요."
+                    )
+                
                 prompt_group = self._render_template_with_variable_pool(
                     template=prompt_template,
                     context=context,
                 )
                 prompt = prompt_group.text
+                
+                # 렌더링 결과 로깅
+                logger.debug(
+                    f"[LLMNodeV2] 템플릿 렌더링 결과: "
+                    f"템플릿 길이={len(prompt_template)}, "
+                    f"출력 길이={len(prompt)} chars"
+                )
             else:
+                logger.info(f"[LLMNodeV2] 기본 프롬프트 템플릿 사용 (prompt_template이 설정되지 않음)")
                 prompt = self._render_prompt(
                     template="{context}\n\nQuestion: {query}\nAnswer:",
                     query=query,
                     context=context_text,
                     system_prompt=system_prompt
+                )
+            
+            # 프롬프트 로깅 (처음 500자만)
+            logger.info(f"[LLMNodeV2] 프롬프트 생성 완료: {len(prompt)} chars")
+            logger.debug(f"[LLMNodeV2] 프롬프트 미리보기: {prompt[:500]}...")
+            
+            # context가 비어있는데 프롬프트가 짧은 경우 경고
+            if context_text and len(prompt) < len(context_text) * 0.5:
+                logger.warning(
+                    f"[LLMNodeV2] ⚠️ 프롬프트가 context보다 훨씬 짧습니다! "
+                    f"context={len(context_text)} chars, prompt={len(prompt)} chars. "
+                    f"템플릿에 context 변수가 포함되지 않았을 수 있습니다."
                 )
         except Exception as e:
             logger.error(f"Prompt rendering failed: {str(e)}")
@@ -190,6 +228,14 @@ class LLMNodeV2(BaseNodeV2):
                 response_text = str(result)
 
             logger.info(f"LLMNodeV2: Generated response ({tokens_used} tokens)")
+            
+            # 응답이 비어있는 경우 경고
+            if not response_text or len(response_text.strip()) == 0:
+                logger.warning(f"[LLMNodeV2] 응답이 비어있습니다! tokens={tokens_used}, provider={provider}, model={model}")
+                logger.warning(f"[LLMNodeV2] 프롬프트 길이: {len(prompt)}, context 길이: {len(context_text)}")
+            else:
+                logger.info(f"[LLMNodeV2] 응답 생성 완료: {len(response_text)} chars")
+                logger.debug(f"[LLMNodeV2] 응답 미리보기: {response_text[:200]}...")
 
             return {
                 "response": response_text,

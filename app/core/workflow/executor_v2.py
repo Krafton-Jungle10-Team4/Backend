@@ -135,7 +135,7 @@ class WorkflowExecutorV2:
 
             # 실행 기록 시작
             self.run_start_time = datetime.utcnow()
-            self._create_execution_run(
+            await self._create_execution_run(
                 workflow_data=workflow_data,
                 session_id=session_id,
                 bot_id=bot_id,
@@ -161,7 +161,7 @@ class WorkflowExecutorV2:
                 )
 
             # 실행 기록 완료
-            self._finalize_execution_run(
+            await self._finalize_execution_run(
                 status="succeeded",
                 final_response=final_response,
                 db=db
@@ -174,7 +174,7 @@ class WorkflowExecutorV2:
 
             # 실행 기록 실패 처리
             if self.execution_run:
-                self._finalize_execution_run(
+                await self._finalize_execution_run(
                     status="failed",
                     error_message=str(e),
                     db=db
@@ -588,7 +588,7 @@ class WorkflowExecutorV2:
         """
         return {node_id: node.status for node_id, node in self.nodes.items()}
 
-    def _create_execution_run(
+    async def _create_execution_run(
         self,
         workflow_data: Dict[str, Any],
         session_id: str,
@@ -633,14 +633,14 @@ class WorkflowExecutorV2:
             )
 
             db.add(self.execution_run)
-            db.commit()
+            await db.commit()
             logger.info(f"V2 워크플로우 실행 기록 생성: run_id={self.execution_run.id}")
 
         except Exception as e:
             logger.error(f"실행 기록 생성 실패: {str(e)}")
-            db.rollback()
+            await db.rollback()
 
-    def _finalize_execution_run(
+    async def _finalize_execution_run(
         self,
         status: str,
         final_response: Optional[str] = None,
@@ -680,7 +680,7 @@ class WorkflowExecutorV2:
             )
             self.execution_run.total_tokens = total_tokens
 
-            db.commit()
+            await db.commit()
             logger.info(
                 f"V2 워크플로우 실행 완료: run_id={self.execution_run.id}, "
                 f"status={status}, elapsed={elapsed_ms}ms"
@@ -688,7 +688,7 @@ class WorkflowExecutorV2:
 
         except Exception as e:
             logger.error(f"실행 기록 완료 처리 실패: {str(e)}")
-            db.rollback()
+            await db.rollback()
 
     def _create_node_execution(
         self,

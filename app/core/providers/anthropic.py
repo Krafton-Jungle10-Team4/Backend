@@ -142,6 +142,9 @@ class AnthropicClient(BaseLLMClient):
             self.last_usage = None
 
             # Anthropic 스트리밍 API 호출
+            chunk_count = 0
+            total_text_length = 0
+            
             async with self.client.messages.stream(
                 model=model_name,
                 system=system_message,
@@ -151,13 +154,33 @@ class AnthropicClient(BaseLLMClient):
                 **kwargs
             ) as stream:
                 async for text in stream.text_stream:
-                    yield text
+                    if text:
+                        chunk_count += 1
+                        total_text_length += len(text)
+                        yield text
 
+                logger.info(f"[AnthropicClient] 스트리밍 완료: {chunk_count} chunks, {total_text_length} chars")
+                
+                # 사용량 추적 시도 (SDK 버전에 따라 다를 수 있음)
                 try:
-                    final_response = await stream.get_final_response()
-                    self._capture_usage(getattr(final_response, "usage", None), model_name)
-                except Exception as capture_exc:  # pragma: no cover
-                    logger.warning("Anthropic 스트리밍 사용량 추적 실패: %s", capture_exc)
+                    # 최신 Anthropic SDK에서는 get_final_response() 대신 다른 방법 사용
+                    if hasattr(stream, 'get_final_response'):
+                        final_response = await stream.get_final_response()
+                        self._capture_usage(getattr(final_response, "usage", None), model_name)
+                    elif hasattr(stream, 'final_message'):
+                        # 대안: final_message 속성 사용
+                        final_message = stream.final_message
+                        self._capture_usage(getattr(final_message, "usage", None), model_name)
+                    else:
+                        logger.debug("[AnthropicClient] 스트리밍 사용량 추적 방법을 찾을 수 없음")
+                except AttributeError as e:
+                    logger.warning(f"Anthropic 스트리밍 사용량 추적 실패 (AttributeError): {e}")
+                except Exception as capture_exc:
+                    logger.warning(f"Anthropic 스트리밍 사용량 추적 실패: {capture_exc}")
+                
+                # 스트리밍이 비어있는 경우 경고
+                if chunk_count == 0:
+                    logger.warning(f"[AnthropicClient] 스트리밍 응답이 비어있습니다! model={model_name}, max_tokens={max_tokens}")
 
         except RateLimitError as e:
             logger.error(f"Anthropic API 사용량 제한 (스트리밍): {e}")

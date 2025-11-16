@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.models.llm_usage import LLMUsageLog, ModelPricing
 from app.models.user import User
+from app.models.bot import Bot
 from app.core.auth.dependencies import get_current_user_from_jwt_only
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,31 @@ async def get_bot_usage_stats(
 ):
     """
     특정 봇의 LLM 사용량 및 비용 통계 조회
+    
+    사용 기록이 없어도 0 값으로 정상 응답합니다.
+    봇이 존재하지 않거나 권한이 없는 경우에만 404를 반환합니다.
     """
+    # 봇 존재 여부 및 소유권 확인
+    bot_query = select(Bot).where(
+        Bot.bot_id == bot_id,
+        Bot.user_id == current_user.id
+    )
+    bot_result = await db.execute(bot_query)
+    bot = bot_result.scalar_one_or_none()
+    
+    if not bot:
+        logger.warning(
+            f"봇을 찾을 수 없음: bot_id={bot_id}, user_id={current_user.id}"
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=f"봇 {bot_id}을(를) 찾을 수 없거나 접근 권한이 없습니다."
+        )
+    
+    logger.info(
+        f"봇 사용량 조회: bot_id={bot_id}, user_id={current_user.id}"
+    )
+
     # 날짜 범위 설정 (기본값: 최근 30일)
     if not end_date:
         end_date = datetime.utcnow()
@@ -81,11 +106,9 @@ async def get_bot_usage_stats(
     conditions = [
         LLMUsageLog.bot_id == bot_id,
         LLMUsageLog.created_at >= start_date,
-        LLMUsageLog.created_at <= end_date
+        LLMUsageLog.created_at <= end_date,
+        LLMUsageLog.user_id == current_user.id
     ]
-
-    # 사용자 필터 (자신의 봇만 조회 가능)
-    conditions.append(LLMUsageLog.user_id == current_user.id)
 
     # 집계 쿼리
     query = select(
@@ -99,19 +122,23 @@ async def get_bot_usage_stats(
     result = await db.execute(query)
     row = result.first()
 
-    if not row or row.total_requests == 0:
-        raise HTTPException(
-            status_code=404,
-            detail=f"봇 {bot_id}의 사용 기록을 찾을 수 없습니다."
-        )
-
+    # 사용 기록이 없어도 0 값으로 정상 응답
+    total_requests = row.total_requests or 0 if row else 0
+    total_cost = float(row.total_cost or 0.0) if row else 0.0
+    
+    logger.info(
+        f"봇 사용량 조회 결과: bot_id={bot_id}, "
+        f"total_requests={total_requests}, total_cost={total_cost}, "
+        f"period={start_date} ~ {end_date}"
+    )
+    
     return UsageStatsResponse(
         bot_id=bot_id,
-        total_requests=row.total_requests or 0,
-        total_input_tokens=row.total_input_tokens or 0,
-        total_output_tokens=row.total_output_tokens or 0,
-        total_tokens=row.total_tokens or 0,
-        total_cost=float(row.total_cost or 0.0),
+        total_requests=total_requests,
+        total_input_tokens=row.total_input_tokens or 0 if row else 0,
+        total_output_tokens=row.total_output_tokens or 0 if row else 0,
+        total_tokens=row.total_tokens or 0 if row else 0,
+        total_cost=total_cost,
         period_start=start_date,
         period_end=end_date
     )
