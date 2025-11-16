@@ -171,6 +171,16 @@ class ChatService:
         )
         workflow_data = await self._prepare_workflow_data(bot, request, db)
 
+        workflow_version_id = workflow_data.get("workflow_version_id")
+        logger.info(
+            "[ChatService] Workflow context: bot_id=%s mode=%s version=%s nodes=%d edges=%d",
+            bot.bot_id,
+            "V2" if getattr(bot, "use_workflow_v2", False) else "V1",
+            workflow_version_id,
+            len(workflow_data.get("nodes", [])),
+            len(workflow_data.get("edges", []))
+        )
+
         # V1/V2 분기 처리
         if getattr(bot, 'use_workflow_v2', False):
             # V2 Workflow Executor 실행

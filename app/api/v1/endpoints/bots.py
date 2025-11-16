@@ -235,6 +235,40 @@ async def get_bot(
         )
 
 
+@router.post(
+    "/{bot_id}/workflow-v2/enable",
+    response_model=BotDetailResponse,
+    status_code=status.HTTP_200_OK,
+    summary="봇 워크플로우 V2 모드 활성화",
+    description="해당 봇의 use_workflow_v2 플래그를 true로 설정하여 V2 워크플로우 실행을 강제로 활성화합니다."
+)
+async def enable_workflow_v2(
+    bot_id: str,
+    user: User = Depends(get_current_user_from_jwt),
+    db: AsyncSession = Depends(get_db),
+    bot_service: BotService = Depends(get_bot_service)
+):
+    try:
+        bot = await bot_service.enable_workflow_v2(bot_id, user.id, db)
+        return BotDetailResponse.from_bot(bot)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "code": "NOT_FOUND",
+                    "message": f"Bot이 존재하지 않음: {bot_id}"
+                }
+            }
+        )
+    except Exception as exc:
+        logger.error(f"Failed to enable workflow V2 for bot {bot_id}: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="워크플로우 V2 모드 활성화 중 오류가 발생했습니다"
+        )
+
+
 @router.put(
     "/{bot_id}",
     response_model=BotDetailResponse,  # 명세서 준수: workflow 포함

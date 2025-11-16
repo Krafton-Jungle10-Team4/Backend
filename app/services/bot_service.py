@@ -944,6 +944,28 @@ class BotService:
             logger.error(f"Failed to update bot workflow: {str(e)}")
             raise
 
+    async def enable_workflow_v2(
+        self,
+        bot_id: str,
+        user_id: int,
+        db: AsyncSession
+    ) -> Bot:
+        """봇의 V2 워크플로우 모드를 활성화"""
+        bot = await self.get_bot_by_id(bot_id, user_id, db)
+
+        if not bot:
+            raise ValueError(f"봇을 찾을 수 없습니다: {bot_id}")
+
+        if not bot.use_workflow_v2:
+            bot.use_workflow_v2 = True
+            await db.commit()
+            await db.refresh(bot)
+            logger.info(f"Enabled workflow V2 mode for bot {bot_id}")
+        else:
+            logger.info(f"Bot {bot_id} already has workflow V2 enabled")
+
+        return bot
+
 
 # 싱글톤 인스턴스
 _bot_service: Optional[BotService] = None

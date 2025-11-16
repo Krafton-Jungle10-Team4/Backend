@@ -34,7 +34,15 @@ class AnswerNodeV2(BaseNodeV2):
     def get_port_schema(self) -> NodePortSchema:
         """입출력 포트 스키마 정의"""
         return NodePortSchema(
-            inputs=[],
+            inputs=[
+                PortDefinition(
+                    name="target",
+                    type=PortType.ANY,
+                    required=False,
+                    description="이전 노드로부터의 연결 (실행 순서 보장용)",
+                    display_name="입력"
+                )
+            ],
             outputs=[
                 PortDefinition(
                     name="final_output",
