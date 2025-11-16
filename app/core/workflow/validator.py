@@ -31,6 +31,12 @@ class WorkflowValidator:
     워크플로우의 구조적 무결성과 논리적 일관성을 검증합니다.
     """
 
+    _SPECIAL_VARIABLE_PREFIXES = {
+        "env": {"env", "environment"},
+        "conversation": {"conv", "conversation"},
+        "sys": {"sys", "system"},
+    }
+
     def __init__(self):
         """검증기 초기화"""
         self.errors: List[str] = []
@@ -222,7 +228,8 @@ class WorkflowValidator:
                 continue
 
             if source not in node_map:
-                self.errors.append(f"존재하지 않는 Source 노드: {source}")
+                if not self._resolve_special_prefix(source):
+                    self.errors.append(f"존재하지 않는 Source 노드: {source}")
 
             if target not in node_map:
                 self.errors.append(f"존재하지 않는 Target 노드: {target}")
@@ -396,6 +403,19 @@ class WorkflowValidator:
                 )
 
                 if candidate_edge:
+                    # 특수 프리픽스(env/conv/sys) 처리
+                    special_prefix = self._resolve_special_prefix(candidate_edge.get("source"))
+                    if special_prefix:
+                        variable_key = candidate_edge.get("source_port")
+                        if variable_key:
+                            normalized_mappings[port_name] = f"{special_prefix}.{variable_key}"
+                        else:
+                            self.errors.append(
+                                f"노드 {node_id}의 입력 '{port_name}'가 "
+                                f"{special_prefix} 변수를 참조하지만 source_port가 비어 있습니다"
+                            )
+                        continue
+
                     # 엣지가 있으면 자동으로 매핑 생성 (필수/선택적 모두)
                     normalized_mappings[port_name] = (
                         f"{candidate_edge['source']}.{candidate_edge['source_port']}"
@@ -470,7 +490,13 @@ class WorkflowValidator:
             target_port = edge.get("target_port")
 
             if source_port:
-                if source not in port_map or source_port not in port_map[source]["outputs"]:
+                special_prefix = self._resolve_special_prefix(source)
+                if special_prefix:
+                    if not source_port:
+                        self.errors.append(
+                            f"{special_prefix} 변수를 참조하는 엣지 {edge.get('id')}에 source_port가 필요합니다"
+                        )
+                elif source not in port_map or source_port not in port_map[source]["outputs"]:
                     self.errors.append(
                         f"엣지 {edge.get('id')}에 정의된 source_port '{source_port}'가 노드 {source}에 존재하지 않습니다"
                     )
@@ -571,6 +597,17 @@ class WorkflowValidator:
             "inputs": self._map_schema_ports(schema.inputs),
             "outputs": self._map_schema_ports(schema.outputs),
         }
+
+    @classmethod
+    def _resolve_special_prefix(cls, node_id: Optional[str]) -> Optional[str]:
+        """env/conv/sys 등 특수 노드 표기를 정규화"""
+        if not node_id:
+            return None
+        lowered = str(node_id).lower()
+        for prefix, aliases in cls._SPECIAL_VARIABLE_PREFIXES.items():
+            if lowered in aliases:
+                return prefix
+        return None
 
     @staticmethod
     def _extract_selector(mapping: Any) -> Optional[str]:

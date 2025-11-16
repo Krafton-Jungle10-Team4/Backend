@@ -42,6 +42,8 @@ class WorkflowExecutorV2:
         self.execution_run: Optional[WorkflowExecutionRun] = None
         self.run_start_time: Optional[datetime] = None
         self.workflow_version_id: Optional[str] = None
+        # 노드 실행 기록을 메모리에 저장 (비동기 컨텍스트 문제 방지)
+        self._node_executions_cache: List[WorkflowNodeExecution] = []
 
     async def execute(
         self,
@@ -673,10 +675,21 @@ class WorkflowExecutorV2:
             if error_message:
                 self.execution_run.error_message = error_message
 
+            # 캐시된 노드 실행 기록들을 DB에 저장
+            if self._node_executions_cache:
+                for node_exec in self._node_executions_cache:
+                    db.add(node_exec)
+                # node_executions 관계에 추가 (비동기 컨텍스트에서 안전하게)
+                if hasattr(self.execution_run, 'node_executions'):
+                    self.execution_run.node_executions.extend(self._node_executions_cache)
+                else:
+                    # 관계가 아직 로드되지 않은 경우 직접 설정
+                    self.execution_run.node_executions = self._node_executions_cache
+
             # 토큰 합계 계산 (노드 실행 기록에서)
             total_tokens = sum(
                 node_exec.tokens_used or 0
-                for node_exec in self.execution_run.node_executions
+                for node_exec in self._node_executions_cache
             )
             self.execution_run.total_tokens = total_tokens
 
@@ -752,10 +765,9 @@ class WorkflowExecutorV2:
                 tokens_used=tokens_used
             )
 
-            # execution_run의 node_executions에 추가
-            if not hasattr(self.execution_run, 'node_executions'):
-                self.execution_run.node_executions = []
-            self.execution_run.node_executions.append(node_execution)
+            # 메모리 캐시에 추가 (비동기 컨텍스트 문제 방지)
+            # 나중에 _finalize_execution_run에서 한 번에 DB에 저장
+            self._node_executions_cache.append(node_execution)
 
             logger.debug(
                 f"노드 실행 기록 생성: node_id={node_id}, "
