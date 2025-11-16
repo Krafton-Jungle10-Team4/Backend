@@ -18,6 +18,14 @@ class BotStatus(str, enum.Enum):
     ERROR = "error"
 
 
+class BotCategory(str, enum.Enum):
+    """봇 카테고리"""
+    WORKFLOW = "workflow"
+    CHATFLOW = "chatflow"
+    CHATBOT = "chatbot"
+    AGENT = "agent"
+
+
 class Bot(Base):
     """봇 테이블"""
     __tablename__ = "bots"
@@ -39,6 +47,15 @@ class Bot(Base):
     )
     messages_count = Column(Integer, default=0, nullable=False)
     errors_count = Column(Integer, default=0, nullable=False)
+
+    # 봇 카테고리 및 태그
+    category = Column(
+        SQLEnum(BotCategory, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        server_default=BotCategory.WORKFLOW.value,
+        index=True,
+    )
+    tags = Column(JSON, nullable=False, default=list, server_default="[]")
 
     # Workflow 정의 (JSON 형식)
     workflow = Column(JSON, nullable=True)
