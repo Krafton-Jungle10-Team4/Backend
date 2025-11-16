@@ -78,9 +78,15 @@ class QuestionClassifierNodeV2(BaseNodeV2):
         ]
 
         for topic in classes:
+            # topic['id']가 이미 'class_'로 시작하면 제거하고 다시 추가
+            topic_id = topic['id']
+            if topic_id.startswith('class_'):
+                topic_id = topic_id[6:]  # 'class_' 제거 (6자)
+            port_name = f"class_{topic_id}_branch"
+            
             outputs.append(
                 PortDefinition(
-                    name=f"class_{topic['id']}_branch",
+                    name=port_name,
                     type=PortType.BOOLEAN,
                     required=True,
                     description=f"'{topic['name']}' 분기가 선택되면 true",
@@ -100,13 +106,43 @@ class QuestionClassifierNodeV2(BaseNodeV2):
                 template=query_template,
                 fallback=query if isinstance(query, str) else "",
             )
+        
+        classes = self._get_classes()
+        if not classes:
+            raise ValueError("Question Classifier 노드에는 최소 1개의 클래스가 필요합니다")
+        
+        # 피드백 분류인 경우, query_template이 없으면 system.user_message를 자동으로 사용
+        if not query_template:
+            class_names = [topic["name"] for topic in classes]
+            is_feedback_classification = any(
+                "마음에" in name or "만족" in name or "좋아" in name or "불만" in name
+                for name in class_names
+            )
+            
+            if is_feedback_classification:
+                # system.user_message를 시도
+                try:
+                    system_user_message = context.variable_pool.resolve_value_selector("system.user_message")
+                    if system_user_message and isinstance(system_user_message, str) and system_user_message.strip():
+                        query = system_user_message.strip()
+                        logger.info(
+                            "QuestionClassifierNodeV2 using system.user_message for feedback: '%s'",
+                            query,
+                        )
+                except Exception as e:
+                    logger.debug(
+                        "QuestionClassifierNodeV2 could not resolve system.user_message: %s, using provided query",
+                        e,
+                    )
 
         if not query or not isinstance(query, str):
             raise ValueError("Question Classifier 노드에는 query 입력이 필요합니다")
 
-        classes = self._get_classes()
-        if not classes:
-            raise ValueError("Question Classifier 노드에는 최소 1개의 클래스가 필요합니다")
+        logger.info(
+            "QuestionClassifierNodeV2 query input: '%s' (length: %d)",
+            query,
+            len(query),
+        )
 
         llm_service: Optional[LLMService] = context.get_service("llm_service")
         if not llm_service:
@@ -114,6 +150,11 @@ class QuestionClassifierNodeV2(BaseNodeV2):
 
         model_config = self._normalize_model_config()
         prompt = self._build_prompt(query, classes)
+        logger.debug(
+            "QuestionClassifierNodeV2 prompt (length: %d):\n%s",
+            len(prompt),
+            prompt[:500] + "..." if len(prompt) > 500 else prompt,
+        )
         temperature = model_config["completion_params"]["temperature"]
         max_tokens = model_config["completion_params"]["max_tokens"]
 
@@ -124,6 +165,9 @@ class QuestionClassifierNodeV2(BaseNodeV2):
             [topic["name"] for topic in classes],
         )
 
+        # LLM을 사용하여 사용자 피드백을 클래스로 분류
+        class_names = [topic["name"] for topic in classes]
+        
         llm_response = await llm_service.generate(
             prompt=prompt,
             model=model_config["name"],
@@ -131,11 +175,21 @@ class QuestionClassifierNodeV2(BaseNodeV2):
             temperature=temperature,
             max_tokens=max_tokens,
         )
-
         raw_text, tokens_used = self._extract_llm_result(llm_response)
+        logger.info(
+            "QuestionClassifierNodeV2 LLM raw response: '%s' (length: %d)",
+            raw_text,
+            len(raw_text),
+        )
         resolved_class = self._parse_classification(
             raw_text,
-            [topic["name"] for topic in classes],
+            class_names,
+        )
+        logger.info(
+            "QuestionClassifierNodeV2 parsed class: '%s' (from raw: '%s', query: '%s')",
+            resolved_class,
+            raw_text,
+            query,
         )
 
         outputs: Dict[str, Any] = {
@@ -145,12 +199,26 @@ class QuestionClassifierNodeV2(BaseNodeV2):
             },
         }
 
+        # 출력 포트 이름과 핸들을 일치시키기 위해 포트 이름을 직접 사용
+        matched_topic = None
+        matched_port_name = None
+        
         for topic in classes:
-            outputs[f"class_{topic['id']}_branch"] = topic["name"] == resolved_class
-
-        matched_topic = next((topic for topic in classes if topic["name"] == resolved_class), None)
-        if matched_topic:
-            context.set_next_edge_handle([f"class_{matched_topic['id']}_branch"])
+            # topic['id']가 이미 'class_'로 시작하면 제거하고 다시 추가
+            topic_id = topic['id']
+            if topic_id.startswith('class_'):
+                topic_id = topic_id[6:]  # 'class_' 제거 (6자)
+            port_name = f"class_{topic_id}_branch"
+            
+            is_matched = topic["name"] == resolved_class
+            outputs[port_name] = is_matched
+            
+            if is_matched:
+                matched_topic = topic
+                matched_port_name = port_name
+        
+        if matched_port_name:
+            context.set_next_edge_handle([matched_port_name])
 
         return outputs
 
@@ -207,23 +275,106 @@ class QuestionClassifierNodeV2(BaseNodeV2):
         formatted_classes = "\n".join(f"- {topic['name']}" for topic in classes)
         custom_instruction = (self.config.get("instruction") or "").strip()
 
-        base_instruction = (
-            "You are a question classifier. "
-            "Choose the single most appropriate category from the list below. "
-            "Respond with ONLY the category name."
+        # 클래스 이름에서 피드백 분류 여부 확인 (특수 처리)
+        class_names = [topic['name'] for topic in classes]
+        is_feedback_classification = any(
+            "마음에" in name or "만족" in name or "좋아" in name or "불만" in name
+            for name in class_names
         )
+
+        if is_feedback_classification:
+            # 클래스 이름에서 긍정/부정 추론
+            positive_class = None
+            negative_class = None
+            for name in class_names:
+                if "들지 않는" in name or "안" in name or "불만" in name:
+                    negative_class = name
+                elif ("마음에 드는" in name or "만족" in name) and "들지 않는" not in name:
+                    positive_class = name
+            
+            if positive_class and negative_class:
+                base_instruction = (
+                    "You are a feedback classifier. "
+                    "The user was previously asked '마음에 드시나요?' (Are you satisfied?) and is now responding with their feedback.\n\n"
+                    f"Analyze the user's feedback message and classify it into ONE of these two categories:\n"
+                    f"1. \"{positive_class}\" - If the user indicates satisfaction, approval, or positive sentiment\n"
+                    f"2. \"{negative_class}\" - If the user indicates dissatisfaction, disapproval, or negative sentiment\n\n"
+                    "You MUST respond with EXACTLY one of the category names above, using the exact same wording. "
+                    "Do not use abbreviations, variations, or your own words. Only use the exact category name."
+                )
+            else:
+                base_instruction = (
+                    "You are a feedback classifier. "
+                    "The user was previously asked '마음에 드시나요?' (Are you satisfied?) and is now responding with their feedback. "
+                    "Analyze the user's feedback message and classify it into one of the categories below.\n\n"
+                    "You MUST respond with EXACTLY one of the category names listed below, word-for-word. "
+                    "Do not use abbreviations or variations."
+                )
+        else:
+            base_instruction = (
+                "You are a question classifier. "
+                "Choose the single most appropriate category from the list below. "
+                "You MUST respond with EXACTLY one of the category names listed below, word-for-word. "
+                "Do not use abbreviations or variations."
+            )
+
+        # 피드백 분류인 경우 예시 추가
+        if is_feedback_classification and len(classes) == 2:
+            # 긍정/부정 분류 예시 생성 (사용자가 실제로 사용하는 다양한 표현 포함)
+            positive_examples = [
+                "ㅇㅇ", "어", "괜찮네", "맘에 들어", "마음에 든다구", "마음에 들어", 
+                "좋아요", "만족해요", "좋아", "괜찮아", "좋습니다", "괜찮아요"
+            ]
+            negative_examples = [
+                "별론데", "그닥", "더 좋은거 없어", "마음에 안들어", "안들어", 
+                "별로야", "불만족", "싫어", "다시 찾아줘", "다른거", "아니야"
+            ]
+            
+            # 어떤 클래스가 긍정/부정인지 추론
+            positive_class = None
+            negative_class = None
+            for name in class_names:
+                if "들지 않는" in name or "안" in name or "불만" in name:
+                    negative_class = name
+                elif ("마음에 드는" in name or "만족" in name) and "들지 않는" not in name:
+                    positive_class = name
+            
+            if positive_class and negative_class:
+                examples_text = "\nExamples (POSITIVE → satisfied, NEGATIVE → dissatisfied):\n"
+                # 더 많은 예시 추가 (5개씩)
+                for example in positive_examples[:5]:
+                    examples_text += f"  Input: \"{example}\" → Output: \"{positive_class}\"\n"
+                for example in negative_examples[:5]:
+                    examples_text += f"  Input: \"{example}\" → Output: \"{negative_class}\"\n"
+            else:
+                examples_text = ""
+        else:
+            examples_text = ""
 
         if custom_instruction:
             instruction_block = f"{base_instruction}\n\nAdditional instructions:\n{custom_instruction}"
         else:
             instruction_block = base_instruction
 
-        return (
-            f"{instruction_block}\n\n"
-            f"Available categories:\n{formatted_classes}\n\n"
-            f"User Question:\n{query}\n\n"
-            "Answer with exactly one category name."
-        )
+        if is_feedback_classification and positive_class and negative_class:
+            # 피드백 분류인 경우 더 명확한 형식
+            return (
+                f"{instruction_block}\n\n"
+                f"User's feedback message:\n{query}\n\n"
+                f"Classify this feedback into one of these categories:\n"
+                f"- \"{positive_class}\"\n"
+                f"- \"{negative_class}\"\n\n"
+                f"Your response must be EXACTLY one of the category names above (including quotation marks if shown). "
+                f"Do not add any explanation, just the category name."
+            )
+        else:
+            return (
+                f"{instruction_block}\n\n"
+                f"Available categories (respond with EXACT category name):\n{formatted_classes}\n"
+                f"{examples_text}\n"
+                f"User Question:\n{query}\n\n"
+                "Answer with EXACTLY one category name from the list above, using the exact same wording."
+            )
 
     def _extract_llm_result(self, result: Any) -> tuple[str, int]:
         if isinstance(result, dict):
@@ -239,20 +390,49 @@ class QuestionClassifierNodeV2(BaseNodeV2):
         return str(result), 0
 
     def _parse_classification(self, raw_text: str, valid_classes: List[str]) -> str:
-        cleaned = (raw_text or "").strip().lower()
+        """
+        LLM 응답을 파싱하여 유효한 클래스 이름을 반환합니다.
+        LLM이 이미 분류를 수행하므로, 하드코딩된 키워드 매칭 없이 LLM 응답을 신뢰합니다.
+        """
+        cleaned = (raw_text or "").strip()
         normalized_classes = [name.lower() for name in valid_classes]
+        cleaned_lower = cleaned.lower()
 
-        if cleaned in normalized_classes:
-            original_index = normalized_classes.index(cleaned)
+        # 1. 정확한 매칭 (대소문자 무시)
+        if cleaned_lower in normalized_classes:
+            original_index = normalized_classes.index(cleaned_lower)
+            logger.debug(
+                "QuestionClassifierNodeV2 exact match: '%s' → '%s'",
+                cleaned,
+                valid_classes[original_index],
+            )
             return valid_classes[original_index]
 
+        # 2. 부분 매칭: LLM 응답에 클래스 이름이 포함되어 있는지 확인
+        # (LLM이 약간 다른 형식으로 응답했을 경우 대비)
+        best_match = None
+        best_match_length = 0
+        
         for original, normalized in zip(valid_classes, normalized_classes):
-            if normalized in cleaned:
-                return original
+            # LLM 응답에 클래스 이름이 포함되어 있거나, 클래스 이름에 LLM 응답이 포함되어 있는지 확인
+            if normalized in cleaned_lower or cleaned_lower in normalized:
+                match_length = min(len(normalized), len(cleaned_lower))
+                if match_length > best_match_length:
+                    best_match = original
+                    best_match_length = match_length
+        
+        if best_match:
+            logger.debug(
+                "QuestionClassifierNodeV2 partial match: '%s' → '%s'",
+                cleaned,
+                best_match,
+            )
+            return best_match
 
         logger.warning(
-            "QuestionClassifierNodeV2 could not parse class from '%s', defaulting to first",
+            "QuestionClassifierNodeV2 could not parse class from '%s', defaulting to first. Valid classes: %s",
             raw_text,
+            valid_classes,
         )
         return valid_classes[0]
 

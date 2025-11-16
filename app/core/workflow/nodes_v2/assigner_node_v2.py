@@ -6,6 +6,7 @@ variable_mappings와 NodeExecutionContext 기반으로 입력을 해석합니다
 """
 
 from typing import Any, Dict, List, Optional
+import logging
 
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
 from app.schemas.workflow import (
@@ -16,6 +17,8 @@ from app.schemas.workflow import (
     AssignerOperation,
     AssignerInputType,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AssignerNodeV2(BaseNodeV2):
@@ -370,7 +373,14 @@ class AssignerNodeV2(BaseNodeV2):
         if lowered.startswith("conv.") or lowered.startswith("conversation."):
             parts = selector.split(".", 1)
             if len(parts) == 2 and parts[1]:
-                context.variable_pool.set_conversation_variable(parts[1], value)
+                var_name = parts[1]
+                context.variable_pool.set_conversation_variable(var_name, value)
+                logger.info(
+                    "AssignerNodeV2 saved to conversation variable: '%s' = '%s' (length: %d)",
+                    var_name,
+                    str(value)[:100] + "..." if len(str(value)) > 100 else str(value),
+                    len(str(value)) if isinstance(value, str) else 0,
+                )
 
     def _get_selector_for_port(self, port_name: str) -> Optional[str]:
         """

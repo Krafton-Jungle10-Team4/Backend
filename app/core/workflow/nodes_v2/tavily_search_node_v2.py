@@ -145,12 +145,25 @@ class TavilySearchNodeV2(BaseNodeV2):
         if not query:
             raise ValueError("query input is required")
 
+        # 재검색 감지: feedback_stage가 "wait_feedback"이고 last_feedback이 있으면 재검색으로 간주
+        is_re_search = False
+        try:
+            feedback_stage = context.variable_pool.resolve_value_selector("conversation.feedback_stage")
+            last_feedback = context.variable_pool.resolve_value_selector("conversation.last_feedback")
+            if feedback_stage == "wait_feedback" and last_feedback:
+                is_re_search = True
+                # 재검색 시 쿼리에 "최신" 키워드를 추가하여 다른 결과를 가져오도록 함
+                query = f"{query} 최신"
+                logger.info(f"[TavilySearchNodeV2] 재검색 감지: 쿼리 수정됨 (원본: '{context.get_input('query')}', 수정: '{query}')")
+        except Exception as e:
+            logger.debug(f"[TavilySearchNodeV2] 재검색 감지 실패 (정상일 수 있음): {e}")
+
         cfg = self.typed_config
         api_key = getattr(settings, "tavily_api_key", None)
         if not api_key:
             raise ValueError("Tavily API key is not configured")
 
-        logger.info(f"[TavilySearchNodeV2] 검색 시작: query='{query}', topic={cfg.topic}, max_results={cfg.max_results}")
+        logger.info(f"[TavilySearchNodeV2] 검색 시작: query='{query}', topic={cfg.topic}, max_results={cfg.max_results}, is_re_search={is_re_search}")
         
         async with TavilyClient(api_key=api_key) as tavily_client:
             search_result = await tavily_client.search(

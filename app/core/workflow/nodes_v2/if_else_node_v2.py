@@ -82,12 +82,24 @@ class IfElseNodeV2(BaseNodeV2):
         if matched_index is not None:
             port_name = "if" if matched_index == 0 else f"elif_{matched_index}"
             handle_candidates.append(port_name)
-            case = cases[matched_index]
-            case_id = case.get("case_id")
-            if case_id:
-                handle_candidates.append(case_id)
         else:
             handle_candidates.append("else")
+
+        # 디버깅 로그 추가
+        logger.info(
+            "IfElse node %s evaluation result:\n"
+            "  - total_cases: %d\n"
+            "  - matched_index: %s\n"
+            "  - selected_branch: %s\n"
+            "  - handle_candidates: %s\n"
+            "  - outputs: %s",
+            context.node_id,
+            len(cases),
+            matched_index,
+            handle_candidates[0] if handle_candidates else "none",
+            handle_candidates,
+            outputs
+        )
 
         context.set_next_edge_handle(handle_candidates)
         return outputs

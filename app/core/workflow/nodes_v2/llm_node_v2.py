@@ -134,7 +134,7 @@ class LLMNodeV2(BaseNodeV2):
         max_tokens = self.config.get("max_tokens", 4000)
         prompt_template = (self.config.get("prompt_template") or "").strip()
 
-        logger.info(f"LLMNodeV2: model={model}, provider={provider}, temp={temperature}")
+        logger.info(f"LLMNodeV2: model={model}, provider={provider}, temp={temperature}, max_tokens={max_tokens}")
 
         # 프롬프트 템플릿 처리
         try:
@@ -350,11 +350,39 @@ class LLMNodeV2(BaseNodeV2):
     ):
         """
         TemplateRenderer를 사용해 {{ }} 템플릿을 렌더링한다.
+        
+        단순 포트 이름(query, context 등)을 노드 ID 없이 사용할 수 있도록
+        {{ context }} → {{ self.context }}로 자동 변환합니다.
         """
         try:
-            parser = VariableTemplateParser(template)
+            # 현재 노드의 입력 포트 값을 "self" prefix로 변수 풀에 임시 주입
+            query = context.get_input("query")
+            context_text = context.get_input("context") or ""
+            system_prompt = context.get_input("system_prompt") or ""
+            
+            # 임시 노드로 주입
+            context.variable_pool.set_node_output("self", "query", query)
+            context.variable_pool.set_node_output("self", "context", context_text)
+            context.variable_pool.set_node_output("self", "system_prompt", system_prompt)
+            
+            # 단순 포트 이름을 self. prefix로 자동 변환
+            # {{ context }} → {{ self.context }}
+            # {{ query }} → {{ self.query }}
+            template_processed = template
+            for port_name in ["context", "query", "system_prompt"]:
+                # {{ port_name }} 패턴을 {{ self.port_name }}으로 변환 (공백 고려)
+                template_processed = re.sub(
+                    rf'\{{\{{\s*{port_name}\s*\}}\}}',
+                    f'{{{{ self.{port_name} }}}}',
+                    template_processed
+                )
+            
+            if template_processed != template:
+                logger.debug(f"[LLMNodeV2] 템플릿 자동 변환: 단순 포트 이름 → self.포트")
+            
+            parser = VariableTemplateParser(template_processed)
             selectors = parser.extract_variable_selectors()
-            rendered_group, metadata = TemplateRenderer.render(template, context.variable_pool)
+            rendered_group, metadata = TemplateRenderer.render(template_processed, context.variable_pool)
             metadata["selectors"] = selectors
             context.metadata.setdefault("llm_prompt", {})[self.node_id] = metadata
             return rendered_group

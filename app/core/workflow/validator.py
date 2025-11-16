@@ -86,6 +86,7 @@ class WorkflowValidator:
             self._normalize_v2_graph(nodes, edges, node_map)
             self._validate_v2_connections(nodes, edges)
             self._validate_v2_schema(nodes, edges, node_map)
+            self._validate_branch_convergence(nodes, edges, node_map)
 
         is_valid = len(self.errors) == 0
         return is_valid, self.errors, self.warnings
@@ -110,6 +111,13 @@ class WorkflowValidator:
             source = edge.get("source")
             target = edge.get("target")
             if source and target:
+                # 특수 프리픽스(conv/env/sys)는 실제 노드가 아니므로 그래프 구조에서 제외
+                # 이들은 variable_mappings로 변환되어 데이터 흐름에 사용되지만,
+                # DAG 구조 계산에는 포함되지 않아야 합니다.
+                if self._resolve_special_prefix(source):
+                    continue
+                if self._resolve_special_prefix(target):
+                    continue
                 adjacency_list[source].append(target)
         return dict(adjacency_list)
 
@@ -775,3 +783,120 @@ class WorkflowValidator:
             return None
 
         return execution_order
+
+    def _validate_branch_convergence(
+        self,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]],
+        node_map: Dict[str, Dict]
+    ):
+        """
+        분기 합류 검증
+        
+        IF/ELSE 같은 조건부 분기 노드의 다른 분기들이 동일한 다운스트림 노드로
+        합류하는 경우를 감지합니다. 이는 의존성 계산 문제를 일으킬 수 있습니다.
+        
+        Note: ExecutorV2에 조건부 의존성 해소 로직이 있으면 경고만 표시합니다.
+        """
+        # 분기 노드 찾기 (IfElse, QuestionClassifier 등)
+        branch_node_types = {"if-else", "question-classifier"}
+        branch_nodes = [
+            node for node in nodes 
+            if node.get("type") in branch_node_types or 
+               node.get("data", {}).get("type") in branch_node_types
+        ]
+        
+        if not branch_nodes:
+            return
+        
+        # 엣지 매핑 생성
+        edges_by_source = defaultdict(list)
+        for edge in edges:
+            source = edge.get("source")
+            if source and not self._resolve_special_prefix(source):
+                edges_by_source[source].append(edge)
+        
+        # 각 분기 노드 검증
+        for branch_node in branch_nodes:
+            node_id = branch_node["id"]
+            outgoing_edges = edges_by_source.get(node_id, [])
+            
+            if len(outgoing_edges) < 2:
+                continue  # 분기가 아님
+            
+            # 각 분기별로 타겟 노드 그룹화
+            branches = defaultdict(list)
+            for edge in outgoing_edges:
+                source_port = edge.get("source_port", "default")
+                target = edge.get("target")
+                if target:
+                    branches[source_port].append(target)
+            
+            if len(branches) < 2:
+                continue  # 단일 분기만 있음
+            
+            # 각 분기의 다운스트림 노드들 수집
+            branch_streams = {}
+            for branch_name, targets in branches.items():
+                downstream = self._get_downstream_nodes(
+                    set(targets),
+                    edges_by_source,
+                    node_map
+                )
+                branch_streams[branch_name] = downstream
+            
+            # 분기 간 교집합 확인
+            branch_names = list(branch_streams.keys())
+            for i in range(len(branch_names)):
+                for j in range(i + 1, len(branch_names)):
+                    branch_a = branch_names[i]
+                    branch_b = branch_names[j]
+                    
+                    converging = branch_streams[branch_a] & branch_streams[branch_b]
+                    
+                    if converging:
+                        # ExecutorV2가 자동으로 처리하므로 경고만 표시
+                        converging_list = list(converging)[:3]  # 최대 3개만 표시
+                        self.warnings.append(
+                            f"분기 노드 '{node_id}'의 분기 '{branch_a}'와 '{branch_b}'가 "
+                            f"동일한 노드로 합류합니다: {converging_list}{'...' if len(converging) > 3 else ''}. "
+                            f"ExecutorV2가 자동으로 처리하지만, 각 분기가 독립적으로 "
+                            f"Answer → End로 연결되는 것이 더 명확한 설계입니다."
+                        )
+    
+    def _get_downstream_nodes(
+        self,
+        start_nodes: set,
+        edges_by_source: Dict[str, List[Dict[str, Any]]],
+        node_map: Dict[str, Dict]
+    ) -> set:
+        """
+        시작 노드들로부터 도달 가능한 모든 다운스트림 노드 수집 (BFS)
+        
+        Args:
+            start_nodes: 시작 노드 ID 집합
+            edges_by_source: source별 엣지 맵
+            node_map: 노드 맵
+            
+        Returns:
+            다운스트림 노드 ID 집합
+        """
+        visited = set()
+        queue = deque(start_nodes)
+        
+        while queue:
+            current = queue.popleft()
+            
+            if current in visited or current not in node_map:
+                continue
+            
+            visited.add(current)
+            
+            # 이 노드의 outgoing 엣지들
+            for edge in edges_by_source.get(current, []):
+                target = edge.get("target")
+                if target and target not in visited and not self._resolve_special_prefix(target):
+                    queue.append(target)
+        
+        # 시작 노드들은 제외
+        return visited - start_nodes

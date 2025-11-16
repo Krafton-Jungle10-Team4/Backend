@@ -275,13 +275,8 @@ FEEDBACK_WORKFLOW_GRAPH = {
             "target": "classifier-1",
             "source_port": "else",
         },
-        {
-            "id": "edge-start-llm-summary",
-            "source": "start-1",
-            "target": "llm-summary",
-            "source_port": "query",
-            "target_port": "query",
-        },
+        # ❌ REMOVED: edge-start-llm-summary (start should not directly connect to llm-summary)
+        # llm-summary gets data via variable_mappings from tavily-initial
         {
             "id": "edge-tavily-initial-llm",
             "source": "tavily-initial",
@@ -303,13 +298,8 @@ FEEDBACK_WORKFLOW_GRAPH = {
             "source_port": "response",
             "target_port": "operation_1_value",
         },
-        {
-            "id": "edge-start-assigner-initial",
-            "source": "start-1",
-            "target": "assigner-initial",
-            "source_port": "query",
-            "target_port": "operation_3_value",
-        },
+        # ❌ REMOVED: edge-start-assigner-initial (start should not directly connect to assigner)
+        # assigner-initial gets data via variable_mappings and the sequential flow
         {
             "id": "edge-assigner-initial-answer",
             "source": "assigner-initial",

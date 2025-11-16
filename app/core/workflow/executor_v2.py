@@ -44,6 +44,12 @@ class WorkflowExecutorV2:
         self.workflow_version_id: Optional[str] = None
         # 노드 실행 기록을 메모리에 저장 (비동기 컨텍스트 문제 방지)
         self._node_executions_cache: List[WorkflowNodeExecution] = []
+        self._virtual_node_aliases = {"conv", "conversation", "env", "environment", "sys", "system"}
+
+    def _is_virtual_node(self, node_id: Optional[str]) -> bool:
+        if not node_id:
+            return False
+        return str(node_id).lower() in self._virtual_node_aliases
 
     async def execute(
         self,
@@ -239,9 +245,30 @@ class WorkflowExecutorV2:
         ready_queue: deque[str] = deque()
         executed_nodes: set[str] = set()
 
+        # 디버그: incoming_counts 로깅
+        logger.info(f"📊 Initial incoming_counts: {incoming_counts}")
+        logger.info(f"📊 Edges by source (keys): {list(edges_by_source.keys())}")
+        logger.info(f"📊 Total edges: {sum(len(v) for v in edges_by_source.values())}")
+        
+        # 디버그: 각 노드의 엣지 정보 상세 출력
+        for source, edges in edges_by_source.items():
+            edge_details = []
+            for edge in edges:
+                target = edge.get("target")
+                source_port = edge.get("source_port", "default")
+                target_port = edge.get("target_port", "")
+                edge_details.append(f"{target}[{source_port}→{target_port}]")
+            logger.info(f"    {source} → {', '.join(edge_details)}")
+
         for node_id in self.execution_order:
-            if incoming_counts.get(node_id, 0) == 0:
+            count = incoming_counts.get(node_id, 0)
+            if count == 0:
                 ready_queue.append(node_id)
+                logger.info(f"✅ Node {node_id} added to initial ready_queue (incoming_count=0)")
+            else:
+                logger.info(f"⏳ Node {node_id} waiting (incoming_count={count})")
+        
+        logger.info(f"📊 Initial ready_queue: {list(ready_queue)} (size={len(ready_queue)})")
 
         while ready_queue:
             node_id = ready_queue.popleft()
@@ -331,14 +358,87 @@ class WorkflowExecutorV2:
                     raise RuntimeError(result.error or f"V2 Node {node_id} failed")
 
                 executed_nodes.add(node_id)
-                outgoing_edges = self._select_outgoing_edges(edges_by_source.get(node_id, []), edge_handles)
+                all_edges_for_node = edges_by_source.get(node_id, [])
+                outgoing_edges = self._select_outgoing_edges(
+                    all_edges_for_node,
+                    edge_handles
+                )
+                
+                # 🔥 핵심 수정: 분기 노드 처리 (IfElse, QuestionClassifier 등)
+                # 선택되지 않은 분기의 다운스트림 노드 의존성 해소
+                if edge_handles and all_edges_for_node:
+                    unselected_edges = self._get_unselected_edges(
+                        all_edges_for_node,
+                        edge_handles
+                    )
+                    if unselected_edges:
+                        logger.info(
+                            "🔀 Branch node %s: resolving unselected branches (%d edges)",
+                            node_id,
+                            len(unselected_edges)
+                        )
+                        self._resolve_unselected_branch_dependencies(
+                            unselected_edges,
+                            incoming_counts,
+                            ready_queue,
+                            executed_nodes
+                        )
+                
+                # 상세한 엣지 매칭 로그
+                logger.info(
+                    "🔗 Node %s executed:\n"
+                    "  - edge_handles: %s\n"
+                    "  - total_edges: %d\n"
+                    "  - selected_edges: %d\n"
+                    "  - current ready_queue size: %d",
+                    node_id,
+                    edge_handles,
+                    len(all_edges_for_node),
+                    len(outgoing_edges),
+                    len(ready_queue)
+                )
+                
+                # 엣지 매칭 상세 정보
+                if all_edges_for_node and not outgoing_edges and edge_handles:
+                    logger.warning(
+                        "⚠️  Node %s: edge_handles=%s but no edges matched! Available source_ports: %s",
+                        node_id,
+                        edge_handles,
+                        [e.get("source_port") for e in all_edges_for_node]
+                    )
                 for edge in outgoing_edges:
                     target = edge.get("target")
-                    if target not in self.nodes:
+                    source_port = edge.get("source_port", "default")
+                    target_port = edge.get("target_port", "")
+                    logger.info(f"  → Processing edge: {node_id}[{source_port}] -> {target}[{target_port}]")
+                    if self._is_virtual_node(target) or target not in self.nodes:
+                        logger.debug(f"  ⏭️  Skipping edge to {target} (virtual or not in nodes)")
                         continue
-                    incoming_counts[target] = max(incoming_counts.get(target, 0) - 1, 0)
+                    previous_count = incoming_counts.get(target, 0)
+                    incoming_counts[target] = max(previous_count - 1, 0)
+                    logger.info(
+                        "  ✅ Edge %s -> %s resolved: incoming_count %d -> %d",
+                        node_id,
+                        target,
+                        previous_count,
+                        incoming_counts[target]
+                    )
                     if incoming_counts[target] == 0:
                         ready_queue.append(target)
+                        logger.info("  🎯 Node %s added to ready_queue (all dependencies resolved)", target)
+                    else:
+                        logger.info(f"  ⏳ Node {target} still waiting ({incoming_counts[target]} dependencies remaining)")
+                
+                # 루프 끝에서 현재 상태 요약
+                waiting_nodes = {k: v for k, v in incoming_counts.items() if v > 0 and k not in executed_nodes}
+                logger.info(
+                    "📊 After node %s: ready_queue=%s, waiting_nodes=%s, executed=%d/%d",
+                    node_id,
+                    list(ready_queue),
+                    waiting_nodes,
+                    len(executed_nodes),
+                    len(self.nodes)
+                )
 
             except Exception as e:
                 logger.error(f"V2 노드 {node_id} 실행 실패: {str(e)}")
@@ -378,6 +478,22 @@ class WorkflowExecutorV2:
                 if 'context' in locals() and context:
                     context.metadata.clear()
                 raise
+
+        # 워크플로우 실행 완료 후 미실행 노드 확인
+        unexecuted_nodes = set(self.nodes.keys()) - executed_nodes
+        if unexecuted_nodes:
+            logger.warning(
+                "⚠️  Workflow completed but some nodes were not executed:\n"
+                "  - executed: %d/%d nodes\n"
+                "  - unexecuted nodes: %s\n"
+                "  - final incoming_counts: %s",
+                len(executed_nodes),
+                len(self.nodes),
+                list(unexecuted_nodes),
+                {k: v for k, v in incoming_counts.items() if k in unexecuted_nodes}
+            )
+        else:
+            logger.info(f"✅ All {len(executed_nodes)} nodes executed successfully")
 
         return final_response
 
@@ -441,13 +557,75 @@ class WorkflowExecutorV2:
         self.variable_pool.clear_conversation_variable_dirty()
 
     def _build_incoming_counts(self) -> Dict[str, int]:
+        """의존성 카운트 계산 (가상 노드 엣지 제외)"""
         counts: Dict[str, int] = {node_id: 0 for node_id in self.nodes.keys()}
+        
+        # 디버그: Start 노드 찾기
+        start_nodes = [nid for nid, node in self.nodes.items() 
+                       if node.__class__.__name__ == 'StartNodeV2']
+        
+        logger.info(f"🔍 Building incoming_counts from {len(self.edges)} edges...")
+        virtual_edges = 0
+        invalid_edges = 0
+        valid_edges = 0
+        start_bypass_count = 0  # Start 노드가 조건 분기를 우회한 잘못된 연결
+        
         for edge in self.edges:
             source = edge.get("source")
             target = edge.get("target")
+            source_port = edge.get("source_port", "")
+            target_port = edge.get("target_port", "")
+            
+            if self._is_virtual_node(source) or self._is_virtual_node(target):
+                virtual_edges += 1
+                logger.debug(f"  ⏭️  Skipping virtual edge: {source}[{source_port}] -> {target}[{target_port}]")
+                continue
+            
+            # Start 노드의 잘못된 연결 감지
+            if source in start_nodes and target in self.nodes:
+                target_node = self.nodes[target]
+                target_type = target_node.__class__.__name__
+                
+                # Start가 조건 분기 노드가 아닌 노드에 직접 연결된 경우
+                if target_type not in ['IfElseNodeV2', 'QuestionClassifierNodeV2']:
+                    # 해당 노드가 다른 노드로부터도 incoming 엣지를 받는지 확인
+                    other_incoming = sum(
+                        1 for e in self.edges 
+                        if e.get("target") == target and e.get("source") != source and e.get("source") in self.nodes
+                    )
+                    
+                    if other_incoming > 0:
+                        start_bypass_count += 1
+                        logger.warning(
+                            f"  ⚠️  SUSPICIOUS START EDGE: {source}[{source_port}] → {target}[{target_port}] "
+                            f"(target type: {target_type}, other_incoming: {other_incoming}). "
+                            f"This may bypass branching logic!"
+                        )
+            
             if source in self.nodes and target in self.nodes:
                 counts[target] = counts.get(target, 0) + 1
                 counts.setdefault(source, counts.get(source, 0))
+                valid_edges += 1
+                logger.debug(f"  ✅ Edge {source} -> {target}: incoming_count[{target}] = {counts[target]}")
+            else:
+                invalid_edges += 1
+                missing = []
+                if source not in self.nodes:
+                    missing.append(f"source '{source}'")
+                if target not in self.nodes:
+                    missing.append(f"target '{target}'")
+                logger.warning(f"  ⚠️  Invalid edge {source} -> {target}: {', '.join(missing)} not in nodes")
+        
+        logger.info(
+            f"🔍 Edge processing summary: valid={valid_edges}, virtual={virtual_edges}, invalid={invalid_edges}"
+        )
+        
+        if start_bypass_count > 0:
+            logger.warning(
+                f"⚠️  Found {start_bypass_count} suspicious Start node connections that may "
+                f"bypass branching logic. This is likely a frontend workflow editor issue."
+            )
+        
         return counts
 
     def _group_edges_by_source(self) -> Dict[str, List[Dict[str, Any]]]:
@@ -455,6 +633,8 @@ class WorkflowExecutorV2:
         for edge in self.edges:
             source = edge.get("source")
             target = edge.get("target")
+            if self._is_virtual_node(source) or self._is_virtual_node(target):
+                continue
             if source in self.nodes and target in self.nodes:
                 mapping[source].append(edge)
         return mapping
@@ -477,6 +657,112 @@ class WorkflowExecutorV2:
         if selected:
             return selected
         return edges
+
+    def _get_unselected_edges(
+        self,
+        edges: List[Dict[str, Any]],
+        selected_handles: List[str]
+    ) -> List[Dict[str, Any]]:
+        """
+        선택되지 않은 분기의 엣지들을 반환
+        
+        Args:
+            edges: 노드의 모든 outgoing 엣지
+            selected_handles: 선택된 분기의 핸들 (예: ['if'])
+            
+        Returns:
+            선택되지 않은 분기의 엣지 리스트
+        """
+        if not edges or not selected_handles:
+            return []
+        
+        # selected_handles에 포함되지 않은 엣지들만 반환
+        unselected = [
+            edge for edge in edges 
+            if edge.get("source_port") and edge.get("source_port") not in selected_handles
+        ]
+        
+        return unselected
+
+    def _resolve_unselected_branch_dependencies(
+        self,
+        unselected_edges: List[Dict[str, Any]],
+        incoming_counts: Dict[str, int],
+        ready_queue: deque,
+        executed_nodes: set
+    ) -> None:
+        """
+        선택되지 않은 분기의 다운스트림 노드들의 의존성을 재귀적으로 해소
+        
+        ⚠️ 중요: 이 메서드는 노드를 ready_queue에 추가하지 않고,
+        incoming_count만 감소시킵니다. 노드를 실행하려면 다른 경로를 통해
+        incoming_count가 0이 되어야 합니다.
+        
+        Args:
+            unselected_edges: 선택되지 않은 분기의 엣지들
+            incoming_counts: 노드별 남은 의존성 카운트
+            ready_queue: 실행 대기 큐
+            executed_nodes: 이미 실행된 노드 집합
+        """
+        # 처리할 노드들 (BFS 방식)
+        nodes_to_process: deque = deque()
+        processed: set = set()
+        
+        # 선택되지 않은 분기의 직접 타겟 노드들을 큐에 추가
+        for edge in unselected_edges:
+            target = edge.get("target")
+            if target and not self._is_virtual_node(target) and target in self.nodes:
+                nodes_to_process.append(target)
+                logger.debug(f"    ⏭️  Marking unselected branch target: {target}")
+        
+        # BFS로 다운스트림 노드들의 의존성 해소
+        edges_by_source = self._group_edges_by_source()
+        
+        while nodes_to_process:
+            current_node = nodes_to_process.popleft()
+            
+            # 이미 처리했거나 실행된 노드는 스킵
+            if current_node in processed or current_node in executed_nodes:
+                continue
+            
+            processed.add(current_node)
+            
+            # 이 노드의 incoming_count를 0으로 설정
+            # (선택되지 않은 분기의 노드이므로 실행되지 않음)
+            old_count = incoming_counts.get(current_node, 0)
+            if old_count > 0:
+                incoming_counts[current_node] = 0
+                logger.info(
+                    f"    🔀 Unselected branch node {current_node}: "
+                    f"incoming_count {old_count} -> 0 (branch not taken, will NOT be added to ready_queue)"
+                )
+            
+            # ⚠️ 중요: ready_queue에 추가하지 않음!
+            # 선택되지 않은 분기의 노드는 실행되어서는 안 됨
+            
+            # 이 노드의 다운스트림 노드들 처리
+            outgoing = edges_by_source.get(current_node, [])
+            for edge in outgoing:
+                downstream = edge.get("target")
+                if not downstream or self._is_virtual_node(downstream) or downstream not in self.nodes:
+                    continue
+                
+                # 다운스트림 노드의 incoming_count 감소
+                prev_count = incoming_counts.get(downstream, 0)
+                if prev_count > 0:
+                    incoming_counts[downstream] = prev_count - 1
+                    logger.debug(
+                        f"      ⬇️  Downstream {downstream}: "
+                        f"incoming_count {prev_count} -> {incoming_counts[downstream]}"
+                    )
+                    
+                    # ⚠️ 변경: ready_queue에 추가하지 않음!
+                    # 다른 경로를 통해 incoming_count가 0이 되면 자연스럽게 실행됨
+                
+                # 이 다운스트림 노드도 처리 대상에 추가
+                # (선택되지 않은 분기의 다운스트림일 수 있음)
+                if downstream not in processed:
+                    nodes_to_process.append(downstream)
 
     @staticmethod
     def _extract_process_data(context: Optional[NodeExecutionContext], node_id: str) -> Optional[Dict[str, Any]]:
@@ -522,6 +808,15 @@ class WorkflowExecutorV2:
                             logger.info(f"[LLMNodeV2] Context input resolved: {len(str(value))} chars from '{selector}'")
                         else:
                             logger.warning(f"[LLMNodeV2] Context input is empty or None from '{selector}'")
+                            # conversation.result가 있는지 확인
+                            try:
+                                result_value = self.variable_pool.resolve_value_selector("conversation.result")
+                                if result_value:
+                                    logger.info(f"[LLMNodeV2] Found conversation.result: {len(str(result_value))} chars (but context input is empty)")
+                                else:
+                                    logger.warning(f"[LLMNodeV2] conversation.result is also empty or not found")
+                            except Exception as e:
+                                logger.debug(f"[LLMNodeV2] Could not check conversation.result: {e}")
                 except Exception as e:
                     logger.warning(f"Failed to resolve input '{port_name}' from '{selector}': {e}")
                     prepared_inputs[port_name] = None
