@@ -26,7 +26,8 @@ from app.api.v1.endpoints import (
     workflow_executions,
     cost_monitoring,
     tavily,
-    templates
+    templates,
+    knowledge
 )
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -101,6 +102,7 @@ app.include_router(widget.router, prefix="/api/v1/widget", tags=["Widget"])
 app.include_router(cost_monitoring.router, prefix="/api/v1/cost", tags=["비용 모니터링"])
 app.include_router(tavily.router, prefix="/api/v1/tavily", tags=["Tavily Search"])
 app.include_router(templates.router, prefix="/api/v1/templates", tags=["템플릿"])
+app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["지식 관리"])
 
 
 @app.on_event("startup")

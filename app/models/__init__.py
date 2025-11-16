@@ -14,6 +14,7 @@ from app.models.workflow_version import (
 )
 from app.models.conversation_variable import ConversationVariable
 from app.models.template import Template
+from app.models.knowledge import Knowledge
 
 __all__ = [
     "User",
@@ -36,4 +37,5 @@ __all__ = [
     "WorkflowNodeExecution",
     "ConversationVariable",
     "Template",
+    "Knowledge",
 ]
