@@ -514,9 +514,25 @@ class WorkflowExecutorV2:
                 try:
                     value = self.variable_pool.resolve_value_selector(selector)
                     prepared_inputs[port_name] = value
+                    # 디버그 로깅: LLM 노드의 context 입력에 대해 상세 로깅
+                    if node.__class__.__name__ == "LLMNodeV2" and port_name == "context":
+                        if value:
+                            logger.info(f"[LLMNodeV2] Context input resolved: {len(str(value))} chars from '{selector}'")
+                        else:
+                            logger.warning(f"[LLMNodeV2] Context input is empty or None from '{selector}'")
                 except Exception as e:
                     logger.warning(f"Failed to resolve input '{port_name}' from '{selector}': {e}")
                     prepared_inputs[port_name] = None
+            else:
+                logger.debug(f"No selector found for input port '{port_name}' in node {node.node_id}")
+
+        # LLM 노드의 경우 variable_mappings에 없는 입력 포트도 확인
+        if node.__class__.__name__ == "LLMNodeV2":
+            schema = node.get_port_schema()
+            for port_def in schema.inputs:
+                port_name = port_def.name
+                if port_name not in prepared_inputs:
+                    logger.debug(f"[LLMNodeV2] Input port '{port_name}' not in variable_mappings")
 
         return prepared_inputs
 

@@ -114,6 +114,11 @@ class LLMNodeV2(BaseNodeV2):
 
         context_text = context.get_input("context") or ""
         system_prompt = context.get_input("system_prompt") or ""
+        
+        # 컨텍스트가 비어있는 경우 경고 로깅
+        if not context_text:
+            logger.warning(f"[LLMNodeV2] Context is empty for node {self.node_id}. "
+                          f"Variable mappings: {self.variable_mappings}")
 
         # 서비스 조회
         llm_service = context.get_service("llm_service")

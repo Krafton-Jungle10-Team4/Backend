@@ -362,7 +362,7 @@ class WorkflowValidator:
         edges: List[Dict[str, Any]],
         port_map: Dict[str, Dict[str, Dict[str, Any]]]
     ) -> None:
-        """필수 입력 포트에 대한 variable_mappings 자동 생성"""
+        """입력 포트에 대한 variable_mappings 자동 생성 (필수 및 선택적 포트 모두)"""
         incoming_edges: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for edge in edges:
             target_id = edge.get("target")
@@ -379,13 +379,12 @@ class WorkflowValidator:
 
             input_ports = port_map.get(node_id, {}).get("inputs", {})
             for port_name, meta in input_ports.items():
-                if not meta.get("required", True):
-                    continue
-
+                # 이미 매핑이 있는 경우 건너뛰기
                 existing_selector = self._extract_selector(normalized_mappings.get(port_name))
                 if existing_selector:
                     continue
 
+                # 엣지에서 해당 포트로 연결된 것을 찾기
                 candidate_edge = next(
                     (
                         edge for edge in incoming_edges.get(node_id, [])
@@ -397,6 +396,7 @@ class WorkflowValidator:
                 )
 
                 if candidate_edge:
+                    # 엣지가 있으면 자동으로 매핑 생성 (필수/선택적 모두)
                     normalized_mappings[port_name] = (
                         f"{candidate_edge['source']}.{candidate_edge['source_port']}"
                     )
