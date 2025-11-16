@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Optional
+from typing import Optional, List
 
 from app.core.database import get_db
 from app.core.auth.dependencies import get_current_user_from_jwt
@@ -130,9 +130,11 @@ async def create_bot(
     - limit: 페이지당 항목 수 (기본값: 10)
     - sort: 정렬 기준 (기본값: updatedAt:desc)
     - search: 검색어 (봇 이름/설명에서 검색)
+    - category: 카테고리 필터 (workflow/chatflow/chatbot/agent)
+    - tags: 태그 필터 (다중 선택 가능)
 
     **응답:**
-    - data: 봇 목록 (nodeCount, edgeCount 포함)
+    - data: 봇 목록 (nodeCount, edgeCount, category, tags 포함)
     - pagination: 페이지네이션 정보
     """
 )
@@ -141,12 +143,15 @@ async def get_bots(
     limit: int = Query(10, ge=1, le=100, description="페이지당 항목 수"),
     sort: str = Query("updatedAt:desc", description="정렬 기준 (field:asc/desc)"),
     search: Optional[str] = Query(None, description="검색어"),
+    category: Optional[str] = Query(None, description="카테고리 필터"),
+    tags: Optional[List[str]] = Query(None, description="태그 필터"),
+    onlyMine: bool = Query(False, description="내가 만든 앱만 보기"),
     user: User = Depends(get_current_user_from_jwt),
     db: AsyncSession = Depends(get_db),
     bot_service: BotService = Depends(get_bot_service)
 ):
     """사용자의 봇 목록 조회 (페이지네이션 지원)"""
-    logger.info(f"봇 목록 조회: user={user.email}, page={page}, limit={limit}, search={search}")
+    logger.info(f"봇 목록 조회: user={user.email}, page={page}, limit={limit}, search={search}, category={category}, tags={tags}")
 
     try:
         # 페이지네이션과 검색을 적용한 봇 목록 조회
@@ -156,7 +161,11 @@ async def get_bots(
             page=page,
             limit=limit,
             sort=sort,
-            search=search
+            search=search,
+            category=category,
+            tags=tags
+            ,
+            only_mine=onlyMine
         )
 
         # 응답 생성
@@ -184,8 +193,57 @@ async def get_bots(
 
 
 @router.get(
+    "/tags",
+    response_model=List[str],
+    status_code=status.HTTP_200_OK,
+    summary="사용 가능한 태그 목록 조회",
+    description="""
+    사용자의 모든 봇에서 사용된 태그 목록을 조회합니다.
+
+    **인증:**
+    - JWT Bearer 토큰 필요 (Authorization: Bearer {token})
+
+    **응답:**
+    - 중복 제거된 태그 목록 (알파벳 순 정렬)
+    """
+)
+async def get_available_tags(
+    user: User = Depends(get_current_user_from_jwt),
+    db: AsyncSession = Depends(get_db),
+    bot_service: BotService = Depends(get_bot_service)
+):
+    """사용 가능한 태그 목록 조회"""
+    logger.info(f"태그 목록 조회: user={user.email}")
+
+    try:
+        tags = await bot_service.get_available_tags(user.id, db)
+        return tags
+
+    except Exception as e:
+        logger.error(f"태그 목록 조회 실패: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="태그 목록 조회 중 오류가 발생했습니다"
+        )
+
+
+@router.get(
+    "/health",
+    status_code=status.HTTP_200_OK,
+    summary="봇 서비스 헬스 체크"
+)
+async def bots_health_check():
+    """봇 서비스 헬스 체크"""
+    return {
+        "status": "healthy",
+        "service": "bots",
+        "message": "봇 서비스가 정상 작동 중입니다"
+    }
+
+
+@router.get(
     "/{bot_id}",
-    response_model=BotDetailResponse,  # 새로운 스키마 사용
+    response_model=BotDetailResponse,
     status_code=status.HTTP_200_OK,
     summary="봇 상세 조회 (명세서 준수)",
     description="""
@@ -208,7 +266,6 @@ async def get_bot(
     logger.info(f"봇 조회: bot_id={bot_id}, user={user.email}")
 
     try:
-        # 봇 조회 (workflow 포함)
         bot = await bot_service.get_bot_by_id(bot_id, user.id, db, include_workflow=True)
 
         if not bot:
@@ -222,7 +279,6 @@ async def get_bot(
                 }
             )
 
-        # 명세서 준수 응답 변환
         return BotDetailResponse.from_bot(bot)
 
     except HTTPException:
@@ -543,17 +599,3 @@ async def delete_bot(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="봇 삭제 중 오류가 발생했습니다"
         )
-
-
-@router.get(
-    "/health",
-    status_code=status.HTTP_200_OK,
-    summary="봇 서비스 헬스 체크"
-)
-async def bots_health_check():
-    """봇 서비스 헬스 체크"""
-    return {
-        "status": "healthy",
-        "service": "bots",
-        "message": "봇 서비스가 정상 작동 중입니다"
-    }

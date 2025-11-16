@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func, update, delete
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.models.bot import Bot, BotKnowledge, BotStatus
+from app.models.bot import Bot, BotKnowledge, BotStatus, BotCategory
 from app.models.document_embeddings import DocumentEmbedding
 from app.schemas.bot import (
     CreateBotRequest,
@@ -390,7 +390,9 @@ class BotService:
                 workflow=workflow_dict,
                 status=BotStatus.ACTIVE,
                 messages_count=0,
-                errors_count=0
+                errors_count=0,
+                category=request.category if request.category else BotCategory.WORKFLOW,
+                tags=request.tags if request.tags else []
             )
 
             db.add(bot)
@@ -597,7 +599,10 @@ class BotService:
         page: int = 1,
         limit: int = 10,
         sort: str = "updated_at:desc",
-        search: Optional[str] = None
+        search: Optional[str] = None,
+        category: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        only_mine: bool = False,
     ) -> Tuple[List[Bot], int]:
         """
         페이지네이션과 검색을 지원하는 Bot 목록 조회
@@ -609,12 +614,36 @@ class BotService:
             limit: 페이지당 항목 수
             sort: 정렬 기준 (field:asc/desc)
             search: 검색어
+            category: 봇 카테고리 필터
+            tags: 태그 필터 (하나라도 일치하면 포함)
 
         Returns:
             (봇 목록, 전체 개수) 튜플
         """
         # 기본 쿼리
-        query = select(Bot).where(Bot.user_id == user_id)
+        query = select(Bot)
+
+        if only_mine:
+            query = query.where(Bot.user_id == user_id)
+
+        # 카테고리 필터
+        if category:
+            from app.models.bot import BotCategory
+            try:
+                category_enum = BotCategory(category)
+                query = query.where(Bot.category == category_enum)
+            except ValueError:
+                logger.warning(f"유효하지 않은 카테고리: {category}")
+
+        # 태그 필터 (PostgreSQL JSON 컬럼 쿼리)
+        if tags:
+            # tags 배열의 각 태그에 대해 OR 조건으로 검색
+            tag_conditions = []
+            for tag in tags:
+                # PostgreSQL의 JSONB contains 연산자 사용
+                tag_conditions.append(Bot.tags.contains([tag]))
+            if tag_conditions:
+                query = query.where(or_(*tag_conditions))
 
         # 검색 필터 (이름과 설명으로 검색)
         if search:
@@ -625,15 +654,39 @@ class BotService:
                 )
             )
 
-        # 전체 개수 조회
-        count_result = await db.execute(
-            select(func.count()).select_from(Bot).where(Bot.user_id == user_id).where(
+        # 전체 개수 조회 (동일한 필터 적용)
+        count_query = select(func.count()).select_from(Bot)
+
+        if only_mine:
+            count_query = count_query.where(Bot.user_id == user_id)
+
+        # 카테고리 필터 적용
+        if category:
+            from app.models.bot import BotCategory
+            try:
+                category_enum = BotCategory(category)
+                count_query = count_query.where(Bot.category == category_enum)
+            except ValueError:
+                pass
+
+        # 태그 필터 적용
+        if tags:
+            tag_conditions = []
+            for tag in tags:
+                tag_conditions.append(Bot.tags.contains([tag]))
+            if tag_conditions:
+                count_query = count_query.where(or_(*tag_conditions))
+
+        # 검색 필터 적용
+        if search:
+            count_query = count_query.where(
                 or_(
                     Bot.name.ilike(f"%{search}%"),
                     Bot.description.ilike(f"%{search}%")
-                ) if search else True
+                )
             )
-        )
+
+        count_result = await db.execute(count_query)
         total = count_result.scalar()
 
         # 정렬 처리
@@ -667,6 +720,38 @@ class BotService:
         logger.info(f"사용자 {user_id}의 봇 페이지네이션 조회: page={page}, limit={limit}, total={total}")
 
         return list(bots), total
+
+    async def get_available_tags(
+        self,
+        user_id: int,
+        db: AsyncSession
+    ) -> List[str]:
+        """
+        사용자의 모든 봇에서 사용된 태그 목록 조회
+
+        Args:
+            user_id: 사용자 ID
+            db: 데이터베이스 세션
+
+        Returns:
+            중복 제거된 태그 목록 (알파벳 순 정렬)
+        """
+        # 사용자의 모든 봇 조회
+        result = await db.execute(
+            select(Bot.tags).where(Bot.user_id == user_id)
+        )
+        all_tags_lists = result.scalars().all()
+
+        # 모든 태그를 하나의 집합으로 병합 (중복 제거)
+        unique_tags = set()
+        for tags_list in all_tags_lists:
+            if tags_list:
+                unique_tags.update(tags_list)
+
+        # 알파벳 순으로 정렬하여 반환
+        sorted_tags = sorted(list(unique_tags))
+        logger.info(f"사용자 {user_id}의 사용 가능한 태그 {len(sorted_tags)}개 조회")
+        return sorted_tags
 
     async def get_bot_by_id(
         self,
@@ -736,6 +821,15 @@ class BotService:
         for field, value in update_data.items():
             if field == "status":
                 setattr(bot, field, BotStatus(value))
+            elif field == "category" and value is not None:
+                # BotCategory enum으로 변환
+                if isinstance(value, str):
+                    setattr(bot, field, BotCategory(value))
+                else:
+                    setattr(bot, field, value)
+            elif field == "tags" and value is not None:
+                # 태그 배열 저장
+                setattr(bot, field, value if isinstance(value, list) else [])
             elif field == "goal" and value is not None:
                 previous_goal = bot.goal
                 previous_description = bot.description

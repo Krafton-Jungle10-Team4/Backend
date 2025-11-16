@@ -7,6 +7,7 @@ from enum import Enum
 import json
 
 from app.schemas.workflow import Workflow
+from app.models.bot import BotCategory
 
 # 사용자 정의 Goal 입력 타입 (자유 텍스트 허용)
 GoalText = Annotated[str, Field(min_length=1, max_length=500)]
@@ -48,6 +49,8 @@ class CreateBotRequest(BaseModel):
         description="Setup 단계에서 사용한 임시 봇/세션 ID (session_... 형식)"
     )
     workflow: Optional[Workflow] = Field(None, description="Workflow 정의")
+    category: Optional[BotCategory] = Field(default=BotCategory.WORKFLOW, description="봇 카테고리")
+    tags: List[str] = Field(default_factory=list, max_items=10, description="봇 태그 배열")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -191,6 +194,8 @@ class UpdateBotRequestPatch(BaseModel):
     personality: Optional[str] = Field(None, max_length=2000, description="봇의 성격/어조")
     knowledge: Optional[List[str]] = Field(None, description="문서 ID 배열 (기존 지식 전체 대체)")
     workflow: Optional[Workflow] = Field(None, description="Workflow 정의")
+    category: Optional[BotCategory] = Field(None, description="봇 카테고리")
+    tags: Optional[List[str]] = Field(None, max_items=10, description="봇 태그 배열")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -234,6 +239,9 @@ class BotListItemResponse(BaseModel):
     isActive: bool = Field(..., description="활성화 상태")
     nodeCount: int = Field(..., description="Workflow 노드 개수")
     edgeCount: int = Field(..., description="Workflow 엣지 개수")
+    category: str = Field(..., description="봇 카테고리")
+    tags: List[str] = Field(default_factory=list, description="봇 태그")
+    createdBy: int = Field(..., description="생성자 user_id")
     createdAt: datetime = Field(..., description="생성 시간")
     updatedAt: Optional[datetime] = Field(None, description="수정 시간")
 
@@ -261,6 +269,9 @@ class BotListItemResponse(BaseModel):
             isActive=(bot.status.value == "active"),
             nodeCount=node_count,
             edgeCount=edge_count,
+            category=bot.category.value,
+            tags=bot.tags if bot.tags else [],
+            createdBy=bot.user_id,
             createdAt=bot.created_at,
             updatedAt=bot.updated_at
         )
@@ -337,6 +348,9 @@ class BotDetailResponse(BaseModel):
                 "name": bot.name,
                 "description": bot.description,
                 "isActive": bot.status.value == "active",
+                "category": bot.category.value,
+                "tags": bot.tags if bot.tags else [],
+                "createdBy": bot.user_id,
                 "createdAt": bot.created_at.isoformat() + "Z",
                 "updatedAt": bot.updated_at.isoformat() + "Z" if bot.updated_at else None,
                 "workflow": workflow_dict
@@ -353,6 +367,8 @@ class CreateBotRequestV2(BaseModel):
         default=None,
         description="Setup 단계에서 사용한 임시 봇/세션 ID (session_... 형식)"
     )
+    category: Optional[BotCategory] = Field(default=BotCategory.WORKFLOW, description="봇 카테고리")
+    tags: List[str] = Field(default_factory=list, max_items=10, description="봇 태그 배열")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -377,6 +393,8 @@ class UpdateBotRequestV2(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100, description="봇 이름")
     description: Optional[str] = Field(None, description="봇 설명")
     workflow: Optional[Dict[str, Any]] = Field(None, description="Workflow 정의")
+    category: Optional[BotCategory] = Field(None, description="봇 카테고리")
+    tags: Optional[List[str]] = Field(None, max_items=10, description="봇 태그 배열")
 
     model_config = ConfigDict(
         json_schema_extra={
