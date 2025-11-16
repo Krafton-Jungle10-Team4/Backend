@@ -143,6 +143,45 @@ class LLMNodeV2(BaseNodeV2):
                 logger.info(f"[LLMNodeV2] 프롬프트 템플릿 사용: {len(prompt_template)} chars")
                 logger.debug(f"[LLMNodeV2] 프롬프트 템플릿 내용: {prompt_template[:200]}...")
                 
+                # {{ }} 형식의 변수가 있는지 확인
+                parser = VariableTemplateParser(prompt_template)
+                has_double_brace_vars = len(parser.extract_variable_selectors()) > 0
+                
+                # 단순 { } 형식의 변수가 있는지 확인 (query, context, system_prompt 등)
+                has_simple_vars = bool(re.search(r'\{query\}|\{context\}|\{system_prompt\}|\{question\}', prompt_template))
+                
+                if has_double_brace_vars:
+                    # {{ }} 형식의 변수가 있으면 TemplateRenderer 사용
+                    logger.debug("[LLMNodeV2] {{ }} 형식의 변수 감지, TemplateRenderer 사용")
+                    prompt_group = self._render_template_with_variable_pool(
+                        template=prompt_template,
+                        context=context,
+                    )
+                    prompt = prompt_group.text
+                    
+                    # 단순 { } 형식의 변수도 있으면 추가로 처리
+                    if has_simple_vars:
+                        logger.debug("[LLMNodeV2] 단순 { } 형식의 변수도 감지, 추가 치환 수행")
+                        prompt = self._render_prompt(
+                            template=prompt,
+                            query=query,
+                            context=context_text,
+                            system_prompt=system_prompt
+                        )
+                elif has_simple_vars:
+                    # 단순 { } 형식의 변수만 있으면 _render_prompt 사용
+                    logger.debug("[LLMNodeV2] 단순 { } 형식의 변수만 감지, _render_prompt 사용")
+                    prompt = self._render_prompt(
+                        template=prompt_template,
+                        query=query,
+                        context=context_text,
+                        system_prompt=system_prompt
+                    )
+                else:
+                    # 변수가 없으면 템플릿 그대로 사용
+                    logger.debug("[LLMNodeV2] 템플릿에 변수가 없음, 그대로 사용")
+                    prompt = prompt_template
+                
                 # context 변수가 템플릿에 포함되어 있는지 확인
                 has_context_var = "context" in prompt_template.lower() or any(
                     "context" in str(selector).lower() 
@@ -156,12 +195,6 @@ class LLMNodeV2(BaseNodeV2):
                         f"context 길이: {len(context_text)} chars. "
                         f"템플릿에 {{{{1763265553497.context}}}} 또는 context 변수를 추가하세요."
                     )
-                
-                prompt_group = self._render_template_with_variable_pool(
-                    template=prompt_template,
-                    context=context,
-                )
-                prompt = prompt_group.text
                 
                 # 렌더링 결과 로깅
                 logger.debug(
