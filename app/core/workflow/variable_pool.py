@@ -96,6 +96,15 @@ class VariablePool:
 
         value = node_data.get(port_name)
         if value is None:
+            # TavilySearchNodeV2의 경우: answer 포트가 없으면 context로 fallback
+            # (include_answer=false일 때 answer 포트가 없지만 context는 항상 존재)
+            if port_name == "answer" and "context" in node_data:
+                logger.info(
+                    f"Port 'answer' not found in node {node_id}, "
+                    f"falling back to 'context' port"
+                )
+                return node_data.get("context")
+            
             logger.warning(f"Port {port_name} not found in node {node_id}")
 
         return value

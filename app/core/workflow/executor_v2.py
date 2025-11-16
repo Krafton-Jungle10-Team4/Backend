@@ -676,15 +676,11 @@ class WorkflowExecutorV2:
                 self.execution_run.error_message = error_message
 
             # 캐시된 노드 실행 기록들을 DB에 저장
+            # node_executions 관계에 접근하지 않고 db.add()만 사용 (비동기 컨텍스트 문제 방지)
             if self._node_executions_cache:
                 for node_exec in self._node_executions_cache:
+                    # workflow_run_id는 이미 설정되어 있으므로 관계 접근 불필요
                     db.add(node_exec)
-                # node_executions 관계에 추가 (비동기 컨텍스트에서 안전하게)
-                if hasattr(self.execution_run, 'node_executions'):
-                    self.execution_run.node_executions.extend(self._node_executions_cache)
-                else:
-                    # 관계가 아직 로드되지 않은 경우 직접 설정
-                    self.execution_run.node_executions = self._node_executions_cache
 
             # 토큰 합계 계산 (노드 실행 기록에서)
             total_tokens = sum(
