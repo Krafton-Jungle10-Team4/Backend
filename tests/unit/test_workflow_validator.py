@@ -1,6 +1,9 @@
 """WorkflowValidator 관련 단위 테스트"""
 
+import copy
+
 from app.core.workflow.validator import WorkflowValidator
+from tests.data.workflow_v2_feedback_graph import FEEDBACK_WORKFLOW_GRAPH
 
 
 def test_validator_normalizes_placeholder_ports_and_mappings():
@@ -203,3 +206,45 @@ def test_validator_converts_conversation_edges_to_variable_mappings():
     node_map = {node["id"]: node for node in nodes}
     assert node_map["llm-1"]["variable_mappings"]["query"] == "start-1.query"
     assert node_map["llm-1"]["variable_mappings"]["context"] == "conversation.summary"
+
+
+def test_feedback_plan_graph_matches_validator_contract():
+    """workflow_v2_current_plan.md에 정의된 피드백 플로우가 유효한지 확인한다"""
+    validator = WorkflowValidator()
+
+    nodes = copy.deepcopy(FEEDBACK_WORKFLOW_GRAPH["nodes"])
+    edges = copy.deepcopy(FEEDBACK_WORKFLOW_GRAPH["edges"])
+
+    is_valid, errors, warnings = validator.validate(nodes, edges)
+
+    assert is_valid, f"plan graph should be valid, got errors: {errors}"
+    assert errors == []
+    assert warnings == []
+
+    node_map = {node["id"]: node for node in nodes}
+    assigner_initial = node_map["assigner-initial"]
+    assert assigner_initial["variable_mappings"]["operation_0_target"] == "conversation.latest_summary"
+    assert assigner_initial["variable_mappings"]["operation_1_target"] == "conversation.pending_response"
+    assert assigner_initial["variable_mappings"]["operation_3_value"] == "start-1.query"
+
+    assigner_repeat = node_map["assigner-repeat"]
+    assert assigner_repeat["variable_mappings"]["operation_3_value"] == "system.user_message"
+
+    assigner_complete = node_map["assigner-complete"]
+    assert assigner_complete["variable_mappings"]["operation_0_value"] == "llm-sns.response"
+
+    answer_node = node_map["answer-1"]
+    assert answer_node["data"]["template"].strip() == "{{ conversation.pending_response }}"
+    assert any(
+        edge["source"] == "answer-1" and edge["target"] == "end-1" for edge in edges
+    ), "Answer must feed End per validator contract"
+
+    required_conv_keys = [
+        "feedback_stage",
+        "pending_response",
+        "latest_summary",
+        "last_query",
+        "last_feedback",
+    ]
+    for key in required_conv_keys:
+        assert key in FEEDBACK_WORKFLOW_GRAPH["conversation_variables"]

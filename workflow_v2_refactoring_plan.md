@@ -34,6 +34,53 @@ User Message → WorkflowExecutor → [Start → Knowledge → LLM → End] → 
 
 ---
 
+## Dify 워크플로우 이식 현황 점검
+
+### 확인된 문제 상황
+
+1. **Validator 오류**  
+   Dify 그래프를 그대로 옮기면서 Assigner 입력 포트 매핑(operation_0_value 등)이 빠져 `operation_0_value` 누락 오류가 발생합니다. `app/core/workflow/nodes_v2/assigner_node_v2.py`는 값 입력이 없으면 즉시 예외를 던지므로 그래프 저장 및 실행이 모두 차단됩니다.
+2. **구조 제약 불일치**  
+   V2 Validator(`app/core/workflow/validator.py:447-520`)는 단일 Answer → End 체인을 강제하지만, 현재 그래프는 브랜치마다 Answer 노드를 두거나 End 노드에 연결되지 않은 상태입니다. 그 결과 검증 단계에서 구조 오류가 연쇄적으로 발생합니다.
+3. **상태 유지 미비**  
+   Dify는 노드별 대화 변수를 자동 보관하지만 V2 엔진에서는 `conv.*` 셀렉터를 명시적으로 관리해야 합니다. `feedback_stage`, `pending_response`, `latest_summary`, `last_query`, `last_feedback` 같은 키가 정의되어 있지 않고 Assigner가 대화 변수와 동기화하지 않기 때문에 다음 턴의 분기 조건을 평가할 수 없습니다.
+
+위 세 가지 문제를 명시하고, 아래 Phase별 계획을 따르면 “문제 상황 + 해결 계획”이 쌍을 이룹니다.
+
+## Phase별 이식 로드맵
+
+### Phase 1 – 상태 관리 기반 구축
+
+- Workflow JSON의 `conversation_variables`에 `feedback_stage`, `pending_response`, `latest_summary`, `last_query`, `last_feedback` 등 기본값을 정의한다.
+- StartNodeV2 → IfElseNodeV2 경로의 `variable_mappings`를 초안화하고, IfElse 케이스 조건은 `conv.feedback_stage`가 비어 있는지 검사하도록 맞춘다.
+- Assigner 노드의 operation별 `write_mode`, `input_type`, `constant_value`를 확정하고 `operation_i_target/operation_i_value` 포트가 실제 셀렉터(`conv.*` 또는 `start-1.*`)에 연결되도록 설계한다.
+
+### Phase 2 – 최초 요청 및 재검색 파이프라인
+
+- Case #1 브랜치에 Tavily Search → LLM 요약 체인을 배치하고, `query` 포트는 `start-1.query`와 매핑하며, LLM `context`는 Tavily의 `context` 출력으로 연결한다.
+- 요약 후 Assigner가 `conv.latest_summary`, `conv.pending_response`(“요약 + 마음에 드셨나요?” 템플릿), `conv.feedback_stage="wait_feedback"`, `conv.last_query` 등을 갱신하도록 구성한다.
+- 재검색 브랜치에서 공통으로 쓰는 LLM 템플릿이나 Tavily 구성을 모듈화/복제해 와이어링을 정리한다.
+
+### Phase 3 – 피드백 분류 및 분기 로직
+
+- ELSE 브랜치에 QuestionClassifierNodeV2를 배치하고 class 구성을 “마음에 듦/들지 않음”으로 정의하며 필요하면 프롬프트 지침을 넣는다.
+- `class_<id>_branch` 핸들을 통해 두 개의 출력 엣지를 만들고, “들지 않음” 브랜치는 Phase 2의 Tavily → LLM → Assigner 체인을 재호출해 `conv.feedback_stage`를 유지한다.
+- “마음에 듦” 브랜치는 SNS 변환용 LLM을 추가하고 `conv.feedback_stage`를 `""` 혹은 `"done"`으로 전환해 루프를 종료한다. 동시에 사용자 피드백 텍스트를 `conv.last_feedback`에 저장해 후속 응답에서 참조한다.
+
+### Phase 4 – 응답 수렴 및 Validator 대응
+
+- 모든 브랜치에서 `conv.pending_response`가 최신 응답을 담도록 보장한다.
+- AnswerNodeV2는 템플릿을 `{{conv.pending_response}}`로 고정하고 End 노드 입력에 연결한다. SNS LLM → Assigner → Answer 순으로 흐름을 모아서 단일 Answer → End 체인을 유지한다.
+- Validator 요구사항(Answer→End 연결, 필수 포트 매핑, Assigner 입력 누락 없음)을 만족하도록 노드별 `variable_mappings`와 엣지의 `source_port/target_port`를 재검토한다.
+
+### Phase 5 – 통합 테스트 및 상태 검증
+
+- 시나리오 테스트를 작성해 ① 첫 질문 → 요약 + 피드백 질문, ② “마음에 안 듦” → 재검색, ③ “마음에 듦” → SNS 변환을 검증하고, 각 턴마다 `conversation_variables` 변화를 로깅한다.
+- 실제 DB(`conversation_variables` 테이블)에 값이 저장되는지 확인하고 세션 재요청 시 IF/ELSE 분기가 기대대로 동작하는지 점검한다.
+- Tavily/LLM 실패 시 `conv.pending_response`에 대체 응답을 넣는 fallback Assigner를 마련하거나 워크플로우 차원의 예외 메시지 전달 정책을 수립한다.
+
+---
+
 ## 리팩토링 1단계: 스키마 강화 (1-2주)
 
 ### 목표
