@@ -61,7 +61,8 @@ class WorkflowExecutorV2:
         vector_service: Optional[VectorService] = None,
         llm_service: Optional[LLMService] = None,
         stream_handler: Optional[Any] = None,
-        text_normalizer: Optional[Callable[[str], str]] = None
+        text_normalizer: Optional[Callable[[str], str]] = None,
+        initial_node_outputs: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> str:
         """
         V2 워크플로우 실행
@@ -76,6 +77,7 @@ class WorkflowExecutorV2:
             llm_service: LLM 서비스
             stream_handler: 스트림 핸들러
             text_normalizer: 텍스트 정규화 함수
+            initial_node_outputs: 특정 노드/포트에 미리 주입할 값 (nested execution용)
 
         Returns:
             str: 최종 응답
@@ -114,6 +116,15 @@ class WorkflowExecutorV2:
                 environment_variables=environment_vars,
                 conversation_variables=merged_conversation_vars
             )
+
+            # 초기 노드 출력 주입 (nested execution 등)
+            if initial_node_outputs:
+                for node_id, ports in initial_node_outputs.items():
+                    if not node_id or not isinstance(ports, dict):
+                        continue
+                    for port_name, value in ports.items():
+                        if port_name:
+                            self.variable_pool.set_node_output(node_id, port_name, value)
 
             # 시스템 변수 설정
             self.variable_pool.set_system_variable("user_message", user_message)

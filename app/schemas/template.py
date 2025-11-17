@@ -131,7 +131,7 @@ class TemplateUsageCreate(BaseModel):
     workflow_id: str
     workflow_version_id: Optional[str] = None
     node_id: str
-    event_type: str = Field(default="imported", pattern="^(imported|executed)$")
+    event_type: str = Field(default="imported", pattern="^(imported|execution)$")
     note: Optional[str] = None
 
 
@@ -143,7 +143,7 @@ class TemplateUsageResponse(BaseModel):
     workflow_version_id: Optional[str] = None
     node_id: str
     user_id: str
-    event_type: str = Field(pattern="^(imported|executed)$")
+    event_type: str = Field(pattern="^(imported|execution)$")
     note: Optional[str] = None
     occurred_at: datetime
 
