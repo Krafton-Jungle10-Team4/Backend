@@ -54,6 +54,26 @@ class AnswerNodeV2(BaseNodeV2):
             ]
         )
 
+    def _compute_allowed_selectors(self, context: NodeExecutionContext) -> list[str]:
+        """
+        연결된 노드의 변수 셀렉터 목록 계산 (Answer 노드 전용)
+
+        템플릿 내부에서 사용되는 변수도 자동으로 허용 목록에 추가합니다.
+        """
+        from app.core.workflow.nodes_v2.utils.variable_template_parser import VariableTemplateParser
+
+        # 기본 allowed_selectors (variable_mappings 기반)
+        allowed = super()._compute_allowed_selectors(context)
+
+        # 템플릿에서 사용된 변수 추출하여 추가
+        if self.template:
+            parser = VariableTemplateParser(self.template)
+            template_selectors = parser.extract_variable_selectors()
+            allowed.extend(template_selectors)
+
+        logger.info(f"🔍 AnswerNodeV2 {self.node_id} allowed selectors: {allowed}")
+        return allowed
+
     async def execute_v2(self, context: NodeExecutionContext) -> Dict[str, Any]:
         """
         템플릿을 렌더링하여 최종 응답 생성.
@@ -64,10 +84,34 @@ class AnswerNodeV2(BaseNodeV2):
 
         start_time = time.time()
 
-        # 템플릿 렌더링
+        # 연결된 노드의 변수만 허용하도록 셀렉터 목록 계산
+        # 템플릿 내부 변수도 자동으로 포함됨
+        allowed_selectors = self._compute_allowed_selectors(context)
+
+        logger.info(f"🎨 AnswerNodeV2 템플릿: {self.template[:100]}...")
+        logger.info(f"🔑 allowed_selectors: {allowed_selectors}")
+
+        # VariablePool에 실제로 값이 있는지 확인
+        for selector in allowed_selectors:
+            if selector.startswith("self."):
+                continue
+            try:
+                parts = selector.split(".")
+                if len(parts) == 2:
+                    node_id, port_name = parts
+                    if context.variable_pool.has_node_output(node_id, port_name):
+                        value = context.variable_pool.get_node_output(node_id, port_name)
+                        logger.info(f"✅ VariablePool에 {selector} 존재: {str(value)[:100]}...")
+                    else:
+                        logger.warning(f"❌ VariablePool에 {selector} 없음!")
+            except Exception as e:
+                logger.error(f"❌ {selector} 확인 중 에러: {e}")
+
+        # 템플릿 렌더링 (연결 검증 포함)
         rendered_group, metadata = TemplateRenderer.render(
             self.template,
-            context.variable_pool
+            context.variable_pool,
+            allowed_selectors=allowed_selectors
         )
 
         # 실행 시간 메타데이터는 context.metadata에 저장하여

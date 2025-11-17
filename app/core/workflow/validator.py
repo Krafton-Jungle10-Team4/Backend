@@ -87,6 +87,7 @@ class WorkflowValidator:
             self._validate_v2_connections(nodes, edges)
             self._validate_v2_schema(nodes, edges, node_map)
             self._validate_branch_convergence(nodes, edges, node_map)
+            self._validate_template_variable_connectivity(nodes, edges, node_map)
 
         is_valid = len(self.errors) == 0
         return is_valid, self.errors, self.warnings
@@ -914,31 +915,122 @@ class WorkflowValidator:
     ) -> set:
         """
         시작 노드들로부터 도달 가능한 모든 다운스트림 노드 수집 (BFS)
-        
+
         Args:
             start_nodes: 시작 노드 ID 집합
             edges_by_source: source별 엣지 맵
             node_map: 노드 맵
-            
+
         Returns:
             다운스트림 노드 ID 집합
         """
         visited = set()
         queue = deque(start_nodes)
-        
+
         while queue:
             current = queue.popleft()
-            
+
             if current in visited or current not in node_map:
                 continue
-            
+
             visited.add(current)
-            
+
             # 이 노드의 outgoing 엣지들
             for edge in edges_by_source.get(current, []):
                 target = edge.get("target")
                 if target and target not in visited and not self._resolve_special_prefix(target):
                     queue.append(target)
-        
+
         # 시작 노드들은 제외
         return visited - start_nodes
+
+    def _validate_template_variable_connectivity(
+        self,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]],
+        node_map: Dict[str, Dict]
+    ) -> None:
+        """
+        템플릿 변수 참조가 연결된 노드의 출력만 사용하는지 검증
+
+        Answer, LLM, Assigner 노드의 템플릿이나 variable_mappings에서
+        참조하는 변수가 실제로 엣지로 연결된 노드에서 나오는지 확인합니다.
+        """
+        # 노드별 incoming edges 맵 생성
+        incoming_edges: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for edge in edges:
+            target = edge.get("target")
+            if target:
+                incoming_edges[target].append(edge)
+
+        # 템플릿을 사용하는 노드 타입
+        template_node_types = {"answer", "llm"}
+
+        for node in nodes:
+            node_id = node.get("id")
+            node_data = node.get("data", {})
+            node_type = node_data.get("type")
+
+            if not node_id or not node_type:
+                continue
+
+            # Answer 및 LLM 노드의 템플릿 변수 검증
+            if node_type in template_node_types:
+                template = node_data.get("template") or node_data.get("prompt_template")
+                if not template:
+                    continue
+
+                try:
+                    # 템플릿에서 변수 추출
+                    variable_selectors = TemplateRenderer.parse_template(template)
+                except TemplateRenderError:
+                    # 템플릿 파싱 오류는 이미 다른 검증에서 처리됨
+                    continue
+
+                # variable_mappings에서 허용된 셀렉터 계산
+                variable_mappings = node.get("variable_mappings") or {}
+                allowed_selectors = set()
+
+                # variable_mappings의 모든 소스 셀렉터 수집
+                for port_name, mapping in variable_mappings.items():
+                    selector = self._extract_selector(mapping)
+                    if selector:
+                        allowed_selectors.add(selector)
+
+                # 자기 자신의 입력 포트도 허용 (self.port_name 형식)
+                port_map = self._resolve_port_map(node)
+                for input_port in port_map.get("inputs", {}).keys():
+                    allowed_selectors.add(f"self.{input_port}")
+
+                # 템플릿 변수가 허용된 셀렉터에 있는지 확인
+                for var_selector in variable_selectors:
+                    # 특수 프리픽스는 항상 허용
+                    if var_selector.startswith(("env.", "conv.", "conversation.", "sys.")):
+                        continue
+
+                    # self. 프리픽스 정규화
+                    if var_selector in allowed_selectors:
+                        continue
+
+                    # 노드.포트 형식 분해
+                    parts = var_selector.split(".", 1)
+                    if len(parts) != 2:
+                        self.errors.append(
+                            f"노드 '{node_id}'의 템플릿 변수 '{var_selector}' 형식이 잘못되었습니다"
+                        )
+                        continue
+
+                    source_node, source_port = parts
+
+                    # 소스 노드가 현재 노드와 연결되어 있는지 확인
+                    is_connected = any(
+                        edge.get("source") == source_node and edge.get("target") == node_id
+                        for edge in edges
+                    )
+
+                    if not is_connected:
+                        self.errors.append(
+                            f"노드 '{node_id}'의 템플릿 변수 '{var_selector}'는 "
+                            f"연결되지 않은 노드 '{source_node}'를 참조합니다. "
+                            f"워크플로우 에디터에서 노드를 연결해주세요."
+                        )

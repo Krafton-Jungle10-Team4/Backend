@@ -117,6 +117,28 @@ class AssignerNodeV2(BaseNodeV2):
         Returns:
             출력 포트별 값 딕셔너리
         """
+        # 연결된 노드의 변수만 허용하도록 셀렉터 목록 계산
+        allowed_selectors = self._compute_allowed_selectors(context)
+
+        # variable_mappings의 모든 셀렉터가 허용된 것인지 검증
+        for port_name, mapping in self.variable_mappings.items():
+            selector = None
+            if isinstance(mapping, str):
+                selector = mapping
+            elif isinstance(mapping, dict):
+                selector = mapping.get("variable")
+                if not selector:
+                    source = mapping.get("source") or {}
+                    selector = source.get("variable")
+
+            # conversation 변수는 특별히 허용 (전역 변수)
+            if selector and not selector.lower().startswith(("conv.", "conversation.")):
+                if selector not in allowed_selectors:
+                    raise ValueError(
+                        f"포트 '{port_name}'의 변수 '{selector}'는 연결되지 않은 노드의 출력입니다. "
+                        f"워크플로우 에디터에서 해당 노드를 연결해주세요."
+                    )
+
         outputs: Dict[str, Any] = {}
 
         for i, operation in enumerate(self.operations):

@@ -314,6 +314,39 @@ class BaseNodeV2(ABC):
         """출력 포트 존재 여부"""
         return port_name in self.get_output_port_names()
 
+    def _compute_allowed_selectors(self, context: NodeExecutionContext) -> List[str]:
+        """
+        연결된 노드의 변수 셀렉터 목록을 계산
+
+        variable_mappings에서 모든 소스 셀렉터를 추출하여
+        이 노드가 접근 가능한 변수 목록을 반환합니다.
+
+        Args:
+            context: 실행 컨텍스트
+
+        Returns:
+            List[str]: 허용된 변수 셀렉터 목록 (예: ["start.query", "llm_1.response"])
+        """
+        allowed = []
+
+        for port_name, selector in self.variable_mappings.items():
+            if selector:
+                # selector는 "node_id.port_name" 형식의 문자열 또는 딕셔너리일 수 있음
+                if isinstance(selector, str):
+                    allowed.append(selector)
+                elif isinstance(selector, dict):
+                    # 딕셔너리 형식인 경우 (예: {"variable": "node_id.port_name"})
+                    var_selector = selector.get("variable")
+                    if var_selector:
+                        allowed.append(var_selector)
+
+        # 자기 자신의 입력 포트도 허용 (self.port_name 형식)
+        for port_name in self.get_input_port_names():
+            allowed.append(f"self.{port_name}")
+
+        logger.debug(f"Node {self.node_id} allowed selectors: {allowed}")
+        return allowed
+
     def to_dict(self) -> Dict[str, Any]:
         """
         노드를 딕셔너리로 변환

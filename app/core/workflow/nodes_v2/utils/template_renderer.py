@@ -6,7 +6,7 @@ Dify 호환 템플릿 문법을 지원하는 렌더링 엔진입니다.
 """
 
 import json
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import logging
 
 from app.core.workflow.variable_pool import VariablePool
@@ -129,9 +129,24 @@ class TemplateRenderer:
         return selectors
 
     @staticmethod
-    def render(template: str, variable_pool: VariablePool) -> Tuple[SegmentGroup, Dict[str, Any]]:
+    def render(
+        template: str,
+        variable_pool: VariablePool,
+        allowed_selectors: Optional[List[str]] = None
+    ) -> Tuple[SegmentGroup, Dict[str, Any]]:
         """
         템플릿을 렌더링하여 변수를 실제 값으로 치환
+
+        Args:
+            template: 렌더링할 템플릿 문자열
+            variable_pool: 변수 저장소
+            allowed_selectors: 허용된 변수 셀렉터 목록 (None이면 모든 변수 허용)
+
+        Returns:
+            Tuple[SegmentGroup, Dict[str, Any]]: 렌더링된 세그먼트 그룹과 메타데이터
+
+        Raises:
+            TemplateRenderError: 템플릿이 비어있거나, 허용되지 않은 변수를 참조할 때
         """
         if not template or template.strip() == "":
             raise TemplateRenderError("템플릿이 비어있습니다")
@@ -153,6 +168,13 @@ class TemplateRenderer:
                 literal_text = template[last_index:match.start]
                 if literal_text:
                     segments.append(Segment.literal(literal_text))
+
+            # 변수 연결 검증
+            if allowed_selectors is not None and match.selector not in allowed_selectors:
+                raise TemplateRenderError(
+                    f"변수 '{match.selector}'는 연결되지 않은 노드의 출력입니다. "
+                    f"워크플로우 에디터에서 해당 노드를 연결해주세요."
+                )
 
             value = variable_pool.resolve_value_selector(match.selector)
             if value is None:

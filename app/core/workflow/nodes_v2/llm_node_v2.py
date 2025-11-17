@@ -350,7 +350,7 @@ class LLMNodeV2(BaseNodeV2):
     ):
         """
         TemplateRenderer를 사용해 {{ }} 템플릿을 렌더링한다.
-        
+
         단순 포트 이름(query, context 등)을 노드 ID 없이 사용할 수 있도록
         {{ context }} → {{ self.context }}로 자동 변환합니다.
         """
@@ -359,12 +359,12 @@ class LLMNodeV2(BaseNodeV2):
             query = context.get_input("query")
             context_text = context.get_input("context") or ""
             system_prompt = context.get_input("system_prompt") or ""
-            
+
             # 임시 노드로 주입
             context.variable_pool.set_node_output("self", "query", query)
             context.variable_pool.set_node_output("self", "context", context_text)
             context.variable_pool.set_node_output("self", "system_prompt", system_prompt)
-            
+
             # 단순 포트 이름을 self. prefix로 자동 변환
             # {{ context }} → {{ self.context }}
             # {{ query }} → {{ self.query }}
@@ -376,13 +376,20 @@ class LLMNodeV2(BaseNodeV2):
                     f'{{{{ self.{port_name} }}}}',
                     template_processed
                 )
-            
+
             if template_processed != template:
                 logger.debug(f"[LLMNodeV2] 템플릿 자동 변환: 단순 포트 이름 → self.포트")
-            
+
+            # 연결된 노드의 변수만 허용하도록 셀렉터 목록 계산
+            allowed_selectors = self._compute_allowed_selectors(context)
+
             parser = VariableTemplateParser(template_processed)
             selectors = parser.extract_variable_selectors()
-            rendered_group, metadata = TemplateRenderer.render(template_processed, context.variable_pool)
+            rendered_group, metadata = TemplateRenderer.render(
+                template_processed,
+                context.variable_pool,
+                allowed_selectors=allowed_selectors
+            )
             metadata["selectors"] = selectors
             context.metadata.setdefault("llm_prompt", {})[self.node_id] = metadata
             return rendered_group
