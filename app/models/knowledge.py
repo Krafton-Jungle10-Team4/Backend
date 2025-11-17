@@ -7,7 +7,7 @@ class Knowledge(Base):
     __tablename__ = "knowledge"
 
     id = Column(String, primary_key=True, index=True)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     tags = Column(JSON, nullable=False, default=list)
