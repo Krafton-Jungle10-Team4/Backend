@@ -141,7 +141,7 @@ async def create_bot(
 async def get_bots(
     page: int = Query(1, ge=1, description="페이지 번호"),
     limit: int = Query(10, ge=1, le=100, description="페이지당 항목 수"),
-    sort: str = Query("updatedAt:desc", description="정렬 기준 (field:asc/desc)"),
+    sort: str = Query("createdAt:desc", description="정렬 기준 (field:asc/desc)"),
     search: Optional[str] = Query(None, description="검색어"),
     category: Optional[str] = Query(None, description="카테고리 필터"),
     tags: Optional[List[str]] = Query(None, description="태그 필터"),
