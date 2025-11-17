@@ -784,6 +784,38 @@ class WorkflowValidator:
 
         return execution_order
 
+    def _filter_branch_nodes(
+        self,
+        nodes: set,
+        node_map: Dict[str, Dict],
+        branch_node_types: set
+    ) -> set:
+        """
+        분기 노드를 제외한 일반 노드만 반환
+
+        Args:
+            nodes: 노드 ID 집합
+            node_map: 노드 맵
+            branch_node_types: 분기 노드 타입 집합
+
+        Returns:
+            분기 노드가 제외된 노드 ID 집합
+        """
+        filtered = set()
+        for node_id in nodes:
+            node = node_map.get(node_id)
+            if not node:
+                continue
+
+            # 노드 타입 확인
+            node_type = node.get("type") or node.get("data", {}).get("type")
+
+            # 분기 노드가 아닌 경우만 포함
+            if node_type not in branch_node_types:
+                filtered.add(node_id)
+
+        return filtered
+
     def _validate_branch_convergence(
         self,
         nodes: List[Dict[str, Any]],
@@ -791,39 +823,42 @@ class WorkflowValidator:
         node_map: Dict[str, Dict]
     ):
         """
-        분기 합류 검증
-        
+        분기 합류 검증 (개선된 버전)
+
         IF/ELSE 같은 조건부 분기 노드의 다른 분기들이 동일한 다운스트림 노드로
-        합류하는 경우를 감지합니다. 이는 의존성 계산 문제를 일으킬 수 있습니다.
-        
+        합류하는 경우를 감지합니다.
+
+        개선사항: 중간 분기 노드(question-classifier 등)의 공유는 허용하되,
+        일반 노드의 잘못된 합류는 감지합니다.
+
         Note: ExecutorV2에 조건부 의존성 해소 로직이 있으면 경고만 표시합니다.
         """
         # 분기 노드 찾기 (IfElse, QuestionClassifier 등)
         branch_node_types = {"if-else", "question-classifier"}
         branch_nodes = [
-            node for node in nodes 
-            if node.get("type") in branch_node_types or 
+            node for node in nodes
+            if node.get("type") in branch_node_types or
                node.get("data", {}).get("type") in branch_node_types
         ]
-        
+
         if not branch_nodes:
             return
-        
+
         # 엣지 매핑 생성
         edges_by_source = defaultdict(list)
         for edge in edges:
             source = edge.get("source")
             if source and not self._resolve_special_prefix(source):
                 edges_by_source[source].append(edge)
-        
+
         # 각 분기 노드 검증
         for branch_node in branch_nodes:
             node_id = branch_node["id"]
             outgoing_edges = edges_by_source.get(node_id, [])
-            
+
             if len(outgoing_edges) < 2:
                 continue  # 분기가 아님
-            
+
             # 각 분기별로 타겟 노드 그룹화
             branches = defaultdict(list)
             for edge in outgoing_edges:
@@ -831,10 +866,10 @@ class WorkflowValidator:
                 target = edge.get("target")
                 if target:
                     branches[source_port].append(target)
-            
+
             if len(branches) < 2:
                 continue  # 단일 분기만 있음
-            
+
             # 각 분기의 다운스트림 노드들 수집
             branch_streams = {}
             for branch_name, targets in branches.items():
@@ -843,23 +878,30 @@ class WorkflowValidator:
                     edges_by_source,
                     node_map
                 )
-                branch_streams[branch_name] = downstream
-            
-            # 분기 간 교집합 확인
+                # 핵심: 분기 노드를 필터링한 다운스트림만 비교
+                filtered_downstream = self._filter_branch_nodes(
+                    downstream,
+                    node_map,
+                    branch_node_types
+                )
+                branch_streams[branch_name] = filtered_downstream
+
+            # 분기 간 교집합 확인 (분기 노드 제외)
             branch_names = list(branch_streams.keys())
             for i in range(len(branch_names)):
                 for j in range(i + 1, len(branch_names)):
                     branch_a = branch_names[i]
                     branch_b = branch_names[j]
-                    
+
+                    # 일반 노드만 비교
                     converging = branch_streams[branch_a] & branch_streams[branch_b]
-                    
+
                     if converging:
                         # ExecutorV2가 자동으로 처리하므로 경고만 표시
                         converging_list = list(converging)[:3]  # 최대 3개만 표시
                         self.warnings.append(
                             f"분기 노드 '{node_id}'의 분기 '{branch_a}'와 '{branch_b}'가 "
-                            f"동일한 노드로 합류합니다: {converging_list}{'...' if len(converging) > 3 else ''}. "
+                            f"동일한 일반 노드로 합류합니다: {converging_list}{'...' if len(converging) > 3 else ''}. "
                             f"ExecutorV2가 자동으로 처리하지만, 각 분기가 독립적으로 "
                             f"Answer → End로 연결되는 것이 더 명확한 설계입니다."
                         )
