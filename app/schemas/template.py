@@ -150,7 +150,24 @@ class TemplateUsageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TemplateSummary(BaseModel):
+    """목록 응답용 템플릿 요약"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    version: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    author: Author
+    metadata: TemplateMetadata
+    input_schema: List[PortDefinition]
+    output_schema: List[PortDefinition]
+    thumbnail_url: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class TemplateListResponse(BaseModel):
     """템플릿 목록 응답"""
-    templates: List[WorkflowTemplate]
+    templates: List[TemplateSummary]
     pagination: Dict[str, int]  # {"total": 45, "skip": 0, "limit": 20}
