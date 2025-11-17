@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
+from app.schemas.document import DocumentInfo
 
 
 class KnowledgeBase(BaseModel):
@@ -23,6 +24,7 @@ class Knowledge(KnowledgeBase):
     id: str
     user_id: str
     document_count: int = Field(0, description="포함된 문서 개수")
+    documents: Optional[List[DocumentInfo]] = Field(None, description="문서 목록 (선택사항)")
     created_at: datetime
     updated_at: datetime
 

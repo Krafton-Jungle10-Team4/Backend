@@ -10,7 +10,9 @@ from app.core.database import get_db
 from app.core.auth.dependencies import get_current_user_from_jwt
 from app.models.user import User
 from app.models.knowledge import Knowledge as KnowledgeModel
+from app.models.document import Document, DocumentStatus
 from app.schemas.knowledge import Knowledge, KnowledgeCreate, KnowledgeUpdate
+from app.schemas.document import DocumentInfo, DocumentStatusEnum
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +23,14 @@ router = APIRouter()
     "",
     response_model=List[Knowledge],
     summary="지식 목록 조회",
-    description="사용자의 지식 목록을 태그 및 검색어로 필터링하여 조회합니다."
+    description="사용자의 지식 목록을 태그 및 검색어로 필터링하여 조회합니다. 문서 목록도 함께 반환됩니다."
 )
 async def get_knowledge(
     tags: Optional[List[str]] = Query(None, description="태그 필터"),
     search: Optional[str] = Query(None, description="검색 쿼리"),
     skip: int = Query(0, ge=0, description="건너뛸 개수"),
     limit: int = Query(50, le=100, description="조회 개수"),
+    include_documents: bool = Query(True, description="문서 목록 포함 여부"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_from_jwt),
 ):
@@ -36,8 +39,9 @@ async def get_knowledge(
 
     - tags: 태그 필터
     - search: 이름 검색
+    - include_documents: 문서 목록 포함 여부 (기본: True)
     """
-    logger.info(f"지식 목록 조회: user_id={current_user.id}, tags={tags}, search={search}")
+    logger.info(f"지식 목록 조회: user_id={current_user.id}, tags={tags}, search={search}, include_documents={include_documents}")
 
     query = select(KnowledgeModel).where(KnowledgeModel.user_id == current_user.id)
 
@@ -61,8 +65,55 @@ async def get_knowledge(
             if any(tag in k.tags for tag in tags)
         ]
 
-    logger.info(f"지식 목록 조회 완료: {len(knowledge_list)}개")
-    return knowledge_list
+    # 문서 목록 조회 (임베딩 완료된 문서만)
+    if include_documents:
+        documents_query = select(Document).where(
+            Document.user_uuid == current_user.uuid,
+            Document.status == DocumentStatus.DONE
+        ).order_by(Document.created_at.desc())
+        
+        documents_result = await db.execute(documents_query)
+        documents = documents_result.scalars().all()
+        
+        # DocumentInfo로 변환
+        document_list = [
+            DocumentInfo(
+                document_id=doc.document_id,
+                bot_id=doc.bot_id,
+                original_filename=doc.original_filename,
+                file_extension=doc.file_extension,
+                file_size=doc.file_size,
+                status=DocumentStatusEnum(doc.status.value),
+                chunk_count=doc.chunk_count,
+                processing_time=doc.processing_time,
+                error_message=doc.error_message,
+                created_at=doc.created_at,
+                updated_at=doc.updated_at
+            )
+            for doc in documents
+        ]
+        
+        # Knowledge 객체에 문서 목록 추가
+        knowledge_response = []
+        for k in knowledge_list:
+            knowledge_dict = {
+                "id": k.id,
+                "user_id": k.user_id,
+                "name": k.name,
+                "description": k.description,
+                "tags": k.tags,
+                "document_count": len(document_list),  # 실제 문서 개수로 업데이트
+                "documents": document_list,  # 문서 목록 포함
+                "created_at": k.created_at,
+                "updated_at": k.updated_at
+            }
+            knowledge_response.append(Knowledge(**knowledge_dict))
+        
+        logger.info(f"지식 목록 조회 완료: {len(knowledge_list)}개, 문서 {len(document_list)}개 포함")
+        return knowledge_response
+    else:
+        logger.info(f"지식 목록 조회 완료: {len(knowledge_list)}개")
+        return knowledge_list
 
 
 @router.post(
@@ -101,15 +152,16 @@ async def create_knowledge(
     "/{knowledge_id}",
     response_model=Knowledge,
     summary="지식 상세 조회",
-    description="특정 지식의 상세 정보를 조회합니다."
+    description="특정 지식의 상세 정보를 조회합니다. 문서 목록도 함께 반환됩니다."
 )
 async def get_knowledge_detail(
     knowledge_id: str,
+    include_documents: bool = Query(True, description="문서 목록 포함 여부"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_from_jwt),
 ):
     """지식 상세 조회"""
-    logger.info(f"지식 상세 조회: knowledge_id={knowledge_id}")
+    logger.info(f"지식 상세 조회: knowledge_id={knowledge_id}, include_documents={include_documents}")
 
     result = await db.execute(
         select(KnowledgeModel).where(
@@ -126,7 +178,51 @@ async def get_knowledge_detail(
             detail="지식을 찾을 수 없습니다."
         )
 
-    return knowledge
+    # 문서 목록 조회 (임베딩 완료된 문서만)
+    if include_documents:
+        documents_query = select(Document).where(
+            Document.user_uuid == current_user.uuid,
+            Document.status == DocumentStatus.DONE
+        ).order_by(Document.created_at.desc())
+        
+        documents_result = await db.execute(documents_query)
+        documents = documents_result.scalars().all()
+        
+        # DocumentInfo로 변환
+        document_list = [
+            DocumentInfo(
+                document_id=doc.document_id,
+                bot_id=doc.bot_id,
+                original_filename=doc.original_filename,
+                file_extension=doc.file_extension,
+                file_size=doc.file_size,
+                status=DocumentStatusEnum(doc.status.value),
+                chunk_count=doc.chunk_count,
+                processing_time=doc.processing_time,
+                error_message=doc.error_message,
+                created_at=doc.created_at,
+                updated_at=doc.updated_at
+            )
+            for doc in documents
+        ]
+        
+        # Knowledge 객체에 문서 목록 추가
+        knowledge_dict = {
+            "id": knowledge.id,
+            "user_id": knowledge.user_id,
+            "name": knowledge.name,
+            "description": knowledge.description,
+            "tags": knowledge.tags,
+            "document_count": len(document_list),  # 실제 문서 개수로 업데이트
+            "documents": document_list,  # 문서 목록 포함
+            "created_at": knowledge.created_at,
+            "updated_at": knowledge.updated_at
+        }
+        
+        logger.info(f"지식 상세 조회 완료: knowledge_id={knowledge_id}, 문서 {len(document_list)}개 포함")
+        return Knowledge(**knowledge_dict)
+    else:
+        return knowledge
 
 
 @router.put(
