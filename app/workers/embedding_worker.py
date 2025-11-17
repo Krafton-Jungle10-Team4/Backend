@@ -231,7 +231,7 @@ class EmbeddingWorker:
 
                     # 8. 벡터 스토어에 저장
                     logger.info(f"벡터 스토어에 저장 시작 (bot_id={bot_id})")
-                    vector_store = get_vector_store(bot_id=bot_id, db=db)
+                    vector_store = get_vector_store(bot_id=bot_id, user_uuid=user_uuid, db=db)
 
                     chunk_ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
                     chunk_metadatas = [

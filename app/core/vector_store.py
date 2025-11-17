@@ -59,6 +59,13 @@ class VectorStore:
             )
         return self.db
 
+    def _apply_user_filter(self, query):
+        """user_uuid가 설정되었으면 JSON 메타데이터를 기준으로 필터를 추가"""
+        if self.user_uuid:
+            user_filter = cast(DocumentEmbedding.doc_metadata["user_uuid"], String) == self.user_uuid
+            query = query.where(user_filter)
+        return query
+
     async def add_documents(
         self,
         ids: List[str],
@@ -154,9 +161,12 @@ class VectorStore:
             query = select(
                 DocumentEmbedding,
                 distance_expr.label('distance')
-            ).where(
-                DocumentEmbedding.bot_id == self.bot_id
             )
+
+            if self.bot_id:
+                query = query.where(DocumentEmbedding.bot_id == self.bot_id)
+
+            query = self._apply_user_filter(query)
 
             # document_id 필터링 (특정 문서만 검색)
             if document_ids:
@@ -224,14 +234,16 @@ class VectorStore:
 
         try:
             # SQLAlchemy 2.0+ 호환: .astext 대신 cast 사용
-            result = (
-                await db.execute(
-                    select(DocumentEmbedding).where(
-                        DocumentEmbedding.bot_id == self.bot_id,
-                        cast(DocumentEmbedding.doc_metadata["document_id"], String) == document_id
-                    )
-                )
-            ).scalars().first()
+            query = select(DocumentEmbedding).where(
+                cast(DocumentEmbedding.doc_metadata["document_id"], String) == document_id
+            )
+
+            if self.bot_id:
+                query = query.where(DocumentEmbedding.bot_id == self.bot_id)
+
+            query = self._apply_user_filter(query)
+
+            result = (await db.execute(query)).scalars().first()
 
             if result:
                 return {
@@ -263,12 +275,16 @@ class VectorStore:
 
         try:
             # SQLAlchemy 2.0+ 호환: .astext 대신 cast 사용
-            result = await db.execute(
-                sql_delete(DocumentEmbedding).where(
-                    DocumentEmbedding.bot_id == self.bot_id,
-                    cast(DocumentEmbedding.doc_metadata["document_id"], String) == document_id
-                )
+            delete_stmt = sql_delete(DocumentEmbedding).where(
+                cast(DocumentEmbedding.doc_metadata["document_id"], String) == document_id
             )
+
+            if self.bot_id:
+                delete_stmt = delete_stmt.where(DocumentEmbedding.bot_id == self.bot_id)
+
+            delete_stmt = self._apply_user_filter(delete_stmt)
+
+            result = await db.execute(delete_stmt)
 
             deleted_count = result.rowcount
             await db.commit()
@@ -297,11 +313,14 @@ class VectorStore:
         db = self._get_session()
 
         try:
-            result = await db.execute(
-                select(func.count(DocumentEmbedding.id)).where(
-                    DocumentEmbedding.bot_id == self.bot_id
-                )
-            )
+            query = select(func.count(DocumentEmbedding.id))
+
+            if self.bot_id:
+                query = query.where(DocumentEmbedding.bot_id == self.bot_id)
+
+            query = self._apply_user_filter(query)
+
+            result = await db.execute(query)
             count = result.scalar_one_or_none()
 
             return count or 0

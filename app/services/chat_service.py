@@ -158,7 +158,13 @@ class ChatService:
         # Workflow가 없으면 기본 RAG 파이프라인으로 fallback (단, V2 사용 시에는 published 버전 사용)
         if not getattr(bot, "use_workflow_v2", False) and not bot.workflow:
             logger.info(f"[ChatService] Bot {request.bot_id}에 Workflow가 없어 기본 RAG 파이프라인 실행")
-            return await self._execute_rag_pipeline(request, bot.bot_id, db, bot.user_id)
+            return await self._execute_rag_pipeline(
+                request,
+                bot.bot_id,
+                db,
+                bot.user_id,
+                user_uuid
+            )
 
         # 서비스 초기화 (V1/V2 공통)
         from app.services.vector_service import VectorService
@@ -262,15 +268,22 @@ class ChatService:
                     yield payload
                 return
 
+            if not user_uuid:
+                raise ValueError("user_uuid는 필수입니다")
+
             # --- 기본 RAG 스트리밍 파이프라인 ---
-            vector_store = get_vector_store(bot_id=request.bot_id, db=db)
+            vector_store = get_vector_store(user_uuid=user_uuid, db=db)
             sanitized_message = sanitize_chat_query(request.message)
 
             query_embedding = await self.embedding_service.embed_query(sanitized_message)
+            filter_dict = {"user_uuid": user_uuid}
+            if request.document_ids:
+                filter_dict["document_id"] = request.document_ids
+
             search_results = await vector_store.search(
                 query_embedding=query_embedding,
                 top_k=request.top_k,
-                filter_dict={"document_id": request.document_ids} if request.document_ids else None
+                filter_dict=filter_dict
             )
 
             retrieved_chunks = self._extract_chunks(search_results)
@@ -432,11 +445,15 @@ class ChatService:
         request: ChatRequest,
         bot_id: str,
         db: AsyncSession,
-        bot_owner_id: Optional[int] = None
+        bot_owner_id: Optional[int] = None,
+        user_uuid: Optional[str] = None
     ) -> ChatResponse:
         """기본 RAG 파이프라인 실행"""
-        # 봇별 벡터 스토어 가져오기
-        vector_store = get_vector_store(bot_id=bot_id, db=db)
+        if not user_uuid:
+            raise ValueError("user_uuid는 필수입니다")
+
+        # 사용자별 벡터 스토어 가져오기
+        vector_store = get_vector_store(user_uuid=user_uuid, db=db)
 
         try:
             # 0. 사용자 입력 검증 및 정제
