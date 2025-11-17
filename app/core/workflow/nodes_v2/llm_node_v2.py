@@ -380,8 +380,8 @@ class LLMNodeV2(BaseNodeV2):
             if template_processed != template:
                 logger.debug(f"[LLMNodeV2] 템플릿 자동 변환: 단순 포트 이름 → self.포트")
 
-            # 연결된 노드의 변수만 허용하도록 셀렉터 목록 계산
-            allowed_selectors = self._compute_allowed_selectors(context)
+            # 실행 경로상의 모든 노드의 변수를 허용하도록 셀렉터 목록 계산
+            allowed_selectors = self._compute_allowed_selectors_from_execution_path(context)
 
             parser = VariableTemplateParser(template_processed)
             selectors = parser.extract_variable_selectors()
@@ -396,3 +396,67 @@ class LLMNodeV2(BaseNodeV2):
         except TemplateRenderError as exc:
             logger.error("LLMNodeV2 template render failed: %s", exc)
             raise ValueError(f"Failed to render prompt template: {exc}") from exc
+
+    def _compute_allowed_selectors_from_execution_path(self, context: NodeExecutionContext) -> List[str]:
+        """
+        실행 경로상의 노드들의 변수 셀렉터 목록을 계산
+
+        실행 플로우를 따라 도달한 모든 노드들의 출력 변수를 사용할 수 있도록 허용합니다.
+        이를 통해 직접 연결되지 않았더라도 실행 경로상의 모든 노드의 변수에 접근할 수 있습니다.
+
+        Args:
+            context: 실행 컨텍스트 (실행 경로 정보 포함)
+
+        Returns:
+            List[str]: 허용된 변수 셀렉터 목록
+        """
+        allowed = []
+
+        # 실행 경로상의 노드들의 출력을 허용
+        if hasattr(context, 'executed_nodes') and context.executed_nodes:
+            logger.debug(f"[LLMNodeV2] 실행 경로상의 노드들: {context.executed_nodes}")
+
+            # 실행 경로상의 노드들의 일반적인 출력 포트들
+            # (실제로는 노드 타입별로 다르지만, 일반적인 이름들을 포함)
+            common_outputs = [
+                'output', 'response', 'result', 'results',
+                'query', 'value', 'session_id', 'text',
+                'tokens', 'model', 'data', 'content',
+                'answer', 'question', 'context', 'summary',
+                'extracted', 'processed', 'transformed'
+            ]
+
+            for node_id in context.executed_nodes:
+                # 각 노드의 가능한 출력들을 허용
+                for output in common_outputs:
+                    selector = f"{node_id}.{output}"
+                    allowed.append(selector)
+
+                # 특히 tavilySearch 노드의 경우 results 포트를 명시적으로 허용
+                if 'tavily' in node_id.lower() or 'search' in node_id.lower():
+                    allowed.append(f"{node_id}.results")
+                    allowed.append(f"{node_id}.result")
+                    allowed.append(f"{node_id}.data")
+                    allowed.append(f"{node_id}.response")
+
+        # variable_mappings에 정의된 셀렉터들도 추가
+        for port_name, selector in self.variable_mappings.items():
+            if selector:
+                if isinstance(selector, str):
+                    allowed.append(selector)
+                elif isinstance(selector, dict):
+                    var_selector = selector.get("variable")
+                    if var_selector:
+                        allowed.append(var_selector)
+
+        # 자기 자신의 입력 포트도 허용 (self.port_name 형식)
+        for port_name in self.get_input_port_names():
+            allowed.append(f"self.{port_name}")
+
+        # 중복 제거
+        allowed = list(set(allowed))
+
+        logger.info(f"[LLMNodeV2] 허용된 변수 셀렉터: {len(allowed)}개")
+        logger.debug(f"[LLMNodeV2] 허용된 셀렉터 목록 (샘플): {allowed[:10]}...")
+
+        return allowed

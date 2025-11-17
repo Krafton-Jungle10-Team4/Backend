@@ -296,12 +296,13 @@ class WorkflowExecutorV2:
                 # 입력 준비
                 prepared_inputs = self._gather_node_inputs(node)
 
-                # 실행 컨텍스트 생성
+                # 실행 컨텍스트 생성 (실행된 노드 목록 전달)
                 context = NodeExecutionContext(
                     node_id=node_id,
                     variable_pool=self.variable_pool,
                     service_container=self.service_container,
-                    metadata={"prepared_inputs": prepared_inputs}
+                    metadata={"prepared_inputs": prepared_inputs},
+                    executed_nodes=list(executed_nodes)  # 현재까지의 실행 경로 전달
                 )
 
                 # 노드 실행

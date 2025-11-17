@@ -31,7 +31,8 @@ class NodeExecutionContext:
         node_id: str,
         variable_pool: VariablePool,
         service_container: ServiceContainer,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        executed_nodes: Optional[List[str]] = None
     ):
         """
         실행 컨텍스트 초기화
@@ -41,12 +42,14 @@ class NodeExecutionContext:
             variable_pool: 변수 풀
             service_container: 서비스 컨테이너
             metadata: 메타데이터
+            executed_nodes: 현재까지 실행된 노드 ID 목록 (실행 경로)
         """
         self.node_id = node_id
         self.variable_pool = variable_pool
         self.service_container = service_container
         self.metadata = metadata or {}
         self._edge_handles: List[str] = []
+        self.executed_nodes = executed_nodes or []  # 실행 경로 추적
 
     def get_input(self, port_name: str) -> Optional[Any]:
         """

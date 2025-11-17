@@ -117,8 +117,8 @@ class AssignerNodeV2(BaseNodeV2):
         Returns:
             출력 포트별 값 딕셔너리
         """
-        # 연결된 노드의 변수만 허용하도록 셀렉터 목록 계산
-        allowed_selectors = self._compute_allowed_selectors(context)
+        # 실행 경로상의 노드 변수만 허용하도록 셀렉터 목록 계산
+        allowed_selectors = self._compute_allowed_selectors_from_execution_path(context)
 
         # variable_mappings의 모든 셀렉터가 허용된 것인지 검증
         for port_name, mapping in self.variable_mappings.items():
@@ -134,9 +134,11 @@ class AssignerNodeV2(BaseNodeV2):
             # conversation 변수는 특별히 허용 (전역 변수)
             if selector and not selector.lower().startswith(("conv.", "conversation.")):
                 if selector not in allowed_selectors:
+                    # 더 자세한 에러 메시지
+                    executed_nodes_str = ", ".join(context.executed_nodes) if context.executed_nodes else "없음"
                     raise ValueError(
-                        f"포트 '{port_name}'의 변수 '{selector}'는 연결되지 않은 노드의 출력입니다. "
-                        f"워크플로우 에디터에서 해당 노드를 연결해주세요."
+                        f"포트 '{port_name}'의 변수 '{selector}'는 현재 실행 경로에 없는 노드입니다. "
+                        f"실행 경로: [{executed_nodes_str}] → {self.node_id}"
                     )
 
         outputs: Dict[str, Any] = {}
@@ -403,6 +405,54 @@ class AssignerNodeV2(BaseNodeV2):
                     str(value)[:100] + "..." if len(str(value)) > 100 else str(value),
                     len(str(value)) if isinstance(value, str) else 0,
                 )
+
+    def _compute_allowed_selectors_from_execution_path(self, context: NodeExecutionContext) -> List[str]:
+        """
+        실행 경로상의 노드들의 변수 셀렉터만 허용
+
+        Args:
+            context: 실행 컨텍스트 (executed_nodes 포함)
+
+        Returns:
+            허용된 변수 셀렉터 목록
+        """
+        allowed = []
+
+        # 1. 자기 자신의 입력 포트 허용
+        for port_name in self.get_input_port_names():
+            allowed.append(f"self.{port_name}")
+
+        # 2. 실행 경로상의 노드들의 출력 허용
+        if hasattr(context, 'executed_nodes') and context.executed_nodes:
+            for node_id in context.executed_nodes:
+                # 각 실행된 노드의 모든 출력 포트를 허용
+                # 일반적인 출력 포트들 추가
+                common_outputs = ['output', 'response', 'result', 'query', 'value', 'session_id']
+                for output in common_outputs:
+                    allowed.append(f"{node_id}.{output}")
+
+                # 특수 노드 타입별 출력 추가
+                if 'start' in node_id.lower():
+                    allowed.append(f"{node_id}.query")
+                    allowed.append(f"{node_id}.session_id")
+                elif 'llm' in node_id.lower():
+                    allowed.append(f"{node_id}.response")
+                elif 'condition' in node_id.lower() or 'if' in node_id.lower():
+                    allowed.append(f"{node_id}.if")
+                    allowed.append(f"{node_id}.else")
+
+        # 3. conversation 변수는 항상 허용
+        allowed.extend([
+            "conversation", "conversation.",
+            "conv", "conv."
+        ])
+
+        logger.debug(
+            f"[AssignerNodeV2] Node {self.node_id} allowed selectors from execution path: "
+            f"executed_nodes={context.executed_nodes}, allowed={allowed[:10]}..."  # 처음 10개만 표시
+        )
+
+        return allowed
 
     def _get_selector_for_port(self, port_name: str) -> Optional[str]:
         """
