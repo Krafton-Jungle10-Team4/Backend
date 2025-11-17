@@ -76,7 +76,7 @@ class TemplateUsage(Base):
     workflow_version_id = Column(UUID(as_uuid=True), ForeignKey("bot_workflow_versions.id"), nullable=True)
     node_id = Column(String(255), nullable=False)
     user_id = Column(String(36), ForeignKey("users.uuid", ondelete="CASCADE"), nullable=False, index=True)
-    event_type = Column(String(50), nullable=False, default="imported")  # imported, executed
+    event_type = Column(String(50), nullable=False, default="imported")  # imported, execution
     note = Column(Text, nullable=True)
     occurred_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 

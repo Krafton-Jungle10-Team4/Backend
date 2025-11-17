@@ -305,3 +305,21 @@ class ResourceNotFoundError(BaseAppException):
     """리소스를 찾을 수 없음"""
     def __init__(self, message: str = "요청한 리소스를 찾을 수 없습니다", **kwargs):
         super().__init__(message, error_code="RESOURCE_NOT_FOUND", **kwargs)
+
+
+class ValidationException(BaseAppException):
+    """검증 예외"""
+    def __init__(self, message: str = "검증에 실패했습니다", **kwargs):
+        super().__init__(message, error_code="VALIDATION_ERROR", **kwargs)
+
+
+class PermissionDeniedException(BaseAppException):
+    """권한 거부 예외"""
+    def __init__(self, message: str = "접근 권한이 없습니다", **kwargs):
+        super().__init__(message, error_code="PERMISSION_DENIED", **kwargs)
+
+
+class DuplicateException(BaseAppException):
+    """중복 리소스 예외"""
+    def __init__(self, message: str = "이미 존재하는 리소스입니다", **kwargs):
+        super().__init__(message, error_code="DUPLICATE_RESOURCE", **kwargs)
