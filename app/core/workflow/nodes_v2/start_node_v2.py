@@ -66,6 +66,15 @@ class StartNodeV2(BaseNodeV2):
         Raises:
             ValueError: user_message가 없을 때
         """
+        # Pre-seeded outputs (nested workflow input)
+        preseeded = context.variable_pool.get_all_node_outputs(self.node_id)
+        if preseeded:
+            session_id = context.variable_pool.get_system_variable("session_id")
+            if session_id is not None:
+                preseeded.setdefault("session_id", session_id)
+            logger.info(f"StartNodeV2 {self.node_id} uses pre-seeded outputs")
+            return preseeded
+
         # 시스템 변수에서 user_message 조회
         user_message = context.variable_pool.get_system_variable("user_message")
         if not user_message:

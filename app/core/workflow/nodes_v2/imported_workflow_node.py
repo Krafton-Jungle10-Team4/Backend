@@ -141,6 +141,10 @@ class ImportedWorkflowNode(BaseNodeV2):
 
             logger.info(f"Mapped internal inputs: {list(internal_inputs.keys())}")
 
+            start_node_id = template.get("start_node_id")
+            if not start_node_id:
+                raise ValueError("템플릿에서 Start 노드를 찾을 수 없습니다")
+
             # 템플릿 워크플로우 실행을 위한 파라미터 준비
             db = context.get_service("db_session")
             vector_service = context.get_service("vector_service")
@@ -149,9 +153,8 @@ class ImportedWorkflowNode(BaseNodeV2):
             session_id = context.get_service("session_id")
 
             # 템플릿의 워크플로우 데이터 구성
-            # 수정: internal_inputs를 environment_variables로 전달
             initial_node_outputs = {
-                "template_input": internal_inputs
+                start_node_id: internal_inputs
             }
 
             workflow_data = {
@@ -180,13 +183,17 @@ class ImportedWorkflowNode(BaseNodeV2):
                 initial_node_outputs=initial_node_outputs
             )
 
-            # 출력 변수 매핑
+            # 출력 값 수집 및 매핑
             output_schema = template.get("output_schema", [])
-            outputs = self._map_output_variables(
-                {"result": result},  # 실행 결과를 result로 래핑
-                output_schema,
-                variable_mappings
+            output_mappings = template.get("output_mappings", {})
+            output_values = self._collect_output_values(
+                template=template,
+                child_executor=child_executor,
+                output_schema=output_schema,
+                default_value=result,
+                output_mappings=output_mappings
             )
+            outputs = self._map_output_variables(output_values, output_schema)
 
             # 실행 기록
             await self._record_execution(template_id, context)
@@ -247,12 +254,50 @@ class ImportedWorkflowNode(BaseNodeV2):
             if not template:
                 raise ValueError(f"템플릿을 찾을 수 없습니다: {template_id}")
 
+        graph = template.graph or {}
+        nodes = graph.get("nodes", [])
+
+        start_node_id = None
+        output_mappings: Dict[str, Any] = {}
+
+        for node in nodes:
+            node_id = node.get("id")
+            data = node.get("data", {}) or {}
+            node_type = data.get("type") or node.get("type")
+
+            if node_type == "start" and not start_node_id:
+                start_node_id = node_id
+            elif node_type in ["answer", "end"]:
+                inputs = data.get("inputs")
+                var_mappings = node.get("variable_mappings", {}) or {}
+
+                if isinstance(inputs, dict):
+                    iter_ports = inputs.keys()
+                elif isinstance(inputs, list):
+                    iter_ports = [inp.get("name") for inp in inputs if inp.get("name")]
+                else:
+                    iter_ports = []
+
+                for port_name in iter_ports:
+                    selector = self._extract_selector(var_mappings.get(port_name))
+                    if selector:
+                        output_mappings[port_name] = selector
+
+                # 입력 정보가 없더라도 variable_mappings에 정의되어 있으면 활용
+                if not iter_ports and var_mappings:
+                    for port_name, mapping in var_mappings.items():
+                        selector = self._extract_selector(mapping)
+                        if selector:
+                            output_mappings.setdefault(port_name, selector)
+
         return {
             "id": template.id,
             "name": template.name,
-            "graph": template.graph,
+            "graph": graph,
             "input_schema": template.input_schema,
-            "output_schema": template.output_schema
+            "output_schema": template.output_schema,
+            "start_node_id": start_node_id,
+            "output_mappings": output_mappings
         }
 
     @staticmethod
@@ -338,50 +383,54 @@ class ImportedWorkflowNode(BaseNodeV2):
 
         return internal_inputs
 
+    def _collect_output_values(
+        self,
+        template: Dict[str, Any],
+        child_executor: WorkflowExecutorV2,
+        output_schema: List[Dict],
+        default_value: Any,
+        output_mappings: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """템플릿 내부 노드 출력 수집"""
+        values: Dict[str, Any] = {}
+        pool = getattr(child_executor, "variable_pool", None)
+
+        for port_def in output_schema:
+            port_name = port_def.get("name")
+            if not port_name:
+                continue
+
+            value = None
+
+            selector = output_mappings.get(port_name)
+            if selector and pool:
+                value = pool.resolve_value_selector(selector)
+
+            if value is None:
+                value = default_value
+
+            values[port_name] = value
+
+        if not values and default_value is not None:
+            values["output"] = default_value
+
+        return values
+
     def _map_output_variables(
         self,
-        internal_outputs: Dict[str, Any],
-        output_schema: List[Dict],
-        mappings: Dict[str, Any]
+        output_values: Dict[str, Any],
+        output_schema: List[Dict]
     ) -> Dict[str, Any]:
-        """출력 변수 매핑
-
-        Args:
-            internal_outputs: 템플릿 실행 결과
-            output_schema: 출력 포트 정의
-            mappings: 변수 매핑 설정
-
-        Returns:
-            Dict[str, Any]: 매핑된 출력 변수들
-        """
+        """출력 변수 매핑"""
         external_outputs = {}
 
         for port_def in output_schema:
             port_name = port_def.get("name")
+            if port_name and port_name in output_values:
+                external_outputs[port_name] = output_values[port_name]
 
-            # internal_outputs에서 값 찾기
-            value = None
-
-            # 여러 키 형태 시도
-            for key in [port_name, f"template_{port_name}", "result"]:
-                if key in internal_outputs:
-                    value = internal_outputs[key]
-                    break
-
-            if value is not None:
-                # mappings에서 외부 이름 찾기 (있으면 사용, 없으면 port_name 그대로)
-                mapping = mappings.get(port_name)
-                external_name = port_name
-
-                if mapping:
-                    # 출력 매핑은 보통 간단한 문자열
-                    if isinstance(mapping, str):
-                        external_name = mapping
-                    elif isinstance(mapping, dict):
-                        external_name = mapping.get("target", port_name)
-
-                external_outputs[external_name] = value
-                logger.debug(f"Mapped output {port_name} -> {external_name}")
+        if not external_outputs and "output" in output_values:
+            external_outputs["output"] = output_values["output"]
 
         return external_outputs
 
