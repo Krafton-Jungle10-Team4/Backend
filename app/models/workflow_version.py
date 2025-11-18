@@ -68,6 +68,7 @@ class WorkflowExecutionRun(Base):
     # 관계
     workflow_version = relationship("BotWorkflowVersion", back_populates="execution_runs")
     node_executions = relationship("WorkflowNodeExecution", back_populates="run", cascade="all, delete-orphan")
+    annotations = relationship("WorkflowRunAnnotation", back_populates="workflow_run", cascade="all, delete-orphan")
 
 
 class WorkflowNodeExecution(Base):
@@ -103,3 +104,26 @@ class WorkflowNodeExecution(Base):
 
     # 관계
     run = relationship("WorkflowExecutionRun", back_populates="node_executions")
+
+
+class WorkflowRunAnnotation(Base):
+    """워크플로우 실행 어노테이션"""
+
+    __tablename__ = "workflow_run_annotations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workflow_run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey('workflow_execution_runs.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True
+    )
+    bot_id = Column(String(50), ForeignKey('bots.bot_id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    annotation = Column(Text, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # 관계
+    workflow_run = relationship("WorkflowExecutionRun", back_populates="annotations")

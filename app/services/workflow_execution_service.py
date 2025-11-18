@@ -4,12 +4,12 @@
 워크플로우 실행 기록 조회, 노드 실행 상세 조회 등의 기능을 제공합니다.
 """
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, desc, func
+from sqlalchemy import select, and_, desc, func, or_, cast, String
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import logging
 
-from app.models.workflow_version import WorkflowExecutionRun, WorkflowNodeExecution
+from app.models.workflow_version import WorkflowExecutionRun, WorkflowNodeExecution, WorkflowRunAnnotation
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ class WorkflowExecutionService:
         status: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        search: Optional[str] = None,
         limit: int = 50,
         offset: int = 0
     ) -> Dict[str, Any]:
@@ -58,10 +59,21 @@ class WorkflowExecutionService:
             stmt = stmt.where(WorkflowExecutionRun.status == status)
 
         if start_date:
-            stmt = stmt.where(WorkflowExecutionRun.created_at >= start_date)
+            stmt = stmt.where(WorkflowExecutionRun.started_at >= start_date)
 
         if end_date:
-            stmt = stmt.where(WorkflowExecutionRun.created_at <= end_date)
+            stmt = stmt.where(WorkflowExecutionRun.started_at <= end_date)
+
+        if search:
+            like_pattern = f"%{search}%"
+            stmt = stmt.where(
+                or_(
+                    cast(WorkflowExecutionRun.id, String).ilike(like_pattern),
+                    WorkflowExecutionRun.session_id.ilike(like_pattern),
+                    cast(WorkflowExecutionRun.inputs, String).ilike(like_pattern),
+                    cast(WorkflowExecutionRun.outputs, String).ilike(like_pattern)
+                )
+            )
 
         # 총 개수 조회
         count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -69,7 +81,7 @@ class WorkflowExecutionService:
         total = count_result.scalar_one()
 
         # 페이지네이션 적용
-        stmt = stmt.order_by(desc(WorkflowExecutionRun.created_at))
+        stmt = stmt.order_by(desc(WorkflowExecutionRun.started_at))
         stmt = stmt.limit(limit).offset(offset)
 
         result = await self.db.execute(stmt)
@@ -196,6 +208,130 @@ class WorkflowExecutionService:
             "avg_elapsed_time": round(avg_elapsed_time, 2),
             "total_tokens": total_tokens
         }
+
+    async def get_token_statistics(
+        self,
+        bot_id: str,
+        run_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> Dict[str, Any]:
+        """토큰 사용량 통계 조회"""
+
+        stmt = select(
+            func.coalesce(func.sum(WorkflowExecutionRun.total_tokens), 0).label('total_tokens'),
+            func.count(WorkflowExecutionRun.id).label('total_runs')
+        ).where(WorkflowExecutionRun.bot_id == bot_id)
+
+        if run_id:
+            stmt = stmt.where(WorkflowExecutionRun.id == run_id)
+        if start_date:
+            stmt = stmt.where(WorkflowExecutionRun.started_at >= start_date)
+        if end_date:
+            stmt = stmt.where(WorkflowExecutionRun.started_at <= end_date)
+
+        stats_result = await self.db.execute(stmt)
+        stats = stats_result.first()
+
+        node_query = select(
+            WorkflowNodeExecution.node_type,
+            func.coalesce(func.sum(WorkflowNodeExecution.tokens_used), 0).label('tokens')
+        ).join(
+            WorkflowExecutionRun,
+            WorkflowNodeExecution.workflow_run_id == WorkflowExecutionRun.id
+        ).where(
+            WorkflowExecutionRun.bot_id == bot_id
+        ).group_by(WorkflowNodeExecution.node_type)
+
+        if run_id:
+            node_query = node_query.where(WorkflowExecutionRun.id == run_id)
+        if start_date:
+            node_query = node_query.where(WorkflowExecutionRun.started_at >= start_date)
+        if end_date:
+            node_query = node_query.where(WorkflowExecutionRun.started_at <= end_date)
+
+        node_result = await self.db.execute(node_query)
+        by_node_type = {
+            row.node_type: int(row.tokens or 0)
+            for row in node_result.all()
+        }
+
+        date_query = select(
+            func.date_trunc('day', WorkflowExecutionRun.started_at).label('bucket'),
+            func.coalesce(func.sum(WorkflowExecutionRun.total_tokens), 0).label('tokens')
+        ).where(
+            WorkflowExecutionRun.bot_id == bot_id
+        ).group_by('bucket').order_by('bucket')
+
+        if run_id:
+            date_query = date_query.where(WorkflowExecutionRun.id == run_id)
+        if start_date:
+            date_query = date_query.where(WorkflowExecutionRun.started_at >= start_date)
+        if end_date:
+            date_query = date_query.where(WorkflowExecutionRun.started_at <= end_date)
+
+        date_result = await self.db.execute(date_query)
+        by_date = [
+            {
+                "date": (row.bucket.date().isoformat() if row.bucket else None),
+                "tokens": int(row.tokens or 0)
+            }
+            for row in date_result.all()
+            if row.bucket is not None
+        ]
+
+        total_tokens = int(stats.total_tokens) if stats and stats.total_tokens is not None else 0
+        total_runs = int(stats.total_runs) if stats and stats.total_runs is not None else 0
+        avg_tokens = total_tokens / total_runs if total_runs > 0 else 0.0
+
+        return {
+            "total_tokens": total_tokens,
+            "total_runs": total_runs,
+            "average_tokens_per_run": avg_tokens,
+            "by_node_type": by_node_type,
+            "by_date": by_date
+        }
+
+    async def get_annotation(
+        self,
+        run_id: str,
+        user_id: int
+    ) -> Optional[WorkflowRunAnnotation]:
+        """사용자 어노테이션 조회"""
+
+        stmt = select(WorkflowRunAnnotation).where(
+            WorkflowRunAnnotation.workflow_run_id == run_id,
+            WorkflowRunAnnotation.user_id == user_id
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def upsert_annotation(
+        self,
+        bot_id: str,
+        run_id: str,
+        user_id: int,
+        annotation: str
+    ) -> WorkflowRunAnnotation:
+        """어노테이션 생성/수정"""
+
+        record = await self.get_annotation(run_id, user_id)
+
+        if record:
+            record.annotation = annotation
+            record.updated_at = datetime.utcnow()
+        else:
+            record = WorkflowRunAnnotation(
+                workflow_run_id=run_id,
+                bot_id=bot_id,
+                user_id=user_id,
+                annotation=annotation
+            )
+            self.db.add(record)
+
+        await self.db.commit()
+        await self.db.refresh(record)
+        return record
 
     async def delete_run(
         self,

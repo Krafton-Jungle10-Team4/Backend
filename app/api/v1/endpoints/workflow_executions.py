@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from datetime import datetime
 import logging
+import json
 
 from app.core.database import get_db
 from app.core.auth.dependencies import get_current_user_from_jwt as get_current_user
@@ -18,7 +19,9 @@ from app.schemas.workflow import (
     NodeExecutionResponse,
     NodeExecutionDetail,
     PaginatedWorkflowRuns,
-    WorkflowExecutionStatistics
+    WorkflowExecutionStatistics,
+    WorkflowRunAnnotationRequest,
+    WorkflowRunAnnotationResponse
 )
 from app.services.workflow_execution_service import WorkflowExecutionService
 from app.services.bot_service import BotService
@@ -49,6 +52,7 @@ async def list_execution_runs(
     status: Optional[str] = Query(None, description="필터링할 실행 상태"),
     start_date: Optional[datetime] = Query(None, description="시작 날짜"),
     end_date: Optional[datetime] = Query(None, description="종료 날짜"),
+    search: Optional[str] = Query(None, description="검색어 (run ID, session ID, 입력/출력)"),
     limit: int = Query(50, le=100, description="페이지 크기"),
     offset: int = Query(0, ge=0, description="오프셋"),
     current_user: User = Depends(get_current_user),
@@ -77,6 +81,7 @@ async def list_execution_runs(
             status=status,
             start_date=start_date,
             end_date=end_date,
+            search=search,
             limit=limit,
             offset=offset
         )
@@ -94,7 +99,9 @@ async def list_execution_runs(
                 elapsed_time=run.elapsed_time,
                 total_tokens=run.total_tokens,
                 total_steps=run.total_steps,
-                created_at=run.created_at
+                created_at=run.created_at,
+                input_preview=_build_preview(run.inputs),
+                output_preview=_build_preview(run.outputs)
             )
             for run in result["items"]
         ]
@@ -178,7 +185,9 @@ async def get_execution_run(
             created_at=run.created_at,
             graph_snapshot=run.graph_snapshot,
             inputs=run.inputs,
-            outputs=run.outputs
+            outputs=run.outputs,
+            input_preview=_build_preview(run.inputs),
+            output_preview=_build_preview(run.outputs)
         )
 
     except HTTPException:
@@ -370,22 +379,18 @@ legacy_router.add_api_route(
 @router.get(
     "/statistics",
     response_model=WorkflowExecutionStatistics,
-    summary="워크플로우 실행 통계 조회",
-    description="Bot의 워크플로우 실행 통계를 조회합니다."
+    summary="토큰 사용 통계 조회",
+    description="Bot의 워크플로우 실행 토큰 사용량을 조회합니다."
 )
 async def get_execution_statistics(
     bot_id: str,
+    run_id: Optional[str] = Query(None, description="특정 실행 ID"),
     start_date: Optional[datetime] = Query(None, description="시작 날짜"),
     end_date: Optional[datetime] = Query(None, description="종료 날짜"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> WorkflowExecutionStatistics:
-    """
-    실행 통계 조회
-
-    - 총 실행 횟수, 성공/실패 횟수
-    - 평균 실행 시간, 총 토큰 사용량
-    """
+    """토큰 사용량 통계 조회"""
     try:
         # 봇 접근 권한 확인
         bot_service = BotService()
@@ -398,8 +403,17 @@ async def get_execution_statistics(
 
         # 통계 조회
         service = WorkflowExecutionService(db)
-        stats = await service.get_run_statistics(
+        if run_id:
+            run = await service.get_run(run_id)
+            if not run or run.bot_id != bot_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="실행 기록을 찾을 수 없습니다"
+                )
+
+        stats = await service.get_token_statistics(
             bot_id=bot_id,
+            run_id=run_id,
             start_date=start_date,
             end_date=end_date
         )
@@ -424,6 +438,90 @@ legacy_router.add_api_route(
     summary="워크플로우 실행 통계 조회",
     description="(레거시 경로) Bot의 워크플로우 실행 통계를 조회합니다."
 )
+
+
+@router.get(
+    "/{run_id}/annotation",
+    response_model=WorkflowRunAnnotationResponse,
+    summary="워크플로우 실행 어노테이션 조회"
+)
+async def get_run_annotation(
+    bot_id: str,
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> WorkflowRunAnnotationResponse:
+    """특정 실행에 대한 어노테이션을 조회합니다."""
+
+    bot_service = BotService()
+    bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
+    if not bot:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
+        )
+
+    service = WorkflowExecutionService(db)
+    run = await service.get_run(run_id)
+    if not run or run.bot_id != bot_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="실행 기록을 찾을 수 없습니다"
+        )
+
+    record = await service.get_annotation(run_id, current_user.id)
+    if not record:
+        return WorkflowRunAnnotationResponse(annotation="")
+
+    return WorkflowRunAnnotationResponse(
+        id=str(record.id),
+        annotation=record.annotation,
+        updated_at=record.updated_at
+    )
+
+
+@router.post(
+    "/{run_id}/annotation",
+    response_model=WorkflowRunAnnotationResponse,
+    summary="워크플로우 실행 어노테이션 생성/수정"
+)
+async def upsert_run_annotation(
+    bot_id: str,
+    run_id: str,
+    payload: WorkflowRunAnnotationRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> WorkflowRunAnnotationResponse:
+    """특정 실행에 대한 어노테이션을 저장합니다."""
+
+    bot_service = BotService()
+    bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
+    if not bot:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
+        )
+
+    service = WorkflowExecutionService(db)
+    run = await service.get_run(run_id)
+    if not run or run.bot_id != bot_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="실행 기록을 찾을 수 없습니다"
+        )
+
+    record = await service.upsert_annotation(
+        bot_id=bot_id,
+        run_id=run_id,
+        user_id=current_user.id,
+        annotation=payload.annotation
+    )
+
+    return WorkflowRunAnnotationResponse(
+        id=str(record.id),
+        annotation=record.annotation,
+        updated_at=record.updated_at
+    )
 
 
 @router.delete(
@@ -490,3 +588,14 @@ legacy_router.add_api_route(
     summary="워크플로우 실행 기록 삭제",
     description="(레거시 경로) 특정 워크플로우 실행 기록을 삭제합니다."
 )
+def _build_preview(payload: Optional[dict], limit: int = 200) -> Optional[str]:
+    if not payload:
+        return None
+    try:
+        serialized = json.dumps(payload, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return None
+
+    if len(serialized) <= limit:
+        return serialized
+    return f"{serialized[:limit]}..."

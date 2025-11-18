@@ -401,6 +401,8 @@ class WorkflowRunResponse(BaseModel):
     total_tokens: int = Field(0, description="총 사용 토큰 수")
     total_steps: int = Field(0, description="총 실행 단계 수")
     created_at: datetime = Field(..., description="생성 시간")
+    input_preview: Optional[str] = Field(None, description="입력 데이터 요약 (최대 200자)")
+    output_preview: Optional[str] = Field(None, description="출력 데이터 요약 (최대 200자)")
 
 
 class WorkflowRunDetail(WorkflowRunResponse):
@@ -444,12 +446,27 @@ class PaginatedWorkflowRuns(BaseModel):
 
 
 class WorkflowExecutionStatistics(BaseModel):
-    """워크플로우 실행 통계"""
-    total_runs: int = Field(..., description="총 실행 횟수")
-    succeeded_runs: int = Field(..., description="성공 횟수")
-    failed_runs: int = Field(..., description="실패 횟수")
-    avg_elapsed_time: float = Field(..., description="평균 실행 시간 (milliseconds)")
+    """워크플로우 토큰 사용 통계"""
+
     total_tokens: int = Field(..., description="총 토큰 사용량")
+    total_runs: int = Field(..., description="총 실행 횟수")
+    average_tokens_per_run: float = Field(..., description="실행당 평균 토큰 사용량")
+    by_node_type: Dict[str, int] = Field(default_factory=dict, description="노드 타입별 토큰 사용량")
+    by_date: List[Dict[str, Any]] = Field(default_factory=list, description="일자별 토큰 사용량")
+
+
+class WorkflowRunAnnotationRequest(BaseModel):
+    """워크플로우 실행 어노테이션 저장 요청"""
+
+    annotation: str = Field(..., description="어노테이션 내용", max_length=2000, min_length=0)
+
+
+class WorkflowRunAnnotationResponse(BaseModel):
+    """워크플로우 실행 어노테이션 응답"""
+
+    id: Optional[str] = Field(None, description="어노테이션 ID")
+    annotation: str = Field("", description="저장된 어노테이션")
+    updated_at: Optional[datetime] = Field(None, description="수정 시각")
 
 
 # ============ Assigner Node V2 스키마 ============
@@ -548,6 +565,8 @@ __all__ = [
     "NodeExecutionDetail",
     "PaginatedWorkflowRuns",
     "WorkflowExecutionStatistics",
+    "WorkflowRunAnnotationRequest",
+    "WorkflowRunAnnotationResponse",
 
     # Assigner Node V2
     "AssignerOperation",
