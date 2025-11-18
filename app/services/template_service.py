@@ -252,51 +252,197 @@ class TemplateService:
         validation.node_count = len(nodes)
         validation.edge_count = len(edges)
 
-        # Start/End 노드 확인
+        logger.info(f"[validate_export] Validating workflow graph: workflow_id={workflow_id}, version_id={version_id}, node_count={len(nodes)}, edge_count={len(edges)}")
+
+        # 1. 각 노드의 구조 검증 (NEW!)
+        logger.info("[validate_export] Validating node structures...")
+        for idx, node in enumerate(nodes):
+            node_id = node.get("id")
+            node_errors = []
+
+            # 필수 필드 확인
+            if not node_id:
+                node_errors.append("ID 누락")
+                validation.errors.append(f"노드 #{idx}에 ID가 없습니다")
+
+            position = node.get("position")
+            if not position or not isinstance(position, dict):
+                node_errors.append("position 누락 또는 잘못된 형식")
+                validation.errors.append(f"노드 {node_id or f'#{idx}'}에 position이 없거나 잘못되었습니다")
+            else:
+                if not isinstance(position.get("x"), (int, float)):
+                    node_errors.append("position.x가 숫자가 아님")
+                    validation.errors.append(f"노드 {node_id}의 position.x가 숫자가 아닙니다")
+                if not isinstance(position.get("y"), (int, float)):
+                    node_errors.append("position.y가 숫자가 아님")
+                    validation.errors.append(f"노드 {node_id}의 position.y가 숫자가 아닙니다")
+
+            data = node.get("data")
+            if not data or not isinstance(data, dict):
+                node_errors.append("data 누락 또는 잘못된 형식")
+                validation.errors.append(f"노드 {node_id or f'#{idx}'}에 data가 없거나 잘못되었습니다")
+            elif not data.get("type"):
+                node_errors.append("data.type 누락")
+                validation.errors.append(f"노드 {node_id}의 data.type이 없습니다")
+
+            if node_errors:
+                logger.error(f"[validate_export] Invalid node structure: node_id={node_id or f'#{idx}'}, errors={node_errors}, node={node}")
+
+        # 2. 중복 노드 ID 검증 (NEW!)
+        node_ids = [n.get("id") for n in nodes if n.get("id")]
+        if len(node_ids) != len(set(node_ids)):
+            duplicates = [nid for nid in node_ids if node_ids.count(nid) > 1]
+            validation.errors.append("중복된 노드 ID가 존재합니다")
+            logger.error(f"[validate_export] Duplicate node IDs detected: total={len(node_ids)}, unique={len(set(node_ids))}, duplicates={set(duplicates)}")
+
+        # 3. 엣지의 source/target 유효성 검증 (NEW!)
+        logger.info("[validate_export] Validating edge references...")
+        node_id_set = set(node_ids)
+        for idx, edge in enumerate(edges):
+            edge_id = edge.get("id", f"#{idx}")
+            source = edge.get("source")
+            target = edge.get("target")
+
+            if not source:
+                validation.errors.append(f"엣지 {edge_id}에 source가 없습니다")
+                logger.error(f"[validate_export] Edge missing source: edge={edge}")
+            elif source not in node_id_set:
+                validation.errors.append(f"엣지 {edge_id}의 source '{source}'가 존재하지 않습니다")
+                logger.error(f"[validate_export] Edge source not found: edge_id={edge_id}, source={source}, available_nodes={list(node_id_set)[:10]}")
+
+            if not target:
+                validation.errors.append(f"엣지 {edge_id}에 target이 없습니다")
+                logger.error(f"[validate_export] Edge missing target: edge={edge}")
+            elif target not in node_id_set:
+                validation.errors.append(f"엣지 {edge_id}의 target '{target}'가 존재하지 않습니다")
+                logger.error(f"[validate_export] Edge target not found: edge_id={edge_id}, target={target}, available_nodes={list(node_id_set)[:10]}")
+
+        # 4. imported-workflow 노드 거부 (중첩 방지) (NEW!)
+        imported_workflow_nodes = [
+            n for n in nodes
+            if n.get("data", {}).get("type") == "imported-workflow"
+        ]
+        if imported_workflow_nodes:
+            validation.errors.append(
+                "템플릿은 다른 템플릿(ImportedWorkflow)을 포함할 수 없습니다. "
+                "템플릿을 중첩하려면 먼저 내부 워크플로우를 별도의 템플릿으로 만들어주세요."
+            )
+            logger.error(f"[validate_export] Nested template detected: workflow_id={workflow_id}, imported_nodes={[{'id': n.get('id'), 'template_id': n.get('data', {}).get('template_id')} for n in imported_workflow_nodes]}")
+
+        def _extract_ports(node_data: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
+            """노드 딕셔너리에서 포트 목록 추출 (신규/레거시 구조 모두 지원)"""
+            ports: List[Dict[str, Any]] = []
+
+            def _extend(raw_ports):
+                if not raw_ports:
+                    return
+                if isinstance(raw_ports, list):
+                    for port in raw_ports:
+                        if isinstance(port, dict):
+                            ports.append(port)
+                elif isinstance(raw_ports, dict):
+                    for name, port in raw_ports.items():
+                        if isinstance(port, dict):
+                            normalized = dict(port)
+                            normalized.setdefault("name", name)
+                            ports.append(normalized)
+
+            node_ports = node_data.get("ports")
+            if isinstance(node_ports, dict):
+                _extend(node_ports.get(key))
+
+            data_section = node_data.get("data")
+            if isinstance(data_section, dict):
+                data_ports = data_section.get("ports")
+                if isinstance(data_ports, dict):
+                    _extend(data_ports.get(key))
+                _extend(data_section.get(key))
+
+            return ports
+
+        def _append_port_definitions(
+            target_list: List[PortDefinition],
+            ports: List[Dict[str, Any]]
+        ) -> None:
+            """추출된 포트 정보로 PortDefinition 생성"""
+            for port in ports:
+                name = port.get("name") or port.get("id")
+                if not name:
+                    continue
+
+                display_name = port.get("display_name") or port.get("label") or name
+                description = port.get("description") or port.get("desc") or ""
+                required = port.get("required")
+                if required is None:
+                    required = True
+
+                try:
+                    target_list.append(
+                        PortDefinition(
+                            name=name,
+                            type=str(port.get("type") or "any"),
+                            required=bool(required),
+                            description=description,
+                            display_name=display_name
+                        )
+                    )
+                except Exception as port_error:
+                    logger.warning(
+                        "[validate_export] Failed to parse port definition %s: %s",
+                        port,
+                        port_error
+                    )
+
+        # 5. Start/End 노드 확인 (기존 로직)
         for node in nodes:
             node_type = node.get("data", {}).get("type")
             if node_type == "start":
                 validation.has_start_node = True
                 # Start 노드의 출력 포트 추출
-                outputs = node.get("data", {}).get("outputs", {})
-                for port_name, port_data in outputs.items():
-                    validation.detected_input_ports.append(
-                        PortDefinition(
-                            name=port_name,
-                            type=port_data.get("type", "any"),
-                            required=True,
-                            description=port_data.get("description"),
-                            display_name=port_data.get("label", port_name)
-                        )
+                start_outputs = _extract_ports(node, "outputs")
+                if start_outputs:
+                    _append_port_definitions(validation.detected_input_ports, start_outputs)
+                else:
+                    logger.warning(
+                        "[validate_export] Start node %s has no output ports",
+                        node.get("id")
                     )
             elif node_type in ["end", "answer"]:
                 validation.has_end_node = True
-                # End 노드의 입력 포트 추출
-                inputs = node.get("data", {}).get("inputs", {})
-                for port_name, port_data in inputs.items():
-                    validation.detected_output_ports.append(
-                        PortDefinition(
-                            name=port_name,
-                            type=port_data.get("type", "any"),
-                            required=True,
-                            description=port_data.get("description"),
-                            display_name=port_data.get("label", port_name)
-                        )
+                # End/Answer 노드의 입력 포트 추출
+                end_inputs = _extract_ports(node, "inputs")
+                if end_inputs:
+                    _append_port_definitions(validation.detected_output_ports, end_inputs)
+                else:
+                    logger.warning(
+                        "[validate_export] %s node %s has no input ports",
+                        node_type,
+                        node.get("id")
                     )
 
         # 검증 결과
         if not validation.has_start_node:
             validation.errors.append("Start 노드가 없습니다")
+            logger.error("[validate_export] Missing start node")
         if not validation.has_end_node:
             validation.errors.append("End 또는 Answer 노드가 없습니다")
+            logger.error("[validate_export] Missing end/answer node")
 
         # 노드 개수 제한
         if len(nodes) > 100:
             validation.errors.append("노드 개수가 100개를 초과합니다")
+            logger.error(f"[validate_export] Too many nodes: current={len(nodes)}, max=100")
         if len(nodes) == 0:
             validation.errors.append("노드가 하나도 없습니다")
+            logger.error("[validate_export] No nodes found")
 
         validation.is_valid = len(validation.errors) == 0
+
+        logger.info(f"[validate_export] Validation completed: is_valid={validation.is_valid}, error_count={len(validation.errors)}, warning_count={len(validation.warnings)}")
+        if not validation.is_valid:
+            logger.error(f"[validate_export] Validation failed: errors={validation.errors}")
+        if validation.warnings:
+            logger.warning(f"[validate_export] Validation warnings: warnings={validation.warnings}")
 
         return validation
 

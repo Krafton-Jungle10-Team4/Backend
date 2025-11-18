@@ -259,21 +259,13 @@ async def validate_import(
     return validation
 
 
-@router.post(
-    "/{template_id}/usage",
-    response_model=TemplateUsageResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="템플릿 사용 기록",
-    description="템플릿 사용을 기록합니다."
-)
-async def record_usage(
+async def _create_usage_response(
     template_id: str,
     usage: TemplateUsageCreate,
-    user: User = Depends(get_current_user_from_jwt),
-    db: AsyncSession = Depends(get_db),
-):
-    """템플릿 사용 기록"""
-
+    user: User,
+    db: AsyncSession
+) -> TemplateUsageResponse:
+    """템플릿 사용 기록 생성 공통 구현"""
     try:
         usage_record = await TemplateService.create_usage_record(
             db=db,
@@ -304,6 +296,41 @@ async def record_usage(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": "PERMISSION_DENIED", "message": str(e)}
         )
+
+
+@router.post(
+    "/{template_id}/use",
+    response_model=TemplateUsageResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="템플릿 사용 기록",
+    description="템플릿 사용을 기록합니다."
+)
+async def record_usage(
+    template_id: str,
+    usage: TemplateUsageCreate,
+    user: User = Depends(get_current_user_from_jwt),
+    db: AsyncSession = Depends(get_db),
+):
+    """템플릿 사용 기록"""
+    return await _create_usage_response(template_id, usage, user, db)
+
+
+@router.post(
+    "/{template_id}/usage",
+    response_model=TemplateUsageResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="템플릿 사용 기록 (구 버전)",
+    description="기존 클라이언트 호환을 위한 엔드포인트입니다.",
+    include_in_schema=False
+)
+async def record_usage_legacy(
+    template_id: str,
+    usage: TemplateUsageCreate,
+    user: User = Depends(get_current_user_from_jwt),
+    db: AsyncSession = Depends(get_db),
+):
+    """구 버전 호환용 템플릿 사용 기록"""
+    return await _create_usage_response(template_id, usage, user, db)
 
 
 @router.post(
