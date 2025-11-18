@@ -7,19 +7,18 @@ from datetime import datetime
 
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
 from app.schemas.workflow import NodePortSchema, PortDefinition, PortType
-from app.services.template_service import TemplateService
+from app.services.library_service import LibraryService
 from app.core.workflow.executor_v2 import WorkflowExecutorV2
 from app.core.workflow.variable_pool import VariablePool
-from app.schemas.template import TemplateUsageCreate
 
 logger = logging.getLogger(__name__)
 
 
 class ImportedWorkflowNode(BaseNodeV2):
-    """Imported Workflow 노드 - 템플릿을 실행
+    """Imported Workflow 노드 - 라이브러리 에이전트를 실행
 
-    템플릿으로 저장된 워크플로우를 현재 워크플로우 내에서 실행합니다.
-    입력 변수를 템플릿의 입력 포트에 매핑하고, 템플릿 실행 결과를 출력 포트로 반환합니다.
+    라이브러리에 저장된 워크플로우를 현재 워크플로우 내에서 실행합니다.
+    입력 변수를 라이브러리 에이전트의 입력 포트에 매핑하고, 실행 결과를 출력 포트로 반환합니다.
     """
 
     def get_port_schema(self) -> NodePortSchema:
@@ -38,7 +37,7 @@ class ImportedWorkflowNode(BaseNodeV2):
                 name="input",
                 type=PortType.ANY,
                 required=False,
-                description="템플릿 입력 데이터",
+                description="라이브러리 에이전트 입력 데이터",
                 display_name="입력"
             )
         ]
@@ -48,7 +47,7 @@ class ImportedWorkflowNode(BaseNodeV2):
                 name="output",
                 type=PortType.ANY,
                 required=False,
-                description="템플릿 출력 데이터",
+                description="라이브러리 에이전트 출력 데이터",
                 display_name="출력"
             )
         ]
@@ -115,47 +114,47 @@ class ImportedWorkflowNode(BaseNodeV2):
             Dict[str, Any]: 출력 포트 값들
 
         Raises:
-            ValueError: template_id가 설정되지 않은 경우
-            RuntimeError: 템플릿 실행 실패 시
+            ValueError: source_version_id가 설정되지 않은 경우
+            RuntimeError: 라이브러리 에이전트 실행 실패 시
         """
         config = self.config
-        template_id = config.get("template_id")
+        source_version_id = config.get("source_version_id") or config.get("template_id")
 
-        if not template_id:
-            inferred_id = self._infer_template_id_from_node_id()
+        if not source_version_id:
+            inferred_id = self._infer_version_id_from_node_id()
             if inferred_id:
                 logger.warning(
-                    "template_id missing for imported node %s, inferred %s from node_id",
+                    "source_version_id missing for imported node %s, inferred %s from node_id",
                     self.node_id,
                     inferred_id
                 )
-                template_id = inferred_id
-                self.config["template_id"] = inferred_id
+                source_version_id = inferred_id
+                self.config["source_version_id"] = inferred_id
 
         # 수정: self.variable_mappings 사용
         variable_mappings = self.variable_mappings or {}
 
-        if not template_id:
-            raise ValueError("template_id가 설정되지 않았습니다")
+        if not source_version_id:
+            raise ValueError("source_version_id가 설정되지 않았습니다")
 
-        logger.info(f"Imported Workflow 실행 시작: {template_id}")
+        logger.info(f"Imported Workflow 실행 시작: {source_version_id}")
 
         try:
-            # 템플릿 로드
-            template = await self._load_template(template_id, context)
+            # 라이브러리 에이전트 로드
+            agent_data = await self._load_library_agent(source_version_id, context)
 
             # 입력 변수 매핑
             internal_inputs = self._map_input_variables(
                 context.variable_pool,
                 variable_mappings,
-                template.get("input_schema", [])
+                agent_data.get("input_schema", [])
             )
 
             logger.info(f"Mapped internal inputs: {list(internal_inputs.keys())}")
 
-            start_node_id = template.get("start_node_id")
+            start_node_id = agent_data.get("start_node_id")
             if not start_node_id:
-                raise ValueError("템플릿에서 Start 노드를 찾을 수 없습니다")
+                raise ValueError("라이브러리 에이전트에서 Start 노드를 찾을 수 없습니다")
 
             # 템플릿 워크플로우 실행을 위한 파라미터 준비
             db = context.get_service("db_session")
@@ -164,14 +163,14 @@ class ImportedWorkflowNode(BaseNodeV2):
             bot_id = context.get_service("bot_id")
             session_id = context.get_service("session_id")
 
-            # 템플릿의 워크플로우 데이터 구성
+            # 라이브러리 에이전트의 워크플로우 데이터 구성
             initial_node_outputs = {
                 start_node_id: internal_inputs
             }
 
             workflow_data = {
-                "nodes": template["graph"]["nodes"],
-                "edges": template["graph"]["edges"],
+                "nodes": agent_data["graph"]["nodes"],
+                "edges": agent_data["graph"]["edges"],
                 "environment_variables": {},
                 "conversation_variables": {}
             }
@@ -196,10 +195,10 @@ class ImportedWorkflowNode(BaseNodeV2):
             )
 
             # 출력 값 수집 및 매핑
-            output_schema = template.get("output_schema", [])
-            output_mappings = template.get("output_mappings", {})
+            output_schema = agent_data.get("output_schema", [])
+            output_mappings = agent_data.get("output_mappings", {})
             output_values = self._collect_output_values(
-                template=template,
+                agent_data=agent_data,
                 child_executor=child_executor,
                 output_schema=output_schema,
                 default_value=result,
@@ -208,9 +207,9 @@ class ImportedWorkflowNode(BaseNodeV2):
             outputs = self._map_output_variables(output_values, output_schema)
 
             # 실행 기록
-            await self._record_execution(template_id, context)
+            await self._record_execution(source_version_id, context)
 
-            logger.info(f"Imported Workflow 실행 완료: {template_id}")
+            logger.info(f"Imported Workflow 실행 완료: {source_version_id}")
 
             return {
                 "status": "success",
@@ -222,34 +221,41 @@ class ImportedWorkflowNode(BaseNodeV2):
             logger.error(f"Imported Workflow 실행 실패: {e}", exc_info=True)
             raise RuntimeError(f"Imported Workflow 실행 실패: {e}") from e
 
-    def _infer_template_id_from_node_id(self) -> Optional[str]:
-        """노드 ID에서 템플릿 ID 추론 (레거시 데이터용)"""
+    def _infer_version_id_from_node_id(self) -> Optional[str]:
+        """노드 ID에서 버전 ID 추론 (레거시 데이터용)"""
         if not self.node_id:
             return None
 
+        # 레거시 템플릿 ID 패턴 지원
         match = re.match(r"^imported_(tpl_[a-zA-Z0-9]+)_\d+", self.node_id)
         if match:
             return match.group(1)
+
+        # 새 버전 ID 패턴 지원 (UUID)
+        match = re.match(r"^imported_([a-f0-9-]{36})_\d+", self.node_id)
+        if match:
+            return match.group(1)
+
         return None
 
-    async def _load_template(
+    async def _load_library_agent(
         self,
-        template_id: str,
+        source_version_id: str,
         context: NodeExecutionContext
     ) -> Dict[str, Any]:
-        """템플릿 로드
+        """라이브러리 에이전트 로드
 
         Args:
-            template_id: 템플릿 ID
+            source_version_id: 라이브러리 버전 ID (UUID)
             context: 실행 컨텍스트
 
         Returns:
-            Dict[str, Any]: 템플릿 데이터
+            Dict[str, Any]: 라이브러리 에이전트 데이터
 
         Raises:
-            NotFoundException: 템플릿을 찾을 수 없는 경우
+            ValueError: 라이브러리 에이전트를 찾을 수 없는 경우
         """
-        # DB에서 템플릿 조회
+        # DB에서 라이브러리 에이전트 조회
         db = context.get_service("db_session")
 
         if not db:
@@ -258,25 +264,32 @@ class ImportedWorkflowNode(BaseNodeV2):
         # user는 service_container에 없을 수 있으므로 기본값 처리
         user = context.get_service("user")
 
-        # TemplateService를 통해 템플릿 조회
-        template_service = TemplateService()
+        # LibraryService를 통해 라이브러리 에이전트 조회
+        library_service = LibraryService()
 
-        if user:
-            template = await template_service.get_template(db, template_id, user)
+        if user and hasattr(user, 'id'):
+            # 권한 검증 포함 조회
+            source_version = await library_service.get_library_agent_by_id(
+                db=db,
+                version_id=source_version_id,
+                user_id=user.id
+            )
         else:
-            # 권한 검증 없이 템플릿 조회 (봇 실행 컨텍스트)
+            # 권한 검증 없이 조회 (봇 실행 컨텍스트)
             from sqlalchemy import select
-            from app.models.template import Template
+            from app.models.workflow_version import BotWorkflowVersion
 
             result = await db.execute(
-                select(Template).where(Template.id == template_id)
+                select(BotWorkflowVersion).where(
+                    BotWorkflowVersion.id == source_version_id
+                )
             )
-            template = result.scalar_one_or_none()
+            source_version = result.scalar_one_or_none()
 
-            if not template:
-                raise ValueError(f"템플릿을 찾을 수 없습니다: {template_id}")
+        if not source_version:
+            raise ValueError(f"라이브러리 에이전트를 찾을 수 없습니다: {source_version_id}")
 
-        graph = template.graph or {}
+        graph = source_version.graph or {}
         nodes = graph.get("nodes", [])
 
         start_node_id = None
@@ -313,11 +326,11 @@ class ImportedWorkflowNode(BaseNodeV2):
                             output_mappings.setdefault(port_name, selector)
 
         return {
-            "id": template.id,
-            "name": template.name,
+            "id": str(source_version.id),
+            "name": source_version.library_name or f"Version {source_version.version}",
             "graph": graph,
-            "input_schema": template.input_schema,
-            "output_schema": template.output_schema,
+            "input_schema": source_version.input_schema or [],
+            "output_schema": source_version.output_schema or [],
             "start_node_id": start_node_id,
             "output_mappings": output_mappings
         }
@@ -407,13 +420,13 @@ class ImportedWorkflowNode(BaseNodeV2):
 
     def _collect_output_values(
         self,
-        template: Dict[str, Any],
+        agent_data: Dict[str, Any],
         child_executor: WorkflowExecutorV2,
         output_schema: List[Dict],
         default_value: Any,
         output_mappings: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """템플릿 내부 노드 출력 수집"""
+        """라이브러리 에이전트 내부 노드 출력 수집"""
         values: Dict[str, Any] = {}
         pool = getattr(child_executor, "variable_pool", None)
 
@@ -458,13 +471,13 @@ class ImportedWorkflowNode(BaseNodeV2):
 
     async def _record_execution(
         self,
-        template_id: str,
+        source_version_id: str,
         context: NodeExecutionContext
     ):
         """실행 기록
 
         Args:
-            template_id: 템플릿 ID
+            source_version_id: 라이브러리 버전 ID
             context: 실행 컨텍스트
         """
         try:
@@ -477,29 +490,33 @@ class ImportedWorkflowNode(BaseNodeV2):
                 return
 
             # user가 없으면 실행 기록 생략 (봇 실행 컨텍스트)
-            if not user:
-                logger.debug("사용자 정보가 없어 템플릿 사용 기록을 생략합니다")
+            if not user or not hasattr(user, 'uuid'):
+                logger.debug("사용자 정보가 없어 라이브러리 사용 기록을 생략합니다")
                 return
 
-            template_service = TemplateService()
+            # AgentImportHistory에 실행 기록 저장
+            from app.models.import_history import AgentImportHistory
+            import uuid as uuid_lib
+            from datetime import datetime, timezone
 
-            # 수정: event_type="execution" (API 명세 준수)
-            usage = TemplateUsageCreate(
-                workflow_id=bot_id or "",
-                workflow_version_id=None,
-                node_id=self.node_id,
-                event_type="execution",  # imported | execution
-                note=f"Nested execution in node {self.node_id}"
+            # 실행 기록 생성 (메타데이터에 실행 정보 포함)
+            import_record = AgentImportHistory(
+                id=uuid_lib.uuid4(),
+                source_version_id=uuid_lib.UUID(source_version_id),
+                target_bot_id=bot_id or "",
+                imported_by=user.uuid,
+                imported_at=datetime.now(timezone.utc),
+                metadata={
+                    "event_type": "execution",
+                    "node_id": self.node_id,
+                    "note": f"Nested execution in node {self.node_id}"
+                }
             )
 
-            await template_service.create_usage_record(
-                db=db,
-                template_id=template_id,
-                usage=usage,
-                user=user
-            )
+            db.add(import_record)
+            await db.commit()
 
-            logger.info(f"템플릿 사용 기록 저장: {template_id} (event_type=execution)")
+            logger.info(f"라이브러리 에이전트 실행 기록 저장: {source_version_id} (event_type=execution)")
 
         except Exception as e:
             logger.error(f"실행 기록 실패: {e}")
@@ -511,10 +528,10 @@ class ImportedWorkflowNode(BaseNodeV2):
         Returns:
             tuple: (유효 여부, 오류 메시지)
         """
-        # template_id 필수 체크
-        template_id = self.config.get("template_id")
-        if not template_id:
-            return False, "template_id가 설정되지 않았습니다"
+        # source_version_id 또는 template_id(레거시) 필수 체크
+        source_version_id = self.config.get("source_version_id") or self.config.get("template_id")
+        if not source_version_id:
+            return False, "source_version_id가 설정되지 않았습니다"
 
         # 기본 포트 스키마 검증
         return super().validate()
