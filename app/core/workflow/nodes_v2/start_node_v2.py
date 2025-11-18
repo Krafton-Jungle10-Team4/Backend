@@ -33,6 +33,38 @@ class StartNodeV2(BaseNodeV2):
         Returns:
             NodePortSchema: 입력 없음, 출력 2개 (query, session_id)
         """
+        custom_ports = self.config.get("ports") or {}
+
+        def _safe_parse_ports(port_list):
+            parsed: List[PortDefinition] = []
+            for port in port_list or []:
+                try:
+                    parsed.append(PortDefinition.model_validate(port))
+                except Exception:
+                    name = port.get("name") if isinstance(port, dict) else None
+                    if not name:
+                        continue
+                    parsed.append(
+                        PortDefinition(
+                            name=name,
+                            type=PortType(port.get("type", PortType.ANY.value))
+                            if isinstance(port, dict) and port.get("type")
+                            else PortType.ANY,
+                            required=bool(port.get("required", False)) if isinstance(port, dict) else False,
+                            description=port.get("description", "") if isinstance(port, dict) else "",
+                            display_name=port.get("display_name", name) if isinstance(port, dict) else name,
+                        )
+                    )
+            return parsed
+
+        custom_outputs = _safe_parse_ports(custom_ports.get("outputs"))
+        if custom_outputs:
+            return NodePortSchema(inputs=[], outputs=custom_outputs)
+
+        custom_output_schema = _safe_parse_ports(self.config.get("output_schema"))
+        if custom_output_schema:
+            return NodePortSchema(inputs=[], outputs=custom_output_schema)
+
         return NodePortSchema(
             inputs=[],  # 시작 노드는 입력 없음
             outputs=[
@@ -84,10 +116,26 @@ class StartNodeV2(BaseNodeV2):
 
         logger.info(f"StartNodeV2 executed: session={session_id}")
 
-        return {
-            "query": user_message,
-            "session_id": session_id
-        }
+        port_schema = self.get_port_schema()
+        port_bindings = self.config.get("port_bindings", {}) or {}
+
+        resolved_outputs: Dict[str, Any] = {}
+        for port in port_schema.outputs:
+            name = port.name
+            if not name:
+                continue
+            binding = port_bindings.get(name)
+            value = self._resolve_port_binding(binding, user_message, session_id)
+
+            if value is None:
+                if name == "query":
+                    value = user_message
+                elif name == "session_id":
+                    value = session_id
+
+            resolved_outputs[name] = value
+
+        return resolved_outputs
 
     def validate(self) -> tuple[bool, Optional[str]]:
         """
@@ -101,6 +149,24 @@ class StartNodeV2(BaseNodeV2):
             return False, "Start node should not have input mappings"
 
         return True, None
+
+    @staticmethod
+    def _resolve_port_binding(binding: Optional[Dict[str, Any]], user_message: Optional[str], session_id: Optional[str]) -> Any:
+        if not binding or not isinstance(binding, dict):
+            return None
+
+        binding_type = binding.get("type")
+        if binding_type == "user_message":
+            return user_message
+        if binding_type == "session_id":
+            return session_id
+        if binding_type == "literal":
+            return binding.get("value")
+
+        # 향후 확장을 위한 기본 동작: 인라인 value 우선
+        if "value" in binding:
+            return binding.get("value")
+        return None
 
     def get_required_services(self) -> List[str]:
         """필요한 서비스 없음"""

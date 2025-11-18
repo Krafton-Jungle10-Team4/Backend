@@ -184,7 +184,8 @@ class TemplateService:
         db: AsyncSession,
         workflow_id: str,
         version_id: str,
-        user: User
+        user: User,
+        graph_data: Optional[Dict[str, Any]] = None
     ) -> ExportValidation:
         """Export 검증
 
@@ -193,6 +194,7 @@ class TemplateService:
             workflow_id: 워크플로우 ID
             version_id: 워크플로우 버전 ID
             user: 현재 사용자
+            graph_data: 검증할 그래프 데이터 (없으면 DB에서 조회)
 
         Returns:
             검증 결과
@@ -244,8 +246,14 @@ class TemplateService:
         else:
             validation.warnings.append("발행되지 않은 버전입니다")
 
-        # 그래프 검증
-        graph = version.graph or {}
+        # 그래프 검증 (전달받은 graph_data 우선 사용, 없으면 DB 조회)
+        if graph_data:
+            logger.info(f"[validate_export] Using provided graph_data from client: nodes={len(graph_data.get('nodes', []))}, edges={len(graph_data.get('edges', []))}")
+            graph = graph_data
+        else:
+            logger.info("[validate_export] No graph_data provided, using DB version")
+            graph = version.graph or {}
+
         nodes = graph.get("nodes", [])
         edges = graph.get("edges", [])
 

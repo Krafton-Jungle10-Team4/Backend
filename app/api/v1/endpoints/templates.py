@@ -14,7 +14,7 @@ from app.models.user import User
 from app.models.template import Template
 from app.schemas.template import (
     WorkflowTemplate, TemplateSummary, TemplateListResponse, ExportConfig,
-    ExportValidation, ImportValidation, TemplateUsageCreate,
+    ExportValidation, ExportValidationRequest, ImportValidation, TemplateUsageCreate,
     TemplateUsageResponse
 )
 from app.services.template_service import TemplateService
@@ -156,18 +156,23 @@ async def get_template(
     description="워크플로우를 템플릿으로 내보내기 전 검증합니다."
 )
 async def validate_export(
+    payload: ExportValidationRequest,
     workflow_id: str = Query(..., description="워크플로우 ID"),
     version_id: str = Query(..., description="워크플로우 버전 ID"),
     user: User = Depends(get_current_user_from_jwt),
     db: AsyncSession = Depends(get_db),
 ):
-    """Export 검증"""
+    """Export 검증 (실시간 캔버스 데이터 기반)"""
 
     validation = await TemplateService.validate_export(
         db=db,
         workflow_id=workflow_id,
         version_id=version_id,
-        user=user
+        user=user,
+        graph_data={
+            "nodes": payload.nodes,
+            "edges": payload.edges
+        }
     )
 
     return validation

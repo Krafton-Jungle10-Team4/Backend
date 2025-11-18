@@ -101,6 +101,14 @@ class ExportConfig(BaseModel):
     estimated_cost: Optional[float] = None
 
 
+class ExportValidationRequest(BaseModel):
+    """Export 검증 요청"""
+    nodes: List[Dict[str, Any]] = Field(..., description="워크플로우 노드 목록")
+    edges: List[Dict[str, Any]] = Field(..., description="워크플로우 엣지 목록")
+    environment_variables: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    conversation_variables: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+
+
 class ExportValidation(BaseModel):
     """Export 검증 결과"""
     is_valid: bool

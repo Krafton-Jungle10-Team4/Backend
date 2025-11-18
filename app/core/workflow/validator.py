@@ -14,6 +14,7 @@ from app.core.workflow.nodes_v2.utils.template_renderer import (
     TemplateRenderer,
     TemplateRenderError
 )
+from app.schemas.workflow import PortType
 import logging
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class WorkflowValidator:
         "conversation": {"conv", "conversation"},
         "sys": {"sys", "system"},
     }
+    _HANDLE_PLACEHOLDERS = {"source", "target", "default", "input", "output"}
 
     def __init__(self):
         """검증기 초기화"""
@@ -314,8 +316,6 @@ class WorkflowValidator:
         port_map: Dict[str, Dict[str, Dict[str, Any]]]
     ) -> None:
         """placeholder 포트 핸들을 스키마 기반 포트명으로 대체"""
-        placeholders = {"source", "target", "default", "input", "output"}
-
         for edge in edges:
             source_id = edge.get("source")
             target_id = edge.get("target")
@@ -326,12 +326,20 @@ class WorkflowValidator:
             target_ports = port_map.get(target_id, {}).get("inputs", {})
 
             source_port = edge.get("source_port")
-            normalized_source = self._infer_port_name(source_port, source_ports, placeholders)
+            normalized_source = self._infer_port_name(
+                source_port,
+                source_ports,
+                self._HANDLE_PLACEHOLDERS
+            )
             if normalized_source:
                 edge["source_port"] = normalized_source
 
             target_port = edge.get("target_port")
-            normalized_target = self._infer_port_name(target_port, target_ports, placeholders)
+            normalized_target = self._infer_port_name(
+                target_port,
+                target_ports,
+                self._HANDLE_PLACEHOLDERS
+            )
             if normalized_target:
                 edge["target_port"] = normalized_target
 
@@ -401,15 +409,54 @@ class WorkflowValidator:
                     continue
 
                 # 엣지에서 해당 포트로 연결된 것을 찾기
-                candidate_edge = next(
-                    (
-                        edge for edge in incoming_edges.get(node_id, [])
-                        if edge.get("target_port") == port_name
-                        and edge.get("source")
-                        and edge.get("source_port")
-                    ),
-                    None
-                )
+                candidate_edge = None
+                for edge in incoming_edges.get(node_id, []):
+                    source = edge.get("source")
+                    source_port = edge.get("source_port")
+                    if not source or not source_port:
+                        continue
+
+                    normalized_target = self._infer_port_name(
+                        edge.get("target_port"),
+                        input_ports,
+                        self._HANDLE_PLACEHOLDERS
+                    )
+                    if normalized_target == port_name:
+                        if normalized_target and edge.get("target_port") != normalized_target:
+                            edge["target_port"] = normalized_target
+                        candidate_edge = edge
+                        break
+
+                if not candidate_edge:
+                    compatible_edges = []
+                    for edge in incoming_edges.get(node_id, []):
+                        source = edge.get("source")
+                        source_port = edge.get("source_port")
+                        if not source or not source_port:
+                            continue
+
+                        source_meta = port_map.get(source, {}).get("outputs", {}).get(source_port, {})
+                        source_type = source_meta.get("type")
+                        target_type = meta.get("type")
+                        if self._is_port_type_compatible(source_type, target_type):
+                            compatible_edges.append(edge)
+
+                    if len(compatible_edges) == 1:
+                        candidate_edge = compatible_edges[0]
+                        if not candidate_edge.get("target_port"):
+                            candidate_edge["target_port"] = port_name
+
+                # 입력 포트가 하나만 있는 경우 target_port가 비어도 허용
+                if not candidate_edge and len(input_ports) == 1:
+                    candidate_edge = next(
+                        (
+                            edge for edge in incoming_edges.get(node_id, [])
+                            if edge.get("source") and edge.get("source_port")
+                        ),
+                        None
+                    )
+                    if candidate_edge:
+                        candidate_edge["target_port"] = port_name
 
                 if candidate_edge:
                     # 특수 프리픽스(env/conv/sys) 처리
@@ -630,6 +677,20 @@ class WorkflowValidator:
             if isinstance(source, dict) and isinstance(source.get("variable"), str):
                 return source["variable"]
         return None
+
+    @staticmethod
+    def _is_port_type_compatible(source_type: Optional[str], target_type: Optional[str]) -> bool:
+        if not source_type or not target_type:
+            return False
+
+        source_value = str(source_type).lower()
+        target_value = str(target_type).lower()
+
+        if source_value == target_value:
+            return True
+
+        any_value = PortType.ANY.value
+        return source_value == any_value or target_value == any_value
 
     def _validate_no_cycles(self, adjacency_list: Dict[str, List[str]]):
         """순환 참조 검증 (DFS 사용)"""
