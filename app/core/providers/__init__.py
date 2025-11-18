@@ -8,5 +8,6 @@ LLMProviderRegistry에 자동 등록됩니다.
 from app.core.providers import openai as _openai  # noqa: F401
 from app.core.providers import anthropic as _anthropic  # noqa: F401
 from app.core.providers import google as _google  # noqa: F401
+from app.core.providers import bedrock as _bedrock  # noqa: F401
 
-__all__ = ["_openai", "_anthropic", "_google"]
+__all__ = ["_openai", "_anthropic", "_google", "_bedrock"]

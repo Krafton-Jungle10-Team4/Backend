@@ -171,14 +171,58 @@ class TemplateRenderer:
 
             # 변수 연결 검증
             if allowed_selectors is not None and match.selector not in allowed_selectors:
-                raise TemplateRenderError(
-                    f"변수 '{match.selector}'는 연결되지 않은 노드의 출력입니다. "
-                    f"워크플로우 에디터에서 해당 노드를 연결해주세요."
-                )
+                # 더 명확한 에러 메시지 제공
+                parts = match.selector.split(".")
+                if len(parts) == 2:
+                    node_id, port_name = parts
+                    # VariablePool에 노드가 있는지 확인
+                    has_node = variable_pool.has_node_output(node_id)
+                    has_port = variable_pool.has_node_output(node_id, port_name) if has_node else False
+                    
+                    if not has_node:
+                        raise TemplateRenderError(
+                            f"변수 '{match.selector}'는 현재 실행 경로에 없는 노드입니다. "
+                            f"노드 '{node_id}'가 실행되지 않았거나 다른 분기 경로에서만 실행되었습니다. "
+                            f"워크플로우 구조를 확인하여 해당 노드가 현재 실행 경로에 포함되도록 해주세요."
+                        )
+                    elif not has_port:
+                        raise TemplateRenderError(
+                            f"변수 '{match.selector}'의 포트 '{port_name}'가 노드 '{node_id}'에 존재하지 않습니다. "
+                            f"노드의 출력 포트를 확인하여 올바른 포트 이름을 사용해주세요."
+                        )
+                    else:
+                        raise TemplateRenderError(
+                            f"변수 '{match.selector}'는 연결되지 않은 노드의 출력입니다. "
+                            f"워크플로우 에디터에서 해당 노드를 연결해주세요."
+                        )
+                else:
+                    raise TemplateRenderError(
+                        f"변수 '{match.selector}'는 연결되지 않은 노드의 출력입니다. "
+                        f"워크플로우 에디터에서 해당 노드를 연결해주세요."
+                    )
 
             value = variable_pool.resolve_value_selector(match.selector)
             if value is None:
-                raise TemplateRenderError(f"변수 '{match.selector}'를 찾을 수 없습니다")
+                # 더 명확한 에러 메시지
+                parts = match.selector.split(".")
+                if len(parts) == 2:
+                    node_id, port_name = parts
+                    has_node = variable_pool.has_node_output(node_id)
+                    if not has_node:
+                        raise TemplateRenderError(
+                            f"변수 '{match.selector}'를 찾을 수 없습니다. "
+                            f"노드 '{node_id}'가 실행되지 않았거나 VariablePool에 없습니다."
+                        )
+                    else:
+                        raise TemplateRenderError(
+                            f"변수 '{match.selector}'를 찾을 수 없습니다. "
+                            f"노드 '{node_id}'의 출력 포트 '{port_name}'가 VariablePool에 없습니다."
+                        )
+                else:
+                    raise TemplateRenderError(
+                        f"변수 '{match.selector}'를 찾을 수 없습니다. "
+                        f"변수 형식이 올바른지 확인해주세요 (예: node_id.port_name)."
+                    )
 
             segment = Segment.from_value(value)
             segments.append(segment)

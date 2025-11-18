@@ -128,8 +128,35 @@ class LLMNodeV2(BaseNodeV2):
         stream_handler = context.get_service("stream_handler")
 
         # 설정 파라미터
-        model = self.config.get("model", "gpt-4")
-        provider = self.config.get("provider", "openai")
+        from app.config import settings
+        
+        # Provider: 노드 설정에서 가져오거나, 환경 변수 또는 기본값 사용
+        node_provider = self.config.get("provider")
+        if node_provider:
+            # 노드 설정에 provider가 있으면 사용 (프론트에서 선택한 값)
+            provider = node_provider.lower()
+        elif settings.llm_provider:
+            # 환경 변수에 provider가 있으면 사용
+            provider = settings.llm_provider.lower()
+        else:
+            # 기본값: bedrock (프로덕션 환경)
+            provider = "bedrock"
+        
+        # Model: 노드 설정에서 가져오거나 provider별 기본값 사용
+        model = self.config.get("model")
+        if not model:
+            # provider별 기본 모델
+            if provider == "bedrock":
+                model = settings.bedrock_model or "anthropic.claude-3-haiku-20240307-v1:0"
+            elif provider == "openai":
+                model = settings.openai_model or "gpt-3.5-turbo"
+            elif provider == "anthropic":
+                model = settings.anthropic_model or "claude-sonnet-4-5-20250929"
+            elif provider == "google":
+                model = settings.google_default_model or "gemini-2.5-flash"
+            else:
+                model = "anthropic.claude-3-haiku-20240307-v1:0"  # fallback
+        
         temperature = self.config.get("temperature", 0.7)
         max_tokens = self.config.get("max_tokens", 4000)
         prompt_template = (self.config.get("prompt_template") or "").strip()
@@ -452,6 +479,16 @@ class LLMNodeV2(BaseNodeV2):
         # 자기 자신의 입력 포트도 허용 (self.port_name 형식)
         for port_name in self.get_input_port_names():
             allowed.append(f"self.{port_name}")
+
+        # 대화 변수(conversation variables)는 항상 허용 (전역 변수)
+        # 프론트엔드에서 프롬프트 템플릿에 사용할 수 있도록 항상 포함
+        # VariablePool에 실제로 존재하는 conversation variables를 가져와서 추가
+        if context.variable_pool:
+            conversation_vars = context.variable_pool.get_all_conversation_variables()
+            for var_name in conversation_vars.keys():
+                # conv.var_name과 conversation.var_name 두 형식 모두 허용
+                allowed.append(f"conv.{var_name}")
+                allowed.append(f"conversation.{var_name}")
 
         # 중복 제거
         allowed = list(set(allowed))

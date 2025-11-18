@@ -210,7 +210,7 @@ class Settings(BaseSettings):
 
     # AWS Bedrock (Claude via AWS) - 서울 리전
     bedrock_region: str = "ap-northeast-2"
-    bedrock_model: str = "anthropic.claude-haiku-4-5-20251001-v1:0"  # Haiku 4.5 (최신, 저렴)
+    bedrock_model: str = "anthropic.claude-3-haiku-20240307-v1:0"  # Haiku 3 (ON_DEMAND 지원)
 
     # 챗봇 설정
     # 생성 응답의 다양성(창의성): 높을 수록 창의적, 낮을 수록 일관적

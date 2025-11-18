@@ -11,6 +11,7 @@ from app.core.providers.config import (
     OpenAIConfig,
     AnthropicConfig,
     GoogleConfig,
+    BedrockConfig,
     ProviderConfig,
 )
 from app.core.exceptions import LLMServiceError
@@ -160,16 +161,25 @@ class LLMService:
                 default_model=settings.google_default_model
             )
 
+        bedrock_cfg = None
+        if settings.llm_provider and settings.llm_provider.lower() == "bedrock":
+            bedrock_cfg = BedrockConfig(
+                region_name=settings.bedrock_region,
+                default_model=settings.bedrock_model,
+                system_prompt=None
+            )
+
         return LLMConfig(
             default_provider=(settings.llm_provider or "openai").lower(),
             openai=openai_cfg,
             anthropic=anthropic_cfg,
-            google=google_cfg
+            google=google_cfg,
+            bedrock=bedrock_cfg
         )
 
     def _initialize_providers(self) -> None:
         """사용 가능한 Provider 선 초기화"""
-        for provider_key in ("openai", "anthropic", "google"):
+        for provider_key in ("openai", "anthropic", "google", "bedrock"):
             config = self.config.get_provider_config(provider_key)
             if config and config.enabled:
                 try:

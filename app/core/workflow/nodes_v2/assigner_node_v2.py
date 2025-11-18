@@ -410,6 +410,10 @@ class AssignerNodeV2(BaseNodeV2):
         """
         실행 경로상의 노드들의 변수 셀렉터만 허용
 
+        개선 사항:
+        1. 실제 VariablePool에 존재하는 변수만 반환
+        2. 실행 경로에 있는 노드의 실제 출력 포트만 허용
+
         Args:
             context: 실행 컨텍스트 (executed_nodes 포함)
 
@@ -422,24 +426,16 @@ class AssignerNodeV2(BaseNodeV2):
         for port_name in self.get_input_port_names():
             allowed.append(f"self.{port_name}")
 
-        # 2. 실행 경로상의 노드들의 출력 허용
+        # 2. 실행 경로상의 노드들의 실제 출력 포트만 허용
         if hasattr(context, 'executed_nodes') and context.executed_nodes:
             for node_id in context.executed_nodes:
-                # 각 실행된 노드의 모든 출력 포트를 허용
-                # 일반적인 출력 포트들 추가
-                common_outputs = ['output', 'response', 'result', 'query', 'value', 'session_id']
-                for output in common_outputs:
-                    allowed.append(f"{node_id}.{output}")
-
-                # 특수 노드 타입별 출력 추가
-                if 'start' in node_id.lower():
-                    allowed.append(f"{node_id}.query")
-                    allowed.append(f"{node_id}.session_id")
-                elif 'llm' in node_id.lower():
-                    allowed.append(f"{node_id}.response")
-                elif 'condition' in node_id.lower() or 'if' in node_id.lower():
-                    allowed.append(f"{node_id}.if")
-                    allowed.append(f"{node_id}.else")
+                # VariablePool에 실제로 존재하는 출력 포트만 허용
+                if context.variable_pool.has_node_output(node_id):
+                    node_outputs = context.variable_pool.get_all_node_outputs(node_id)
+                    for port_name in node_outputs.keys():
+                        selector = f"{node_id}.{port_name}"
+                        if selector not in allowed:
+                            allowed.append(selector)
 
         # 3. conversation 변수는 항상 허용
         allowed.extend([
@@ -449,8 +445,12 @@ class AssignerNodeV2(BaseNodeV2):
 
         logger.debug(
             f"[AssignerNodeV2] Node {self.node_id} allowed selectors from execution path: "
-            f"executed_nodes={context.executed_nodes}, allowed={allowed[:10]}..."  # 처음 10개만 표시
+            f"executed_nodes={context.executed_nodes}, allowed={len(allowed)}개"
         )
+        if len(allowed) > 20:
+            logger.debug(f"   처음 20개: {allowed[:20]}...")
+        else:
+            logger.debug(f"   전체: {allowed}")
 
         return allowed
 

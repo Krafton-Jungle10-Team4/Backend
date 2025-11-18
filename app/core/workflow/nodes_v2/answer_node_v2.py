@@ -58,6 +58,11 @@ class AnswerNodeV2(BaseNodeV2):
         """
         실행 경로상의 노드들의 변수 셀렉터 목록 계산 (Answer 노드 전용)
 
+        개선 사항:
+        1. 실제 VariablePool에 존재하는 변수만 반환
+        2. 실행 경로에 있는 노드의 실제 출력 포트만 허용
+        3. 템플릿에서 실제로 사용되는 변수만 포함
+
         실행 플로우를 따라 도달한 모든 노드들의 출력 변수를 사용할 수 있도록 허용합니다.
         템플릿 내부에서 사용되는 변수도 자동으로 허용 목록에 추가합니다.
         """
@@ -65,58 +70,53 @@ class AnswerNodeV2(BaseNodeV2):
 
         allowed = []
 
-        # 실행 경로상의 노드들의 출력을 허용
-        if hasattr(context, 'executed_nodes') and context.executed_nodes:
-            logger.debug(f"[AnswerNodeV2] 실행 경로상의 노드들: {context.executed_nodes}")
-
-            # 실행 경로상의 노드들의 일반적인 출력 포트들
-            common_outputs = [
-                'output', 'response', 'result', 'results',
-                'query', 'value', 'session_id', 'text',
-                'tokens', 'model', 'data', 'content',
-                'answer', 'question', 'context', 'summary',
-                'extracted', 'processed', 'transformed', 'final_output'
-            ]
-
-            for node_id in context.executed_nodes:
-                # 각 노드의 가능한 출력들을 허용
-                for output in common_outputs:
-                    selector = f"{node_id}.{output}"
-                    allowed.append(selector)
-
-                # 특정 노드 타입에 대한 추가 출력 포트
-                if 'llm' in node_id.lower():
-                    allowed.append(f"{node_id}.response")
-                    allowed.append(f"{node_id}.tokens")
-                    allowed.append(f"{node_id}.model")
-                if 'tavily' in node_id.lower() or 'search' in node_id.lower():
-                    allowed.append(f"{node_id}.results")
-                    allowed.append(f"{node_id}.data")
-
-        # variable_mappings에 정의된 셀렉터들도 추가
-        for port_name, selector in self.variable_mappings.items():
-            if selector:
-                if isinstance(selector, str):
-                    allowed.append(selector)
-                elif isinstance(selector, dict):
-                    var_selector = selector.get("variable")
-                    if var_selector:
-                        allowed.append(var_selector)
-
-        # 템플릿에서 사용된 변수 추출하여 추가
+        # 1. 템플릿에서 실제로 사용되는 변수 추출 (우선순위 1)
+        template_selectors = []
         if self.template:
             parser = VariableTemplateParser(self.template)
             template_selectors = parser.extract_variable_selectors()
+            # 템플릿에서 사용된 변수는 무조건 허용 (실제 사용 중이므로)
             allowed.extend(template_selectors)
 
-        # 자기 자신의 입력 포트도 허용 (self.port_name 형식)
+        # 2. 실행 경로상의 노드들의 실제 출력 포트만 허용
+        if hasattr(context, 'executed_nodes') and context.executed_nodes:
+            logger.debug(f"[AnswerNodeV2] 실행 경로상의 노드들: {context.executed_nodes}")
+
+            for node_id in context.executed_nodes:
+                # VariablePool에 실제로 존재하는 출력 포트만 허용
+                if context.variable_pool.has_node_output(node_id):
+                    node_outputs = context.variable_pool.get_all_node_outputs(node_id)
+                    for port_name in node_outputs.keys():
+                        selector = f"{node_id}.{port_name}"
+                        if selector not in allowed:
+                            allowed.append(selector)
+
+        # 3. variable_mappings에 정의된 셀렉터들도 추가
+        for port_name, selector in self.variable_mappings.items():
+            if selector:
+                if isinstance(selector, str):
+                    if selector not in allowed:
+                        allowed.append(selector)
+                elif isinstance(selector, dict):
+                    var_selector = selector.get("variable")
+                    if var_selector and var_selector not in allowed:
+                        allowed.append(var_selector)
+
+        # 4. 자기 자신의 입력 포트도 허용 (self.port_name 형식)
         for port_name in self.get_input_port_names():
-            allowed.append(f"self.{port_name}")
+            self_selector = f"self.{port_name}"
+            if self_selector not in allowed:
+                allowed.append(self_selector)
 
-        # 중복 제거
-        allowed = list(set(allowed))
-
-        logger.info(f"🔍 AnswerNodeV2 {self.node_id} allowed selectors: {allowed}")
+        logger.info(
+            f"🔍 AnswerNodeV2 {self.node_id} allowed selectors: "
+            f"{len(allowed)}개 (템플릿 변수: {len(template_selectors)}개)"
+        )
+        if len(allowed) > 20:
+            logger.debug(f"   처음 20개: {allowed[:20]}...")
+        else:
+            logger.debug(f"   전체: {allowed}")
+        
         return allowed
 
     async def execute_v2(self, context: NodeExecutionContext) -> Dict[str, Any]:
@@ -134,23 +134,30 @@ class AnswerNodeV2(BaseNodeV2):
         allowed_selectors = self._compute_allowed_selectors(context)
 
         logger.info(f"🎨 AnswerNodeV2 템플릿: {self.template[:100]}...")
-        logger.info(f"🔑 allowed_selectors: {allowed_selectors}")
+        logger.debug(f"🔑 allowed_selectors ({len(allowed_selectors)}개): {allowed_selectors[:10]}..." if len(allowed_selectors) > 10 else f"🔑 allowed_selectors: {allowed_selectors}")
 
-        # VariablePool에 실제로 값이 있는지 확인
-        for selector in allowed_selectors:
-            if selector.startswith("self."):
-                continue
-            try:
-                parts = selector.split(".")
-                if len(parts) == 2:
-                    node_id, port_name = parts
-                    if context.variable_pool.has_node_output(node_id, port_name):
-                        value = context.variable_pool.get_node_output(node_id, port_name)
-                        logger.info(f"✅ VariablePool에 {selector} 존재: {str(value)[:100]}...")
-                    else:
-                        logger.warning(f"❌ VariablePool에 {selector} 없음!")
-            except Exception as e:
-                logger.error(f"❌ {selector} 확인 중 에러: {e}")
+        # 템플릿에서 실제로 사용되는 변수만 확인 (디버그용)
+        from app.core.workflow.nodes_v2.utils.variable_template_parser import VariableTemplateParser
+        if self.template:
+            parser = VariableTemplateParser(self.template)
+            template_selectors = parser.extract_variable_selectors()
+            for selector in template_selectors:
+                if selector.startswith("self."):
+                    continue
+                try:
+                    parts = selector.split(".")
+                    if len(parts) == 2:
+                        node_id, port_name = parts
+                        if context.variable_pool.has_node_output(node_id, port_name):
+                            value = context.variable_pool.get_node_output(node_id, port_name)
+                            logger.debug(f"✅ 템플릿 변수 {selector} 존재: {str(value)[:50]}...")
+                        else:
+                            logger.warning(
+                                f"⚠️ 템플릿 변수 '{selector}'가 VariablePool에 없습니다. "
+                                f"실행 경로: {context.executed_nodes if hasattr(context, 'executed_nodes') else 'N/A'}"
+                            )
+                except Exception as e:
+                    logger.error(f"❌ 템플릿 변수 '{selector}' 확인 중 에러: {e}")
 
         # 템플릿 렌더링 (연결 검증 포함)
         rendered_group, metadata = TemplateRenderer.render(

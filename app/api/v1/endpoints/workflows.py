@@ -454,48 +454,108 @@ async def get_models(
 ) -> ModelsResponse:
     """
     LLM 모델 목록 조회
+    모델 카탈로그에서 동적으로 사용 가능한 모델을 가져옵니다.
 
     Returns:
         ModelsResponse: 모델 목록
     """
     try:
-        # 하드코딩된 모델 목록 (실제로는 설정이나 DB에서 가져와야 함)
-        models = [
+        models = []
+        
+        # ⭐️ Bedrock 모델 카탈로그에서 동적으로 가져오기
+        try:
+            import boto3
+            from app.config import settings
+            
+            bedrock_client = boto3.client(
+                'bedrock',
+                region_name=settings.bedrock_region or 'ap-northeast-2'
+            )
+            
+            # 모델 카탈로그에서 Claude 모델 조회 (ON_DEMAND 지원 모델만)
+            response = bedrock_client.list_foundation_models(
+                byProvider='Anthropic',
+                byInferenceType='ON_DEMAND'
+            )
+            
+            for model_summary in response.get('modelSummaries', []):
+                model_id = model_summary.get('modelId', '')
+                model_name = model_summary.get('modelName', '')
+                
+                # Claude 모델만 필터링
+                if 'claude' in model_id.lower():
+                    # 모델 이름에 버전 정보 추가
+                    display_name = f"{model_name} (Bedrock)"
+                    if 'haiku' in model_id.lower():
+                        description = "AWS Bedrock Claude Haiku - 빠르고 저렴한 모델"
+                    elif 'sonnet' in model_id.lower():
+                        description = "AWS Bedrock Claude Sonnet - 고성능 모델 (비쌈)"
+                    else:
+                        description = f"AWS Bedrock {model_name}"
+                    
+                    models.append(ModelInfo(
+                        id=model_id,
+                        name=display_name,
+                        provider="bedrock",
+                        description=description
+                    ))
+            
+            logger.info(f"모델 카탈로그에서 {len(models)}개의 Bedrock 모델을 가져왔습니다.")
+        except Exception as e:
+            logger.warning(f"모델 카탈로그에서 모델을 가져오는 중 오류 발생: {e}. 기본 모델 목록을 사용합니다.")
+            # 폴백: 기본 모델 목록
+            models.extend([
+                ModelInfo(
+                    id="anthropic.claude-3-haiku-20240307-v1:0",
+                    name="Claude Haiku 3 (Bedrock)",
+                    provider="bedrock",
+                    description="AWS Bedrock Claude Haiku 3 - 빠르고 저렴한 모델 (기본값)"
+                ),
+                ModelInfo(
+                    id="anthropic.claude-3-5-sonnet-20240620-v1:0",
+                    name="Claude Sonnet 3.5 (Bedrock)",
+                    provider="bedrock",
+                    description="AWS Bedrock Claude Sonnet 3.5 - 고성능 모델 (비쌈)"
+                ),
+            ])
+        
+        # 기타 모델들 추가 (옵션, 로컬 개발용)
+        models.extend([
             ModelInfo(
                 id="gpt-5-chat-latest",
                 name="GPT-5 Chat",
                 provider="openai",
-                description="OpenAI GPT-5 채팅 모델"
+                description="OpenAI GPT-5 채팅 모델 (로컬 개발용)"
             ),
             ModelInfo(
                 id="chatgpt-4o-latest",
                 name="GPT-4o",
                 provider="openai",
-                description="OpenAI의 고성능 멀티모달 모델"
+                description="OpenAI의 고성능 멀티모달 모델 (로컬 개발용)"
             ),
             ModelInfo(
                 id="claude-sonnet-4-5-20250929",
                 name="Claude 4.5 Sonnet",
                 provider="anthropic",
-                description="Anthropic의 범용 Sonnet 모델"
+                description="Anthropic의 범용 Sonnet 모델 (로컬 개발용)"
             ),
             ModelInfo(
                 id="claude-haiku-4-5-20251001",
                 name="Claude 4.5 Haiku",
                 provider="anthropic",
-                description="낮은 지연시간의 경량 Claude 모델"
+                description="낮은 지연시간의 경량 Claude 모델 (로컬 개발용)"
             ),
             ModelInfo(
                 id="gemini-2.5-flash",
                 name="Gemini 2.5 Flash",
                 provider="google",
-                description="Google Gemini 2.5 Flash 모델"
+                description="Google Gemini 2.5 Flash 모델 (로컬 개발용)"
             ),
             ModelInfo(
                 id="gemini-2.5-pro",
                 name="Gemini 2.5 Pro",
                 provider="google",
-                description="Google Gemini 2.5 Pro 모델"
+                description="Google Gemini 2.5 Pro 모델 (로컬 개발용)"
             ),
         ]
 
