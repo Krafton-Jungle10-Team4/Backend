@@ -265,12 +265,11 @@ class ImportedWorkflowNode(BaseNodeV2):
         user = context.get_service("user")
 
         # LibraryService를 통해 라이브러리 에이전트 조회
-        library_service = LibraryService()
+        library_service = LibraryService(db)
 
         if user and hasattr(user, 'id'):
             # 권한 검증 포함 조회
             source_version = await library_service.get_library_agent_by_id(
-                db=db,
                 version_id=source_version_id,
                 user_id=user.id
             )
