@@ -338,8 +338,8 @@ class TemplateService:
             logger.error(f"[validate_export] Nested template detected: workflow_id={workflow_id}, imported_nodes={[{'id': n.get('id'), 'template_id': n.get('data', {}).get('template_id')} for n in imported_workflow_nodes]}")
 
         def _extract_ports(node_data: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
-            """노드 딕셔너리에서 포트 목록 추출 (신규/레거시 구조 모두 지원)"""
-            ports: List[Dict[str, Any]] = []
+            """노드 딕셔너리에서 포트 목록 추출 (중복 제거, 신규 구조 우선)"""
+            ports_dict: Dict[str, Dict[str, Any]] = {}  # name을 키로 사용하여 중복 제거
 
             def _extend(raw_ports):
                 if not raw_ports:
@@ -347,26 +347,30 @@ class TemplateService:
                 if isinstance(raw_ports, list):
                     for port in raw_ports:
                         if isinstance(port, dict):
-                            ports.append(port)
+                            name = port.get("name")
+                            if name:
+                                ports_dict[name] = port  # 중복 시 덮어쓰기
                 elif isinstance(raw_ports, dict):
                     for name, port in raw_ports.items():
                         if isinstance(port, dict):
                             normalized = dict(port)
                             normalized.setdefault("name", name)
-                            ports.append(normalized)
+                            ports_dict[name] = normalized  # 중복 시 덮어쓰기
 
+            # 레거시 구조 먼저 처리 (낮은 우선순위)
             node_ports = node_data.get("ports")
             if isinstance(node_ports, dict):
                 _extend(node_ports.get(key))
 
+            # 신규 구조로 덮어쓰기 (높은 우선순위)
             data_section = node_data.get("data")
             if isinstance(data_section, dict):
+                _extend(data_section.get(key))
                 data_ports = data_section.get("ports")
                 if isinstance(data_ports, dict):
                     _extend(data_ports.get(key))
-                _extend(data_section.get(key))
 
-            return ports
+            return list(ports_dict.values())
 
         def _append_port_definitions(
             target_list: List[PortDefinition],
