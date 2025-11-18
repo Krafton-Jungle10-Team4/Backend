@@ -407,7 +407,7 @@ class ChatService:
 
         async def run_workflow():
             try:
-                await executor.execute(
+                final_response = await executor.execute(
                     workflow_data=workflow_data,
                     session_id=request.session_id or "default",
                     user_message=request.message,
@@ -418,6 +418,12 @@ class ChatService:
                     stream_handler=stream_handler,
                     text_normalizer=strip_markdown
                 )
+
+                # 최종 응답을 ContentEvent로 전송
+                if final_response:
+                    logger.info(f"[ChatService] 워크플로우 최종 응답 전송: {len(final_response)}자")
+                    await stream_handler.emit_content_chunk(final_response)
+
             except Exception as exc:
                 logger.error(f"[ChatService] 워크플로우 스트리밍 실패: {exc}")
                 friendly_message = str(exc) or "워크플로우 실행 중 오류가 발생했습니다"
