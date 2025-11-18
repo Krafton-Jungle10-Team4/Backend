@@ -325,17 +325,24 @@ class TemplateService:
                 validation.errors.append(f"엣지 {edge_id}의 target '{target}'가 존재하지 않습니다")
                 logger.error(f"[validate_export] Edge target not found: edge_id={edge_id}, target={target}, available_nodes={list(node_id_set)[:10]}")
 
-        # 4. imported-workflow 노드 거부 (중첩 방지) (NEW!)
+        # 4. imported-workflow 노드 존재 시 경고 (중첩 허용하되 순환 참조 주의)
         imported_workflow_nodes = [
             n for n in nodes
             if n.get("data", {}).get("type") == "imported-workflow"
         ]
         if imported_workflow_nodes:
-            validation.errors.append(
-                "템플릿은 다른 템플릿(ImportedWorkflow)을 포함할 수 없습니다. "
-                "템플릿을 중첩하려면 먼저 내부 워크플로우를 별도의 템플릿으로 만들어주세요."
+            validation.warnings.append(
+                "이 워크플로우는 다른 템플릿(ImportedWorkflow)을 포함합니다. "
+                "중첩 템플릿 간 순환 참조가 없도록 주의하세요."
             )
-            logger.error(f"[validate_export] Nested template detected: workflow_id={workflow_id}, imported_nodes={[{'id': n.get('id'), 'template_id': n.get('data', {}).get('template_id')} for n in imported_workflow_nodes]}")
+            logger.warning(
+                "[validate_export] Nested template detected: workflow_id=%s, imported_nodes=%s",
+                workflow_id,
+                [
+                    {"id": n.get("id"), "template_id": n.get("data", {}).get("template_id")}
+                    for n in imported_workflow_nodes
+                ]
+            )
 
         def _extract_ports(node_data: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
             """노드 딕셔너리에서 포트 목록 추출 (중복 제거, 신규 구조 우선)"""
