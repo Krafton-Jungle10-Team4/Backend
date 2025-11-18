@@ -557,7 +557,7 @@ async def get_models(
                 provider="google",
                 description="Google Gemini 2.5 Pro 모델 (로컬 개발용)"
             ),
-        ]
+        ])
 
         return ModelsResponse(models=models)
 

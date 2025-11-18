@@ -973,6 +973,48 @@ class BotService:
             raise ValueError(f"봇을 찾을 수 없습니다: {bot_id}")
 
         try:
+            # 1. llm_usage_logs 삭제 (bot_id 참조, NOT NULL이라 먼저 삭제)
+            from app.models.llm_usage import LLMUsageLog
+            await db.execute(
+                delete(LLMUsageLog).where(LLMUsageLog.bot_id == bot_id)
+            )
+            await db.flush()
+
+            # 2. template_usages 삭제 (bot_id 참조)
+            from app.models.template import TemplateUsage
+            await db.execute(
+                delete(TemplateUsage).where(TemplateUsage.workflow_id == bot_id)
+            )
+            await db.flush()
+
+            # 3. templates 삭제 (source_workflow_id 참조)
+            from app.models.template import Template
+            await db.execute(
+                delete(Template).where(Template.source_workflow_id == bot_id)
+            )
+            await db.flush()
+
+            # 4. bot_workflow_versions에 연결된 템플릿 삭제
+            from app.models.workflow_version import BotWorkflowVersion
+            result = await db.execute(
+                select(BotWorkflowVersion).where(BotWorkflowVersion.bot_id == bot_id)
+            )
+            workflow_versions = result.scalars().all()
+
+            for version in workflow_versions:
+                # template_usages 삭제 (workflow_version_id 참조)
+                await db.execute(
+                    delete(TemplateUsage).where(TemplateUsage.workflow_version_id == version.id)
+                )
+
+                # templates 삭제 (source_version_id 참조)
+                await db.execute(
+                    delete(Template).where(Template.source_version_id == version.id)
+                )
+
+            await db.flush()
+
+            # 5. 봇 삭제 (나머지는 CASCADE로 자동 삭제)
             await db.delete(bot)
             await db.commit()
             logger.info(f"봇 삭제 성공: bot_id={bot_id}")

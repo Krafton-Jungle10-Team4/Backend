@@ -1,6 +1,7 @@
 """Imported Workflow 노드 구현"""
 import logging
 import json
+import re
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
@@ -120,6 +121,17 @@ class ImportedWorkflowNode(BaseNodeV2):
         config = self.config
         template_id = config.get("template_id")
 
+        if not template_id:
+            inferred_id = self._infer_template_id_from_node_id()
+            if inferred_id:
+                logger.warning(
+                    "template_id missing for imported node %s, inferred %s from node_id",
+                    self.node_id,
+                    inferred_id
+                )
+                template_id = inferred_id
+                self.config["template_id"] = inferred_id
+
         # 수정: self.variable_mappings 사용
         variable_mappings = self.variable_mappings or {}
 
@@ -209,6 +221,16 @@ class ImportedWorkflowNode(BaseNodeV2):
         except Exception as e:
             logger.error(f"Imported Workflow 실행 실패: {e}", exc_info=True)
             raise RuntimeError(f"Imported Workflow 실행 실패: {e}") from e
+
+    def _infer_template_id_from_node_id(self) -> Optional[str]:
+        """노드 ID에서 템플릿 ID 추론 (레거시 데이터용)"""
+        if not self.node_id:
+            return None
+
+        match = re.match(r"^imported_(tpl_[a-zA-Z0-9]+)_\d+", self.node_id)
+        if match:
+            return match.group(1)
+        return None
 
     async def _load_template(
         self,
