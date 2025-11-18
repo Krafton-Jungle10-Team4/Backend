@@ -40,6 +40,13 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         is_health_check = self._is_health_check(path)
         is_sensitive = self._is_sensitive_path(path)
 
+        # 디버그: cost 관련 요청은 항상 상세 로깅
+        if "/cost" in path or "/api/v1/cost" in path:
+            logger.info(
+                f"[DEBUG] Cost API 요청: method={method}, path={path}, "
+                f"client_ip={client_ip}, request_id={request_id}"
+            )
+
         # 요청 시작 로깅 (헬스체크는 간소화)
         self._log_request_start(
             request_id=request_id,
@@ -69,6 +76,15 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
 
         # 응답 종료 로깅 (헬스체크는 간소화)
         status_code = response.status_code
+        
+        # 디버그: cost 관련 요청 및 404 에러는 항상 상세 로깅
+        if "/cost" in path or "/api/v1/cost" in path or status_code == 404:
+            logger.warning(
+                f"[DEBUG] Cost API 응답 또는 404: method={method}, path={path}, "
+                f"status_code={status_code}, process_time={process_time:.3f}s, "
+                f"request_id={request_id}"
+            )
+        
         self._log_request_end(
             request_id=request_id,
             method=method,

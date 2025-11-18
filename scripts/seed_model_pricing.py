@@ -107,6 +107,13 @@ async def seed_pricing_data():
                 "output_price_per_1k": 0.0015,
                 "region": None
             },
+            {
+                "provider": "openai",
+                "model_name": "gpt-5-chat-latest",  # 실제 사용 중인 모델
+                "input_price_per_1k": 0.03,  # GPT-5 가격 (추정, GPT-4와 유사하게 설정)
+                "output_price_per_1k": 0.06,
+                "region": None
+            },
         ]
 
         # Anthropic Direct 모델 가격 (참고용)
@@ -115,6 +122,15 @@ async def seed_pricing_data():
                 "provider": "anthropic",
                 "model_name": "claude-3-5-sonnet-20241022",
                 "input_price_per_1k": 0.003,
+                "output_price_per_1k": 0.015,
+                "cache_write_price_per_1k": 0.00375,
+                "cache_read_price_per_1k": 0.0003,
+                "region": None
+            },
+            {
+                "provider": "anthropic",
+                "model_name": "claude-sonnet-4-5-20250929",  # 실제 사용 중인 모델
+                "input_price_per_1k": 0.003,  # Claude Sonnet 4.5 가격 (추정)
                 "output_price_per_1k": 0.015,
                 "cache_write_price_per_1k": 0.00375,
                 "cache_read_price_per_1k": 0.0003,
@@ -132,6 +148,18 @@ async def seed_pricing_data():
         all_models = bedrock_models + openai_models + anthropic_models
 
         for model_data in all_models:
+            # 기존에 있는지 확인 (중복 방지)
+            from sqlalchemy import select
+            existing = await session.execute(
+                select(ModelPricing).where(
+                    ModelPricing.provider == model_data['provider'],
+                    ModelPricing.model_name == model_data['model_name']
+                )
+            )
+            if existing.scalar_one_or_none():
+                print(f"⏭️  이미 존재: {model_data['provider']}/{model_data['model_name']}")
+                continue
+            
             pricing = ModelPricing(**model_data)
             session.add(pricing)
             print(f"✅ 추가: {model_data['provider']}/{model_data['model_name']}")
