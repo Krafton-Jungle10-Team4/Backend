@@ -38,7 +38,7 @@ class AgentImportHistory(Base):
         nullable=False,
         index=True
     )
-    import_metadata = Column(JSONB, nullable=True)
+    import_metadata = Column('metadata', JSONB, nullable=True)
 
     # 관계
     source_version = relationship("BotWorkflowVersion", foreign_keys=[source_version_id])

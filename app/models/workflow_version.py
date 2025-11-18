@@ -1,7 +1,7 @@
 """
 워크플로우 V2 버전 관리 모델
 """
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, Text, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, Text, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func, text
@@ -30,7 +30,7 @@ class BotWorkflowVersion(Base):
     created_by = Column(String(36), ForeignKey('users.uuid'))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    published_at = Column(DateTime, nullable=True)
+    published_at = Column(DateTime(timezone=True), nullable=True)
 
     # 라이브러리 관련 필드 (신규)
     library_name = Column(String(255), nullable=True)
@@ -57,6 +57,8 @@ class BotWorkflowVersion(Base):
     __table_args__ = (
         Index('ix_bot_workflow_versions_bot_version', 'bot_id', 'version'),
         Index('ix_bot_workflow_versions_bot_status', 'bot_id', 'status'),
+        Index('uq_bot_workflow_versions_draft', 'bot_id', unique=True,
+              postgresql_where=text("status = 'draft'")),
         {"extend_existing": True},
     )
 
