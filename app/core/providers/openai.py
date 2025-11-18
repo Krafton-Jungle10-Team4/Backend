@@ -67,6 +67,15 @@ class OpenAIClient(BaseLLMClient):
                 **request_kwargs
             )
             self._capture_usage(getattr(response, "usage", None), model_name)
+
+            # choices가 비어있지 않은지 확인
+            if not response.choices or len(response.choices) == 0:
+                logger.error("OpenAI API 응답에 choices가 없습니다")
+                raise LLMAPIError(
+                    message="OpenAI API 응답이 비어있습니다",
+                    details={"model": model_name, "response": str(response)}
+                )
+
             return response.choices[0].message.content
         except RateLimitError as e:
             logger.error(f"OpenAI API 사용량 제한: {e}")
@@ -145,8 +154,11 @@ class OpenAIClient(BaseLLMClient):
                 **request_kwargs
             )
             async for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                # choices가 비어있지 않은지 확인
+                if chunk.choices and len(chunk.choices) > 0:
+                    delta_content = chunk.choices[0].delta.content
+                    if delta_content:
+                        yield delta_content
                 usage_payload = getattr(chunk, "usage", None)
                 if usage_payload:
                     self._capture_usage(usage_payload, model_name)
