@@ -249,7 +249,7 @@ class WorkflowExecutorV2:
         Returns:
             str: 최종 응답
         """
-        final_response = "V2 워크플로우 실행 완료"
+        final_response = None
 
         incoming_counts = self._build_incoming_counts()
         edges_by_source = self._group_edges_by_source()
@@ -506,6 +506,28 @@ class WorkflowExecutorV2:
             )
         else:
             logger.info(f"✅ All {len(executed_nodes)} nodes executed successfully")
+
+        # 최종 응답이 없으면 실행된 LLM 노드의 response를 찾아서 사용
+        if not final_response:
+            logger.info("End 노드에서 최종 응답을 찾지 못했습니다. LLM 노드의 response를 찾는 중...")
+            for node_id in executed_nodes:
+                node = self.nodes.get(node_id)
+                if node and node.__class__.__name__ == "LLMNodeV2":
+                    llm_outputs = self.variable_pool.get_all_node_outputs(node_id)
+                    if llm_outputs and "response" in llm_outputs:
+                        final_response = llm_outputs["response"]
+                        logger.info(f"✅ LLM 노드 {node_id}의 response를 최종 응답으로 사용: {len(final_response)} chars")
+                        break
+        
+        # 여전히 없으면 에러
+        if not final_response:
+            logger.error(
+                "❌ 최종 응답을 찾을 수 없습니다! "
+                "End 노드가 실행되지 않았거나, LLM 노드의 response가 없습니다. "
+                "실행된 노드: %s",
+                list(executed_nodes)
+            )
+            final_response = ""  # 빈 문자열 반환 (기본 메시지 제거)
 
         return final_response
 
