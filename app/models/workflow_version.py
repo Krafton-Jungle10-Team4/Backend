@@ -1,10 +1,10 @@
 """
 워크플로우 V2 버전 관리 모델
 """
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, Text, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 from datetime import datetime
 import uuid
 
@@ -32,9 +32,33 @@ class BotWorkflowVersion(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     published_at = Column(DateTime, nullable=True)
 
+    # 라이브러리 관련 필드 (신규)
+    library_name = Column(String(255), nullable=True)
+    library_description = Column(Text, nullable=True)
+    library_category = Column(String(100), nullable=True, index=True)
+    library_tags = Column(JSONB, nullable=True)
+    library_visibility = Column(String(20), nullable=True, index=True)
+    is_in_library = Column(Boolean, default=False, nullable=False, index=True)
+    library_published_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+    # 통계 및 스키마 정보 (신규)
+    input_schema = Column(JSONB, nullable=True)
+    output_schema = Column(JSONB, nullable=True)
+    node_count = Column(Integer, nullable=True)
+    edge_count = Column(Integer, nullable=True)
+    port_definitions = Column(JSONB, nullable=True)
+
     # 관계
     bot = relationship("Bot", back_populates="workflow_versions")
     execution_runs = relationship("WorkflowExecutionRun", back_populates="workflow_version", cascade="all, delete-orphan")
+    deployments = relationship("BotDeployment", back_populates="workflow_version")
+
+    # 인덱스 및 제약
+    __table_args__ = (
+        Index('ix_bot_workflow_versions_bot_version', 'bot_id', 'version'),
+        Index('ix_bot_workflow_versions_bot_status', 'bot_id', 'status'),
+        {"extend_existing": True},
+    )
 
 
 class WorkflowExecutionRun(Base):

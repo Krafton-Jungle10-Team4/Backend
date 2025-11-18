@@ -44,6 +44,7 @@ class DeploymentCreate(BaseModel):
     status: str = Field(default="published", description="배포 상태 (draft, published, suspended)")
     allowed_domains: Optional[List[str]] = Field(default=None, description="허용된 도메인 리스트")
     widget_config: WidgetConfigBase = Field(..., description="Widget 설정")
+    workflow_version_id: str = Field(..., description="배포할 워크플로우 버전 ID (UUID)")
 
     @validator('status')
     def validate_status(cls, v):
@@ -86,6 +87,7 @@ class DeploymentResponse(BaseModel):
     bot_id: str
     widget_key: str
     status: str
+    workflow_version_id: Optional[UUID] = Field(None, description="배포된 워크플로우 버전 ID")
     embed_script: str
     widget_url: str
     allowed_domains: Optional[List[str]]

@@ -6,6 +6,7 @@ from uuid import UUID
 from app.models.deployment import BotDeployment
 from app.models.bot import Bot
 from app.schemas.deployment import DeploymentCreate, DeploymentUpdate
+from app.models.workflow_version import BotWorkflowVersion
 from app.core.widget.security import widget_security
 from app.core.exceptions import NotFoundException, ForbiddenException
 from app.config import settings
@@ -42,6 +43,21 @@ class DeploymentService:
             raise NotFoundException("Bot not found")
 
         # 팀 멤버십 확인 (생략: dependencies.py에서 처리)
+        # 배포할 워크플로우 버전 검증 (필수)
+        try:
+            workflow_version_uuid = UUID(deployment_data.workflow_version_id)
+        except Exception:
+            raise NotFoundException("Invalid workflow_version_id")
+
+        version_stmt = select(BotWorkflowVersion).where(
+            BotWorkflowVersion.id == workflow_version_uuid,
+            BotWorkflowVersion.bot_id == bot.bot_id,
+            BotWorkflowVersion.status == "published"
+        )
+        version_result = await db.execute(version_stmt)
+        target_version = version_result.scalar_one_or_none()
+        if not target_version:
+            raise NotFoundException("배포할 published 워크플로우 버전을 찾을 수 없습니다")
 
         # 기존 배포 확인
         stmt = select(BotDeployment).where(BotDeployment.bot_id == bot.id)
@@ -57,6 +73,7 @@ class DeploymentService:
             existing_deployment.embed_script = DeploymentService._generate_embed_script(
                 existing_deployment.widget_key
             )
+            existing_deployment.workflow_version_id = workflow_version_uuid
             await db.commit()
             await db.refresh(existing_deployment)
             return existing_deployment
@@ -72,7 +89,8 @@ class DeploymentService:
                 allowed_domains=deployment_data.allowed_domains,
                 widget_config=deployment_data.widget_config.dict(),
                 embed_script=embed_script,
-                version=1
+                version=1,
+                workflow_version_id=workflow_version_uuid
             )
             db.add(deployment)
             await db.commit()

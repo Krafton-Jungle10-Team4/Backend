@@ -27,7 +27,8 @@ from app.api.v1.endpoints import (
     cost_monitoring,
     tavily,
     templates,
-    knowledge
+    knowledge,
+    library
 )
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -103,6 +104,8 @@ app.include_router(cost_monitoring.router, prefix="/api/v1/cost", tags=["비용 
 app.include_router(tavily.router, prefix="/api/v1/tavily", tags=["Tavily Search"])
 app.include_router(templates.router, prefix="/api/v1/templates", tags=["템플릿"])
 app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["지식 관리"])
+app.include_router(library.router, prefix="/api/v1", tags=["라이브러리"])
+app.include_router(library.bot_router, prefix="/api/v1", tags=["라이브러리 - 에이전트 가져오기"])
 
 
 @app.on_event("startup")

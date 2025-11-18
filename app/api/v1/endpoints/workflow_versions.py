@@ -15,7 +15,8 @@ from app.schemas.workflow import (
     WorkflowVersionCreate,
     WorkflowVersionResponse,
     WorkflowVersionDetail,
-    WorkflowVersionStatus
+    WorkflowVersionStatus,
+    PublishWorkflowRequest
 )
 from app.services.workflow_version_service import WorkflowVersionService
 from app.services.bot_service import BotService
@@ -124,11 +125,12 @@ legacy_router.add_api_route(
     "/{version_id}/publish",
     response_model=WorkflowVersionResponse,
     summary="워크플로우 발행",
-    description="Draft 워크플로우를 발행하여 실제 사용 가능한 버전으로 만듭니다."
+    description="Draft 워크플로우를 발행하여 실제 사용 가능한 버전으로 만듭니다. 선택적으로 라이브러리에 등록할 수 있습니다."
 )
 async def publish_workflow(
     bot_id: str,
     version_id: str,
+    request: PublishWorkflowRequest = PublishWorkflowRequest(),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> WorkflowVersionResponse:
@@ -138,6 +140,7 @@ async def publish_workflow(
     - 새 버전 번호 생성 (v1.0, v1.1 등)
     - 해당 버전을 활성 워크플로우로 설정
     - 새로운 빈 draft 자동 생성
+    - 선택적으로 라이브러리에 등록 (library_metadata 제공 시)
     """
     try:
         # 봇 접근 권한 확인
@@ -149,12 +152,18 @@ async def publish_workflow(
                 detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
             )
 
+        # library_metadata를 딕셔너리로 변환
+        library_metadata_dict = None
+        if request.library_metadata:
+            library_metadata_dict = request.library_metadata.dict()
+
         # Draft 발행
         service = WorkflowVersionService(db)
         version = await service.publish_draft(
             bot_id=bot_id,
             version_id=version_id,
-            user_id=current_user.uuid
+            user_id=current_user.uuid,
+            library_metadata=library_metadata_dict
         )
 
         return WorkflowVersionResponse(

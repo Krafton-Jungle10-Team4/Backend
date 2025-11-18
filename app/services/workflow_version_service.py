@@ -91,7 +91,8 @@ class WorkflowVersionService:
         self,
         bot_id: str,
         version_id: str,
-        user_id: str
+        user_id: str,
+        library_metadata: Optional[Dict[str, Any]] = None
     ) -> BotWorkflowVersion:
         """
         Draft를 발행하여 published 버전으로 전환
@@ -100,6 +101,7 @@ class WorkflowVersionService:
             bot_id: 봇 ID
             version_id: 버전 ID
             user_id: 사용자 ID
+            library_metadata: 라이브러리 메타데이터 (선택)
 
         Returns:
             BotWorkflowVersion: 발행된 버전
@@ -144,6 +146,25 @@ class WorkflowVersionService:
         draft.status = WorkflowVersionStatus.PUBLISHED.value
         draft.published_at = datetime.now()
 
+        # 라이브러리 메타데이터 설정 (제공된 경우)
+        if library_metadata:
+            draft.library_name = library_metadata.get("name")
+            draft.library_description = library_metadata.get("description")
+            draft.library_category = library_metadata.get("category")
+            draft.library_tags = library_metadata.get("tags")
+            draft.library_visibility = library_metadata.get("visibility", "private")
+            draft.is_in_library = True
+            draft.library_published_at = datetime.now()
+            logger.info(f"Added workflow {new_version} to library: {draft.library_name}")
+
+        # 그래프 통계 계산 및 저장
+        if draft.graph:
+            nodes = draft.graph.get("nodes", [])
+            edges = draft.graph.get("edges", [])
+            draft.node_count = len(nodes)
+            draft.edge_count = len(edges)
+            logger.info(f"Workflow statistics: {draft.node_count} nodes, {draft.edge_count} edges")
+
         # Bot의 use_workflow_v2 활성화
         stmt = select(Bot).where(Bot.bot_id == bot_id)
         result = await self.db.execute(stmt)
@@ -167,6 +188,7 @@ class WorkflowVersionService:
             graph=draft.graph,  # 기존 그래프 복사
             environment_variables=draft.environment_variables,
             conversation_variables=draft.conversation_variables,
+            features=draft.features,  # features 필드도 복사
             created_by=creator_uuid
         )
         self.db.add(new_draft)

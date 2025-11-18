@@ -452,6 +452,109 @@ class WorkflowExecutionStatistics(BaseModel):
     total_tokens: int = Field(..., description="총 토큰 사용량")
 
 
+# ============ 라이브러리 관련 스키마 (신규) ============
+
+class LibraryMetadata(BaseModel):
+    """라이브러리 메타데이터"""
+    name: str = Field(..., max_length=255, description="라이브러리에 표시될 이름")
+    description: Optional[str] = Field(None, max_length=1000, description="설명")
+    category: Optional[str] = Field(None, max_length=100, description="카테고리")
+    tags: Optional[List[str]] = Field(default_factory=list, description="태그 목록")
+    visibility: str = Field(default="private", description="공개 범위: private, team, public")
+
+
+class PublishWorkflowRequest(BaseModel):
+    """워크플로우 발행 요청 (라이브러리 메타데이터 포함)"""
+    library_metadata: Optional[LibraryMetadata] = Field(None, description="라이브러리 메타데이터 (선택)")
+
+
+class WorkflowVersionResponseWithLibrary(WorkflowVersionResponse):
+    """워크플로우 버전 응답 (라이브러리 필드 포함)"""
+    library_name: Optional[str] = Field(None, description="라이브러리 이름")
+    library_description: Optional[str] = Field(None, description="라이브러리 설명")
+    library_category: Optional[str] = Field(None, description="라이브러리 카테고리")
+    library_tags: Optional[List[str]] = Field(None, description="라이브러리 태그")
+    library_visibility: Optional[str] = Field(None, description="라이브러리 공개 범위")
+    is_in_library: bool = Field(False, description="라이브러리 포함 여부")
+    library_published_at: Optional[datetime] = Field(None, description="라이브러리 게시 시간")
+
+    # 통계 및 스키마 정보
+    input_schema: Optional[Dict[str, Any]] = Field(None, description="입력 스키마")
+    output_schema: Optional[Dict[str, Any]] = Field(None, description="출력 스키마")
+    node_count: Optional[int] = Field(None, description="노드 개수")
+    edge_count: Optional[int] = Field(None, description="엣지 개수")
+    port_definitions: Optional[Dict[str, Any]] = Field(None, description="포트 정의")
+
+
+class LibraryAgentResponse(BaseModel):
+    """라이브러리 에이전트 응답 (간소화된 정보)"""
+    id: str = Field(..., description="버전 ID (UUID)")
+    bot_id: str = Field(..., description="봇 ID")
+    version: str = Field(..., description="버전 번호")
+    library_name: str = Field(..., description="라이브러리 이름")
+    library_description: Optional[str] = Field(None, description="라이브러리 설명")
+    library_category: Optional[str] = Field(None, description="라이브러리 카테고리")
+    library_tags: Optional[List[str]] = Field(None, description="라이브러리 태그")
+    library_visibility: str = Field(..., description="라이브러리 공개 범위")
+    library_published_at: datetime = Field(..., description="라이브러리 게시 시간")
+
+    # 통계 정보
+    node_count: Optional[int] = Field(None, description="노드 개수")
+    edge_count: Optional[int] = Field(None, description="엣지 개수")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LibraryAgentDetailResponse(BaseModel):
+    """라이브러리 에이전트 상세 응답 (graph 포함)"""
+    id: str = Field(..., description="버전 ID (UUID)")
+    bot_id: str = Field(..., description="봇 ID")
+    version: str = Field(..., description="버전 번호")
+    graph: Dict[str, Any] = Field(..., description="워크플로우 그래프")
+    environment_variables: Optional[Dict[str, Any]] = Field(None, description="환경 변수")
+    conversation_variables: Optional[Dict[str, Any]] = Field(None, description="대화 변수")
+    library_name: str = Field(..., description="라이브러리 이름")
+    library_description: Optional[str] = Field(None, description="라이브러리 설명")
+    library_category: Optional[str] = Field(None, description="라이브러리 카테고리")
+    library_tags: Optional[List[str]] = Field(None, description="라이브러리 태그")
+    library_visibility: str = Field(..., description="라이브러리 공개 범위")
+    library_published_at: datetime = Field(..., description="라이브러리 게시 시간")
+    created_at: datetime = Field(..., description="생성 시간")
+
+    # 통계 및 스키마 정보
+    input_schema: Optional[Dict[str, Any]] = Field(None, description="입력 스키마")
+    output_schema: Optional[Dict[str, Any]] = Field(None, description="출력 스키마")
+    node_count: Optional[int] = Field(None, description="노드 개수")
+    edge_count: Optional[int] = Field(None, description="엣지 개수")
+    port_definitions: Optional[Dict[str, Any]] = Field(None, description="포트 정의")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LibraryFilterParams(BaseModel):
+    """라이브러리 필터 파라미터"""
+    category: Optional[str] = Field(None, description="카테고리 필터")
+    visibility: Optional[str] = Field(None, description="공개 범위 필터")
+    search: Optional[str] = Field(None, description="검색어 (이름, 설명)")
+    tags: Optional[List[str]] = Field(None, description="태그 필터")
+    page: int = Field(1, ge=1, description="페이지 번호")
+    page_size: int = Field(20, ge=1, le=100, description="페이지 크기")
+
+
+class LibraryAgentsResponse(BaseModel):
+    """라이브러리 에이전트 목록 응답"""
+    agents: List[LibraryAgentResponse] = Field(..., description="에이전트 목록")
+    total: int = Field(..., description="전체 개수")
+    page: int = Field(..., description="현재 페이지")
+    page_size: int = Field(..., description="페이지 크기")
+    total_pages: int = Field(..., description="전체 페이지 수")
+
+
+class LibraryImportRequest(BaseModel):
+    """라이브러리 에이전트 가져오기 요청"""
+    source_version_id: str = Field(..., description="가져올 라이브러리 버전 ID (UUID)")
+
+
 # ============ Assigner Node V2 스키마 ============
 
 class AssignerOperation(BaseModel):
@@ -548,6 +651,16 @@ __all__ = [
     "NodeExecutionDetail",
     "PaginatedWorkflowRuns",
     "WorkflowExecutionStatistics",
+
+    # 라이브러리 관련 (신규)
+    "LibraryMetadata",
+    "PublishWorkflowRequest",
+    "WorkflowVersionResponseWithLibrary",
+    "LibraryAgentResponse",
+    "LibraryAgentDetailResponse",
+    "LibraryFilterParams",
+    "LibraryAgentsResponse",
+    "LibraryImportRequest",
 
     # Assigner Node V2
     "AssignerOperation",

@@ -1,5 +1,5 @@
 """
-워크플로우 V2 시작 노드
+워크플로우 V2 입력 노드
 
 사용자 입력을 받아 워크플로우를 시작하는 노드입니다.
 """
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class StartNodeV2(BaseNodeV2):
     """
-    워크플로우 V2 시작 노드
+    워크플로우 V2 입력 노드
 
     사용자 메시지를 입력으로 받아 query 포트로 출력합니다.
     워크플로우의 진입점 역할을 합니다.
@@ -66,7 +66,7 @@ class StartNodeV2(BaseNodeV2):
             return NodePortSchema(inputs=[], outputs=custom_output_schema)
 
         return NodePortSchema(
-            inputs=[],  # 시작 노드는 입력 없음
+            inputs=[],  # 입력 노드는 워크플로우 외부 입력을 받음
             outputs=[
                 PortDefinition(
                     name="query",
@@ -87,7 +87,7 @@ class StartNodeV2(BaseNodeV2):
 
     async def execute_v2(self, context: NodeExecutionContext) -> Dict[str, Any]:
         """
-        시작 노드 실행
+        입력 노드 실행
 
         Args:
             context: 실행 컨텍스트
@@ -139,14 +139,14 @@ class StartNodeV2(BaseNodeV2):
 
     def validate(self) -> tuple[bool, Optional[str]]:
         """
-        시작 노드 검증
+        입력 노드 검증
 
         Returns:
             tuple: (유효 여부, 오류 메시지)
         """
-        # 시작 노드는 입력이 없어야 함
+        # 입력 노드는 다른 노드로부터의 입력이 없어야 함
         if self.variable_mappings:
-            return False, "Start node should not have input mappings"
+            return False, "Input node should not have input mappings from other nodes"
 
         return True, None
 

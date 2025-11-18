@@ -18,6 +18,14 @@ class BotDeployment(Base):
     deployment_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False)
 
+    # Workflow 버전 참조 (신규)
+    workflow_version_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("bot_workflow_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
     # Widget Key (외부 노출용, 64자)
     widget_key = Column(String(64), unique=True, nullable=False, index=True)
 
@@ -46,6 +54,7 @@ class BotDeployment(Base):
 
     # 관계
     bot = relationship("Bot", back_populates="deployments")
+    workflow_version = relationship("BotWorkflowVersion", back_populates="deployments", foreign_keys=[workflow_version_id])
     sessions = relationship("WidgetSession", back_populates="deployment", cascade="all, delete-orphan")
 
     # 인덱스
