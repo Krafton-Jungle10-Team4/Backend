@@ -138,7 +138,6 @@ async def get_library_agent(
             node_count=agent.node_count,
             edge_count=agent.edge_count,
             library_published_at=agent.library_published_at,
-            created_by=agent.created_by,
             graph=WorkflowGraph(**agent.graph) if agent.graph else None,
             environment_variables=agent.environment_variables,
             conversation_variables=agent.conversation_variables,

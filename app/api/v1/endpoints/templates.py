@@ -1,7 +1,19 @@
-"""확장된 템플릿 API 엔드포인트"""
+"""
+확장된 템플릿 API 엔드포인트
+
+⚠️ DEPRECATED: 이 API는 향후 제거될 예정입니다.
+새로운 라이브러리 에이전트 API (/api/v1/library/agents)를 사용하세요.
+
+마이그레이션 가이드:
+- 템플릿 목록 조회 → GET /api/v1/library/agents
+- 템플릿 상세 조회 → GET /api/v1/library/agents/{version_id}
+- 템플릿 가져오기 → POST /api/v1/bots/{bot_id}/import
+- 워크플로우 발행 시 라이브러리 저장 → POST /api/v1/bots/{bot_id}/workflows/versions/{version_id}/publish
+"""
 import logging
 import json
 import uuid
+import warnings
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +44,8 @@ router = APIRouter()
     "",
     response_model=TemplateListResponse,
     summary="템플릿 목록 조회 (확장)",
-    description="템플릿 목록을 다양한 필터와 함께 조회합니다."
+    description="⚠️ DEPRECATED: GET /api/v1/library/agents 사용을 권장합니다. 템플릿 목록을 다양한 필터와 함께 조회합니다.",
+    deprecated=True
 )
 async def get_templates(
     visibility: Optional[str] = Query(None, description="가시성 필터 (private, team, public)"),
@@ -108,7 +121,8 @@ async def get_templates(
     "/{template_id}",
     response_model=WorkflowTemplate,
     summary="템플릿 상세 조회 (확장)",
-    description="특정 템플릿의 전체 정보를 조회합니다."
+    description="⚠️ DEPRECATED: GET /api/v1/library/agents/{version_id} 사용을 권장합니다. 특정 템플릿의 전체 정보를 조회합니다.",
+    deprecated=True
 )
 async def get_template(
     template_id: str,
@@ -153,7 +167,8 @@ async def get_template(
     "/validate-export",
     response_model=ExportValidation,
     summary="Export 검증",
-    description="워크플로우를 템플릿으로 내보내기 전 검증합니다."
+    description="⚠️ DEPRECATED: 워크플로우 발행 시 라이브러리에 직접 저장하세요. 워크플로우를 템플릿으로 내보내기 전 검증합니다.",
+    deprecated=True
 )
 async def validate_export(
     payload: ExportValidationRequest,
@@ -183,7 +198,8 @@ async def validate_export(
     response_model=WorkflowTemplate,
     status_code=status.HTTP_201_CREATED,
     summary="워크플로우 Export",
-    description="워크플로우를 템플릿으로 내보냅니다."
+    description="⚠️ DEPRECATED: POST /api/v1/bots/{bot_id}/workflows/versions/{version_id}/publish 사용을 권장합니다. 워크플로우를 템플릿으로 내보냅니다.",
+    deprecated=True
 )
 async def export_template(
     config: ExportConfig,
@@ -246,7 +262,8 @@ async def export_template(
     "/{template_id}/validate-import",
     response_model=ImportValidation,
     summary="Import 검증",
-    description="템플릿을 가져오기 전 호환성을 검증합니다."
+    description="⚠️ DEPRECATED: POST /api/v1/bots/{bot_id}/import 사용을 권장합니다. 템플릿을 가져오기 전 호환성을 검증합니다.",
+    deprecated=True
 )
 async def validate_import(
     template_id: str,
@@ -308,7 +325,8 @@ async def _create_usage_response(
     response_model=TemplateUsageResponse,
     status_code=status.HTTP_201_CREATED,
     summary="템플릿 사용 기록",
-    description="템플릿 사용을 기록합니다."
+    description="⚠️ DEPRECATED: 라이브러리 에이전트 사용 기록은 자동으로 agent_import_history에 저장됩니다. 템플릿 사용을 기록합니다.",
+    deprecated=True
 )
 async def record_usage(
     template_id: str,
@@ -343,7 +361,8 @@ async def record_usage_legacy(
     response_model=WorkflowTemplate,
     status_code=status.HTTP_201_CREATED,
     summary="템플릿 파일 업로드",
-    description="JSON 파일로 템플릿을 업로드합니다."
+    description="⚠️ DEPRECATED: 워크플로우 발행 기능을 사용하세요. JSON 파일로 템플릿을 업로드합니다.",
+    deprecated=True
 )
 async def upload_template(
     file: UploadFile = File(...),
@@ -450,7 +469,8 @@ async def upload_template(
     "/{template_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="템플릿 삭제",
-    description="템플릿을 삭제합니다."
+    description="⚠️ DEPRECATED: 워크플로우 버전 삭제 기능을 사용하세요. 템플릿을 삭제합니다.",
+    deprecated=True
 )
 async def delete_template(
     template_id: str,
@@ -478,7 +498,8 @@ async def delete_template(
     "/{template_id}",
     response_model=dict,
     summary="템플릿 업데이트",
-    description="템플릿 메타데이터를 업데이트합니다."
+    description="⚠️ DEPRECATED: 워크플로우 버전 수정 기능을 사용하세요. 템플릿 메타데이터를 업데이트합니다.",
+    deprecated=True
 )
 async def update_template(
     template_id: str,
@@ -518,7 +539,8 @@ async def update_template(
 @router.get(
     "/{template_id}/download",
     summary="템플릿 다운로드",
-    description="템플릿을 JSON 파일로 다운로드합니다."
+    description="⚠️ DEPRECATED: 워크플로우 export 기능을 사용하세요. 템플릿을 JSON 파일로 다운로드합니다.",
+    deprecated=True
 )
 async def download_template(
     template_id: str,

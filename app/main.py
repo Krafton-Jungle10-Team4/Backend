@@ -26,7 +26,6 @@ from app.api.v1.endpoints import (
     workflow_executions,
     cost_monitoring,
     tavily,
-    templates,
     knowledge,
     library
 )
@@ -102,7 +101,6 @@ app.include_router(deployment.router, prefix="/api/v1/bots", tags=["배포 관�
 app.include_router(widget.router, prefix="/api/v1/widget", tags=["Widget"])
 app.include_router(cost_monitoring.router, prefix="/api/v1/cost", tags=["비용 모니터링"])
 app.include_router(tavily.router, prefix="/api/v1/tavily", tags=["Tavily Search"])
-app.include_router(templates.router, prefix="/api/v1/templates", tags=["템플릿"])
 app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["지식 관리"])
 app.include_router(library.router, prefix="/api/v1", tags=["라이브러리"])
 app.include_router(library.bot_router, prefix="/api/v1", tags=["라이브러리 - 에이전트 가져오기"])
