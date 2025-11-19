@@ -158,11 +158,11 @@ class WorkflowVersionService:
 
         # 라이브러리 메타데이터 설정 (제공된 경우)
         if library_metadata:
-            draft.library_name = library_metadata.get("name")
-            draft.library_description = library_metadata.get("description")
-            draft.library_category = library_metadata.get("category")
-            draft.library_tags = library_metadata.get("tags")
-            draft.library_visibility = library_metadata.get("visibility", "private")
+            draft.library_name = library_metadata.get("library_name")
+            draft.library_description = library_metadata.get("library_description")
+            draft.library_category = library_metadata.get("library_category")
+            draft.library_tags = library_metadata.get("library_tags")
+            draft.library_visibility = library_metadata.get("library_visibility", "private")
             draft.is_in_library = True
             draft.library_published_at = datetime.now()
             logger.info(f"Added workflow {new_version} to library: {draft.library_name}")
