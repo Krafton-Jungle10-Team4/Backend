@@ -15,6 +15,7 @@ from app.models.workflow_version import (
 from app.models.conversation_variable import ConversationVariable
 from app.models.knowledge import Knowledge
 from app.models.import_history import AgentImportHistory
+from app.models.bot_api_key import BotAPIKey, APIKeyUsage
 
 __all__ = [
     "User",
@@ -38,4 +39,6 @@ __all__ = [
     "ConversationVariable",
     "Knowledge",
     "AgentImportHistory",
+    "BotAPIKey",
+    "APIKeyUsage",
 ]

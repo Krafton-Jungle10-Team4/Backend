@@ -48,6 +48,10 @@ class BotWorkflowVersion(Base):
     edge_count = Column(Integer, nullable=True)
     port_definitions = Column(JSONB, nullable=True)
 
+    # API 배포 관련 필드
+    api_endpoint_alias = Column(String(100), nullable=True, unique=True, index=True)
+    api_default_response_mode = Column(String(20), nullable=False, server_default='blocking')
+
     # 관계
     bot = relationship("Bot", back_populates="workflow_versions")
     execution_runs = relationship("WorkflowExecutionRun", back_populates="workflow_version", cascade="all, delete-orphan")
@@ -91,9 +95,14 @@ class WorkflowExecutionRun(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
+    # 🆕 API 키 추적
+    api_key_id = Column(UUID(as_uuid=True), ForeignKey('bot_api_keys.id', ondelete='SET NULL'), nullable=True, index=True)
+    api_request_id = Column(String(64), nullable=True, index=True)  # 외부 추적용 (idempotency)
+
     # 관계
     workflow_version = relationship("BotWorkflowVersion", back_populates="execution_runs")
     node_executions = relationship("WorkflowNodeExecution", back_populates="run", cascade="all, delete-orphan")
+    bot_api_key = relationship("BotAPIKey", back_populates="execution_runs")
 
 
 class WorkflowNodeExecution(Base):

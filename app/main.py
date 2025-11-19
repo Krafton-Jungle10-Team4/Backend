@@ -27,7 +27,10 @@ from app.api.v1.endpoints import (
     cost_monitoring,
     tavily,
     knowledge,
-    library
+    library,
+    public_workflows,
+    bot_api_keys,
+    bot_api_schema
 )
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -87,6 +90,10 @@ app.add_middleware(WidgetCORSMiddleware)
 # 감사 로깅 미들웨어
 app.add_middleware(AuditLoggingMiddleware)
 
+# RESTful API Rate Limiting 미들웨어
+from app.core.rate_limiter import rate_limit_middleware
+app.middleware("http")(rate_limit_middleware)
+
 # API 라우터 등록
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
 app.include_router(bots.router, prefix="/api/v1/bots", tags=["봇 관리"])
@@ -105,6 +112,11 @@ app.include_router(tavily.router, prefix="/api/v1/tavily", tags=["Tavily Search"
 app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["지식 관리"])
 app.include_router(library.router, prefix="/api/v1", tags=["라이브러리"])
 app.include_router(library.bot_router, prefix="/api/v1", tags=["라이브러리 - 에이전트 가져오기"])
+
+# RESTful API 배포 기능
+app.include_router(public_workflows.router, tags=["공개 API - 워크플로우 실행"])
+app.include_router(bot_api_keys.router, tags=["API 키 관리"])
+app.include_router(bot_api_schema.router, tags=["API 스키마 관리"])
 
 
 @app.on_event("startup")

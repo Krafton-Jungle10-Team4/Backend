@@ -80,7 +80,24 @@ def upgrade() -> None:
         ['library_published_at']
     )
 
-    # 4. draft 유니크 인덱스 추가 (bot_id당 draft는 1개만, partial index 사용)
+    # 4. draft 유니크 인덱스 추가 전에 중복 draft 레코드 정리
+    connection = op.get_bind()
+    
+    # 각 bot_id당 draft 상태가 여러 개인 경우, 가장 최신 것만 남기고 나머지 삭제
+    # CTE를 사용하여 각 bot_id의 가장 최신 draft만 선택
+    connection.execute(sa.text("""
+        WITH latest_drafts AS (
+            SELECT DISTINCT ON (bot_id) id
+            FROM bot_workflow_versions
+            WHERE status = 'draft'
+            ORDER BY bot_id, COALESCE(updated_at, created_at) DESC
+        )
+        DELETE FROM bot_workflow_versions
+        WHERE status = 'draft'
+        AND id NOT IN (SELECT id FROM latest_drafts);
+    """))
+    
+    # 4-1. draft 유니크 인덱스 추가 (bot_id당 draft는 1개만, partial index 사용)
     op.create_index(
         'uq_bot_workflow_versions_draft',
         'bot_workflow_versions',
@@ -115,7 +132,6 @@ def upgrade() -> None:
     op.create_index('ix_bot_deployments_workflow_version_id', 'bot_deployments', ['workflow_version_id'])
 
     # 기존 배포를 최신 published 버전으로 매핑
-    connection = op.get_bind()
     connection.execute(sa.text("""
         UPDATE bot_deployments bd
         SET workflow_version_id = (
