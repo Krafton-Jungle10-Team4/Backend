@@ -31,6 +31,7 @@ from app.api.v1.endpoints import (
     public_workflows,
     bot_api_keys,
     bot_api_schema
+    marketplace
 )
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -112,6 +113,7 @@ app.include_router(tavily.router, prefix="/api/v1/tavily", tags=["Tavily Search"
 app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["지식 관리"])
 app.include_router(library.router, prefix="/api/v1", tags=["라이브러리"])
 app.include_router(library.bot_router, prefix="/api/v1", tags=["라이브러리 - 에이전트 가져오기"])
+app.include_router(marketplace.router, prefix="/api/v1/marketplace", tags=["마켓플레이스"])
 
 # RESTful API 배포 기능
 app.include_router(public_workflows.router, tags=["공개 API - 워크플로우 실행"])

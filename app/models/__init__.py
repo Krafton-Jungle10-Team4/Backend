@@ -16,6 +16,7 @@ from app.models.conversation_variable import ConversationVariable
 from app.models.knowledge import Knowledge
 from app.models.import_history import AgentImportHistory
 from app.models.bot_api_key import BotAPIKey, APIKeyUsage
+from app.models.marketplace import MarketplaceItem, MarketplaceReview
 
 __all__ = [
     "User",
@@ -41,4 +42,6 @@ __all__ = [
     "AgentImportHistory",
     "BotAPIKey",
     "APIKeyUsage",
+    "MarketplaceItem",
+    "MarketplaceReview",
 ]

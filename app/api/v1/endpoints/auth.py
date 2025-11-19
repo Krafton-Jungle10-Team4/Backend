@@ -84,6 +84,12 @@ async def google_callback(request: Request, state: str = None, db: AsyncSession 
     if not redirect_uri:
         redirect_uri = f"{settings.get_frontend_urls()[0]}/auth/callback"
 
+    # Authlib는 세션에 저장된 state와 콜백 쿼리의 state를 비교한다.
+    # 프론트에서 리다이렉트 없이 API 호출로 로그인 URL을 가져가면 세션 쿠키가 유실되어
+    # state 미스매치가 발생할 수 있으므로, 세션에 state가 없을 때 콜백의 state를 보강한다.
+    if state and request.session.get("google_state") is None:
+        request.session["google_state"] = state
+
     try:
         # Google에서 토큰 받기
         token = await oauth.google.authorize_access_token(request)
