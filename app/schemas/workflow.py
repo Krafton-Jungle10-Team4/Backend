@@ -502,6 +502,11 @@ class LibraryAgentResponse(BaseModel):
     node_count: Optional[int] = Field(None, description="노드 개수")
     edge_count: Optional[int] = Field(None, description="엣지 개수")
 
+    # 배포 관련 필드 추가
+    deployment_status: Optional[str] = Field(None, description="배포 상태 (None | 'draft' | 'published' | 'suspended')")
+    widget_key: Optional[str] = Field(None, description="Widget Key")
+    deployed_at: Optional[datetime] = Field(None, description="배포 시간")
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -527,6 +532,11 @@ class LibraryAgentDetailResponse(BaseModel):
     node_count: Optional[int] = Field(None, description="노드 개수")
     edge_count: Optional[int] = Field(None, description="엣지 개수")
     port_definitions: Optional[Dict[str, Any]] = Field(None, description="포트 정의")
+
+    # 배포 관련 필드 추가
+    deployment_status: Optional[str] = Field(None, description="배포 상태 (None | 'draft' | 'published' | 'suspended')")
+    widget_key: Optional[str] = Field(None, description="Widget Key")
+    deployed_at: Optional[datetime] = Field(None, description="배포 시간")
 
     model_config = ConfigDict(from_attributes=True)
 

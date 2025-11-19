@@ -65,26 +65,9 @@ async def list_library_agents(
             page_size=page_size
         )
 
-        # 응답 데이터 구성
-        agent_list = [
-            LibraryAgentResponse(
-                id=str(agent.id),
-                bot_id=agent.bot_id,
-                library_name=agent.library_name,
-                library_description=agent.library_description,
-                library_category=agent.library_category,
-                library_tags=agent.library_tags or [],
-                library_visibility=agent.library_visibility,
-                version=agent.version,
-                node_count=agent.node_count,
-                edge_count=agent.edge_count,
-                library_published_at=agent.library_published_at
-            )
-            for agent in agents
-        ]
-
+        # agents는 이미 LibraryAgentResponse 타입이므로 직접 사용
         return {
-            "agents": agent_list,
+            "agents": agents,
             "total": total_count,
             "page": page,
             "page_size": page_size,
@@ -118,14 +101,15 @@ async def get_library_agent(
     """
     try:
         service = LibraryService(db)
-        agent = await service.get_library_agent_by_id(version_id, current_user.id)
+        result = await service.get_library_agent_by_id(version_id, current_user.id)
 
-        if not agent:
+        if not result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="라이브러리 에이전트를 찾을 수 없습니다"
             )
 
+        agent = result["agent"]
         return LibraryAgentDetailResponse(
             id=str(agent.id),
             bot_id=agent.bot_id,
@@ -138,12 +122,16 @@ async def get_library_agent(
             node_count=agent.node_count,
             edge_count=agent.edge_count,
             library_published_at=agent.library_published_at,
-            graph=WorkflowGraph(**agent.graph) if agent.graph else None,
+            created_at=agent.created_at,
+            graph=agent.graph,
             environment_variables=agent.environment_variables,
             conversation_variables=agent.conversation_variables,
             input_schema=agent.input_schema,
             output_schema=agent.output_schema,
-            port_definitions=agent.port_definitions
+            port_definitions=agent.port_definitions,
+            deployment_status=result["deployment_status"],
+            widget_key=result["widget_key"],
+            deployed_at=result["deployed_at"]
         )
 
     except ValueError as e:

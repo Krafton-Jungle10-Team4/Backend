@@ -5,6 +5,7 @@
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func
+from sqlalchemy.orm import selectinload
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 import logging
@@ -13,7 +14,8 @@ from app.models.workflow_version import BotWorkflowVersion
 from app.models.import_history import AgentImportHistory
 from app.models.bot import Bot
 from app.models.user import User
-from app.schemas.workflow import WorkflowVersionStatus
+from app.models.deployment import BotDeployment
+from app.schemas.workflow import WorkflowVersionStatus, LibraryAgentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +35,7 @@ class LibraryService:
         tags: Optional[List[str]] = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> Tuple[List[BotWorkflowVersion], int]:
+    ) -> Tuple[List[LibraryAgentResponse], int]:
         """
         라이브러리 에이전트 목록 조회 (필터링, 페이지네이션)
 
@@ -46,20 +48,34 @@ class LibraryService:
             page_size: 페이지 크기 (기본: 20)
 
         Returns:
-            Tuple[List[BotWorkflowVersion], int]: (에이전트 목록, 전체 개수)
+            Tuple[List[LibraryAgentResponse], int]: (에이전트 목록, 전체 개수)
         """
         # 기본 쿼리: 라이브러리에 등록되고 발행된 버전만 + visibility 접근 제어
+        # Bot 테이블을 경유하여 BotDeployment와 LEFT JOIN
         stmt = (
-            select(BotWorkflowVersion)
+            select(
+                BotWorkflowVersion,
+                BotDeployment.status.label("deployment_status"),
+                BotDeployment.widget_key,
+                BotDeployment.created_at.label("deployed_at")
+            )
             .join(Bot, BotWorkflowVersion.bot_id == Bot.bot_id)
+            .outerjoin(
+                BotDeployment,
+                and_(
+                    BotDeployment.bot_id == Bot.id,
+                    BotDeployment.workflow_version_id == BotWorkflowVersion.id
+                )
+            )
             .where(
                 and_(
                     BotWorkflowVersion.is_in_library == True,
                     BotWorkflowVersion.status == WorkflowVersionStatus.PUBLISHED.value,
+                    # team 가시성을 팀 모델 없이 소유자 기반으로 허용 (추후 팀 권한 도입 시 교체)
                     or_(
                         BotWorkflowVersion.library_visibility == "public",
                         and_(
-                            BotWorkflowVersion.library_visibility == "private",
+                            BotWorkflowVersion.library_visibility.in_(["private", "team"]),
                             Bot.user_id == user_id
                         )
                     )
@@ -92,8 +108,45 @@ class LibraryService:
                     BotWorkflowVersion.library_tags.contains([tag])
                 )
 
-        # 전체 개수 조회
-        count_stmt = select(func.count()).select_from(stmt.subquery())
+        # 전체 개수 조회 (deployment join 전 서브쿼리 사용)
+        count_stmt = (
+            select(func.count())
+            .select_from(BotWorkflowVersion)
+            .join(Bot, BotWorkflowVersion.bot_id == Bot.bot_id)
+            .where(
+                and_(
+                    BotWorkflowVersion.is_in_library == True,
+                    BotWorkflowVersion.status == WorkflowVersionStatus.PUBLISHED.value,
+                    or_(
+                        BotWorkflowVersion.library_visibility == "public",
+                        and_(
+                            BotWorkflowVersion.library_visibility.in_(["private", "team"]),
+                            Bot.user_id == user_id
+                        )
+                    )
+                )
+            )
+        )
+
+        # 카운트 쿼리에도 동일한 필터 적용
+        if category:
+            count_stmt = count_stmt.where(BotWorkflowVersion.library_category == category)
+        if visibility:
+            count_stmt = count_stmt.where(BotWorkflowVersion.library_visibility == visibility)
+        if search:
+            search_pattern = f"%{search}%"
+            count_stmt = count_stmt.where(
+                or_(
+                    BotWorkflowVersion.library_name.ilike(search_pattern),
+                    BotWorkflowVersion.library_description.ilike(search_pattern)
+                )
+            )
+        if tags:
+            for tag in tags:
+                count_stmt = count_stmt.where(
+                    BotWorkflowVersion.library_tags.contains([tag])
+                )
+
         count_result = await self.db.execute(count_stmt)
         total_count = count_result.scalar() or 0
 
@@ -106,19 +159,40 @@ class LibraryService:
 
         # 실행
         result = await self.db.execute(stmt)
-        agents = result.scalars().all()
+        rows = result.all()
+
+        # 배포 정보 포함하여 응답 생성
+        agents = [
+            LibraryAgentResponse(
+                id=str(row.BotWorkflowVersion.id),
+                bot_id=row.BotWorkflowVersion.bot_id,
+                version=row.BotWorkflowVersion.version,
+                library_name=row.BotWorkflowVersion.library_name,
+                library_description=row.BotWorkflowVersion.library_description,
+                library_category=row.BotWorkflowVersion.library_category,
+                library_tags=row.BotWorkflowVersion.library_tags,
+                library_visibility=row.BotWorkflowVersion.library_visibility,
+                library_published_at=row.BotWorkflowVersion.library_published_at,
+                node_count=row.BotWorkflowVersion.node_count,
+                edge_count=row.BotWorkflowVersion.edge_count,
+                deployment_status=row.deployment_status,
+                widget_key=row.widget_key,
+                deployed_at=row.deployed_at
+            )
+            for row in rows
+        ]
 
         logger.info(
             f"Retrieved {len(agents)} library agents "
             f"(page {page}/{(total_count + page_size - 1) // page_size}, total: {total_count})"
         )
-        return list(agents), total_count
+        return agents, total_count
 
     async def get_library_agent_by_id(
         self,
         version_id: str,
         user_id: int
-    ) -> Optional[BotWorkflowVersion]:
+    ) -> Optional[Dict[str, Any]]:
         """
         특정 라이브러리 에이전트 상세 조회
 
@@ -126,23 +200,36 @@ class LibraryService:
             version_id: 워크플로우 버전 ID (UUID)
 
         Returns:
-            Optional[BotWorkflowVersion]: 에이전트 정보 또는 None
+            Optional[Dict[str, Any]]: 에이전트 정보 (배포 정보 포함) 또는 None
 
         Raises:
             ValueError: 라이브러리에 등록되지 않은 에이전트인 경우
         """
         stmt = (
-            select(BotWorkflowVersion)
+            select(
+                BotWorkflowVersion,
+                BotDeployment.status.label("deployment_status"),
+                BotDeployment.widget_key,
+                BotDeployment.created_at.label("deployed_at")
+            )
             .join(Bot, BotWorkflowVersion.bot_id == Bot.bot_id)
+            .outerjoin(
+                BotDeployment,
+                and_(
+                    BotDeployment.bot_id == Bot.id,
+                    BotDeployment.workflow_version_id == BotWorkflowVersion.id
+                )
+            )
             .where(
                 and_(
                     BotWorkflowVersion.id == version_id,
                     BotWorkflowVersion.is_in_library == True,
                     BotWorkflowVersion.status == WorkflowVersionStatus.PUBLISHED.value,
+                    # team 가시성을 팀 모델 없이 소유자 기반으로 허용 (추후 팀 권한 도입 시 교체)
                     or_(
                         BotWorkflowVersion.library_visibility == "public",
                         and_(
-                            BotWorkflowVersion.library_visibility == "private",
+                            BotWorkflowVersion.library_visibility.in_(["private", "team"]),
                             Bot.user_id == user_id
                         )
                     )
@@ -150,13 +237,21 @@ class LibraryService:
             )
         )
         result = await self.db.execute(stmt)
-        agent = result.scalar_one_or_none()
+        row = result.one_or_none()
 
-        if not agent:
+        if not row:
             return None
 
+        agent = row.BotWorkflowVersion
         logger.info(f"Retrieved library agent: {agent.library_name} (version: {agent.version})")
-        return agent
+
+        # 에이전트 정보와 배포 정보를 딕셔너리로 반환
+        return {
+            "agent": agent,
+            "deployment_status": row.deployment_status,
+            "widget_key": row.widget_key,
+            "deployed_at": row.deployed_at
+        }
 
     async def import_agent_to_bot(
         self,
@@ -191,7 +286,7 @@ class LibraryService:
                     or_(
                         BotWorkflowVersion.library_visibility == "public",
                         and_(
-                            BotWorkflowVersion.library_visibility == "private",
+                            BotWorkflowVersion.library_visibility.in_(["private", "team"]),
                             Bot.user_id == user_id
                         )
                     )
