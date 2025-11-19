@@ -56,7 +56,7 @@ def upgrade() -> None:
         
         # Metadata
         sa.Column('allowed_ips', JSONB, nullable=True),
-        sa.Column('metadata', JSONB, nullable=False, server_default='{}'),
+        sa.Column('extra_metadata', JSONB, nullable=False, server_default='{}'),
         
         # Timestamps
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),

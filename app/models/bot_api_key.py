@@ -58,7 +58,7 @@ class BotAPIKey(Base):
 
     # Metadata
     allowed_ips = Column(JSONB, nullable=True)  # ["192.168.1.0/24"]
-    metadata = Column(JSONB, nullable=False, server_default='{}')
+    extra_metadata = Column(JSONB, nullable=False, server_default='{}')
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
