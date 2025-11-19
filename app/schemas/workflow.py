@@ -456,11 +456,10 @@ class WorkflowExecutionStatistics(BaseModel):
 
 class LibraryMetadata(BaseModel):
     """라이브러리 메타데이터"""
-    library_name: str = Field(..., max_length=255, description="라이브러리에 표시될 이름")
+    library_name: Optional[str] = Field(None, max_length=255, description="라이브러리에 표시될 이름 (미제공 시 봇 이름 사용)")
     library_description: Optional[str] = Field(None, max_length=1000, description="설명")
     library_category: Optional[str] = Field(None, max_length=100, description="카테고리")
     library_tags: Optional[List[str]] = Field(default_factory=list, description="태그 목록")
-    library_visibility: str = Field(default="private", description="공개 범위: private, team, public")
 
 
 class PublishWorkflowRequest(BaseModel):

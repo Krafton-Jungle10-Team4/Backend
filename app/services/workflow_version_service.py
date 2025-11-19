@@ -151,6 +151,14 @@ class WorkflowVersionService:
         else:
             new_version = "v1.0"
 
+        # Bot 조회 (이름 가져오기 및 use_workflow_v2 활성화)
+        stmt = select(Bot).where(Bot.bot_id == bot_id)
+        result = await self.db.execute(stmt)
+        bot = result.scalars().first()
+
+        if not bot:
+            raise ValueError("봇을 찾을 수 없습니다")
+
         # Draft를 Published로 변경
         draft.version = new_version
         draft.status = WorkflowVersionStatus.PUBLISHED.value
@@ -158,11 +166,13 @@ class WorkflowVersionService:
 
         # 라이브러리 메타데이터 설정 (제공된 경우)
         if library_metadata:
-            draft.library_name = library_metadata.get("library_name")
+            # library_name이 제공되지 않으면 봇 이름 사용
+            draft.library_name = library_metadata.get("library_name") or bot.name
             draft.library_description = library_metadata.get("library_description")
             draft.library_category = library_metadata.get("library_category")
             draft.library_tags = library_metadata.get("library_tags")
-            draft.library_visibility = library_metadata.get("library_visibility", "private")
+            # library_visibility는 더 이상 사용하지 않음 (기본값 "private"로 설정)
+            draft.library_visibility = "private"
             draft.is_in_library = True
             draft.library_published_at = datetime.now()
             logger.info(f"Added workflow {new_version} to library: {draft.library_name}")
@@ -184,13 +194,8 @@ class WorkflowVersionService:
             logger.info(f"Workflow statistics: {draft.node_count} nodes, {draft.edge_count} edges")
 
         # Bot의 use_workflow_v2 활성화
-        stmt = select(Bot).where(Bot.bot_id == bot_id)
-        result = await self.db.execute(stmt)
-        bot = result.scalars().first()
-
-        if bot:
-            bot.use_workflow_v2 = True
-            logger.info(f"Enabled workflow V2 for bot {bot_id}")
+        bot.use_workflow_v2 = True
+        logger.info(f"Enabled workflow V2 for bot {bot_id}")
 
         await self.db.commit()
         await self.db.refresh(draft)
@@ -404,12 +409,12 @@ class WorkflowVersionService:
 
         for node in nodes:
             node_type = node.get("type")
-            node_data = node.get("data", {})
+            node_ports = node.get("ports", {})  # V2 구조: node.ports
 
             # Start 노드: 출력 포트를 input_schema로 사용
             if node_type == "start":
                 has_start_node = True
-                outputs = node_data.get("outputs", [])
+                outputs = node_ports.get("outputs", [])
                 if outputs:
                     input_schema = [self._port_to_dict(port) for port in outputs]
                     logger.debug(f"Extracted input_schema from Start node: {len(outputs)} ports")
@@ -419,7 +424,7 @@ class WorkflowVersionService:
             # End 노드: 입력 포트를 output_schema로 사용
             elif node_type == "end":
                 has_end_node = True
-                inputs = node_data.get("inputs", [])
+                inputs = node_ports.get("inputs", [])
                 if inputs:
                     output_schema = [self._port_to_dict(port) for port in inputs]
                     logger.debug(f"Extracted output_schema from End node: {len(inputs)} ports")

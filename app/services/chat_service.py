@@ -608,14 +608,27 @@ class ChatService:
         bot_id: str,
         db: AsyncSession
     ) -> Dict[str, Any]:
-        """Published 워크플로우 버전을 로드하여 실행용 구조로 변환"""
+        """워크플로우 버전 로드 (Published 우선, 없으면 Draft 사용)"""
         from app.services.workflow_version_service import WorkflowVersionService
 
         service = WorkflowVersionService(db)
+
+        # 1. Published 버전 먼저 시도
         version = await service.get_published_version(bot_id)
 
+        # 2. Published가 없으면 Draft 사용
+        if not version:
+            logger.info(f"[ChatService] Published 버전이 없어 Draft 사용: bot_id={bot_id}")
+            versions = await service.list_versions(bot_id, status="draft")
+            version = versions[0] if versions else None
+
+            if version:
+                logger.info(f"[ChatService] Draft 워크플로우 로드 성공: bot_id={bot_id}, version_id={version.id}")
+        else:
+            logger.info(f"[ChatService] Published 워크플로우 로드 성공: bot_id={bot_id}, version={version.version}")
+
         if not version or not version.graph:
-            raise ValueError("발행된 워크플로우 버전을 찾을 수 없습니다. 워크플로우를 먼저 발행하세요.")
+            raise ValueError("사용 가능한 워크플로우 버전을 찾을 수 없습니다. 워크플로우를 먼저 저장하세요.")
 
         graph = copy.deepcopy(version.graph)
         workflow_data: Dict[str, Any] = {
