@@ -187,41 +187,22 @@ class ChatService:
             len(workflow_data.get("edges", []))
         )
 
-        # V1/V2 분기 처리
-        if getattr(bot, 'use_workflow_v2', False):
-            # V2 Workflow Executor 실행
-            logger.info(f"[ChatService] V2 Workflow 실행: bot_id={request.bot_id}")
-            from app.core.workflow.executor_v2 import WorkflowExecutorV2
+        # V2 Workflow Executor 실행 (V2 전용)
+        logger.info(f"[ChatService] V2 Workflow 실행: bot_id={request.bot_id}")
+        from app.core.workflow.executor_v2 import WorkflowExecutorV2
 
-            executor = WorkflowExecutorV2()
-            response_text = await executor.execute(
-                workflow_data=workflow_data,
-                session_id=request.session_id or "default",
-                user_message=request.message,
-                bot_id=bot.bot_id,
-                db=db,
-                vector_service=vector_service,
-                llm_service=llm_service,
-                stream_handler=None,
-                text_normalizer=strip_markdown
-            )
-        else:
-            # V1 Workflow Executor 실행 (기존 로직)
-            logger.info(f"[ChatService] V1 Workflow 실행: bot_id={request.bot_id}")
-            from app.core.workflow.executor import WorkflowExecutor
-
-            executor = WorkflowExecutor()
-            response_text = await executor.execute(
-                workflow_data=workflow_data,
-                session_id=request.session_id or "default",
-                user_message=request.message,
-                bot_id=bot.bot_id,
-                db=db,
-                vector_service=vector_service,
-                llm_service=llm_service,
-                stream_handler=None,
-                text_normalizer=strip_markdown
-            )
+        executor = WorkflowExecutorV2()
+        response_text = await executor.execute(
+            workflow_data=workflow_data,
+            session_id=request.session_id or "default",
+            user_message=request.message,
+            bot_id=bot.bot_id,
+            db=db,
+            vector_service=vector_service,
+            llm_service=llm_service,
+            stream_handler=None,
+            text_normalizer=strip_markdown
+        )
 
         # ChatResponse 형식으로 변환
         return ChatResponse(
@@ -384,15 +365,10 @@ class ChatService:
             user_id=bot.user_id
         )
 
-        # V1/V2 분기 처리
-        if getattr(bot, 'use_workflow_v2', False):
-            logger.info(f"[ChatService] V2 Workflow 스트리밍: bot_id={bot.bot_id}")
-            from app.core.workflow.executor_v2 import WorkflowExecutorV2
-            executor = WorkflowExecutorV2()
-        else:
-            logger.info(f"[ChatService] V1 Workflow 스트리밍: bot_id={bot.bot_id}")
-            from app.core.workflow.executor import WorkflowExecutor
-            executor = WorkflowExecutor()
+        # V2 Workflow Executor 실행 (V2 전용)
+        logger.info(f"[ChatService] V2 Workflow 스트리밍: bot_id={bot.bot_id}")
+        from app.core.workflow.executor_v2 import WorkflowExecutorV2
+        executor = WorkflowExecutorV2()
 
         queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
 

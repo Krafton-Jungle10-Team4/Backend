@@ -25,7 +25,7 @@ from app.services.bot_service import BotService
 logger = logging.getLogger(__name__)
 
 
-def _normalize_schema(schema: Any) -> Optional[List]:
+def _normalize_schema(schema: Any) -> List:
     """
     레거시 스키마 데이터를 배열 형식으로 정규화
 
@@ -33,23 +33,23 @@ def _normalize_schema(schema: Any) -> Optional[List]:
         schema: input_schema 또는 output_schema (dict, list, 또는 None)
 
     Returns:
-        Optional[List]: 정규화된 배열 또는 None
+        List: 정규화된 배열 (None/빈 값도 빈 배열로 일관 반환)
     """
     if schema is None:
-        return None
+        return []
 
-    # 이미 리스트인 경우
+    # 이미 리스트인 경우: 빈 배열도 유효한 스키마로 취급
     if isinstance(schema, list):
-        return schema if schema else None
+        return schema
 
-    # dict인 경우 (레거시 데이터) - 빈 배열로 변환하고 경고
+    # dict인 경우 (레거시 데이터) - 경고 후 빈 배열로 변환
     if isinstance(schema, dict):
         logger.warning(f"Legacy dict schema detected, converting to empty list: {schema}")
-        return None
+        return []
 
-    # 그 외의 경우
-    logger.warning(f"Unexpected schema type: {type(schema)}, returning None")
-    return None
+    # 그 외의 경우도 방어적으로 빈 배열 반환
+    logger.warning(f"Unexpected schema type: {type(schema)}, returning empty list")
+    return []
 
 router = APIRouter(
     prefix="/library",

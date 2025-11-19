@@ -61,8 +61,8 @@ class Bot(Base):
     workflow = Column(JSON, nullable=True)
 
     # V2 마이그레이션 필드
-    use_workflow_v2 = Column(Boolean, default=False, nullable=False)
-    legacy_workflow = Column(JSON, nullable=True)  # 백업용
+    use_workflow_v2 = Column(Boolean, default=True, nullable=False)  # V2 전용으로 전환
+    legacy_workflow = Column(JSON, nullable=True)  # 백업용 (deprecated)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
