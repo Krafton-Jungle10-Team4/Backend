@@ -301,10 +301,20 @@ async def _build_marketplace_item_response(
             output_schema=workflow_version.output_schema,
         )
 
-    # 게시자 정보 (추후 추가 가능)
+    # 게시자 정보 (사용자 이름 포함)
+    username = None
+    if item.publisher_user_id:
+        from app.models.user import User
+        user_stmt = select(User).where(User.uuid == item.publisher_user_id)
+        user_result = await db.execute(user_stmt)
+        user = user_result.scalar_one_or_none()
+        if user:
+            username = user.name
+
     publisher_info = PublisherInfo(
         team_id=item.publisher_team_id,
         user_id=item.publisher_user_id,
+        username=username,
     )
 
     return MarketplaceItemResponse(
