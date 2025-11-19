@@ -527,8 +527,8 @@ class LibraryAgentDetailResponse(BaseModel):
     created_at: datetime = Field(..., description="생성 시간")
 
     # 통계 및 스키마 정보
-    input_schema: Optional[Dict[str, Any]] = Field(None, description="입력 스키마")
-    output_schema: Optional[Dict[str, Any]] = Field(None, description="출력 스키마")
+    input_schema: Optional[List[PortDefinition]] = Field(None, description="입력 스키마")
+    output_schema: Optional[List[PortDefinition]] = Field(None, description="출력 스키마")
     node_count: Optional[int] = Field(None, description="노드 개수")
     edge_count: Optional[int] = Field(None, description="엣지 개수")
     port_definitions: Optional[Dict[str, Any]] = Field(None, description="포트 정의")

@@ -12,7 +12,7 @@ import logging
 from app.models.workflow_version import BotWorkflowVersion
 from app.models.bot import Bot
 from app.models.user import User
-from app.schemas.workflow import WorkflowVersionStatus, WorkflowGraph
+from app.schemas.workflow import WorkflowVersionStatus, WorkflowGraph, PortDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +55,15 @@ class WorkflowVersionService:
         existing_draft = result.scalar_one_or_none()
 
         if existing_draft:
+            # 스키마 추출
+            input_schema, output_schema = self._extract_schemas_from_graph(graph)
+
             # 업데이트
             existing_draft.graph = graph
             existing_draft.environment_variables = environment_variables
             existing_draft.conversation_variables = conversation_variables
+            existing_draft.input_schema = input_schema
+            existing_draft.output_schema = output_schema
             existing_draft.updated_at = datetime.now()
 
             await self.db.commit()
@@ -70,6 +75,9 @@ class WorkflowVersionService:
             # user_id 검증 및 fallback 처리
             creator_uuid = await self._get_valid_creator_uuid(bot_id, user_id)
 
+            # 스키마 추출
+            input_schema, output_schema = self._extract_schemas_from_graph(graph)
+
             # 신규 생성
             draft = BotWorkflowVersion(
                 bot_id=bot_id,
@@ -78,6 +86,8 @@ class WorkflowVersionService:
                 graph=graph,
                 environment_variables=environment_variables,
                 conversation_variables=conversation_variables,
+                input_schema=input_schema,
+                output_schema=output_schema,
                 created_by=creator_uuid
             )
             self.db.add(draft)
@@ -157,12 +167,20 @@ class WorkflowVersionService:
             draft.library_published_at = datetime.now()
             logger.info(f"Added workflow {new_version} to library: {draft.library_name}")
 
-        # 그래프 통계 계산 및 저장
+        # 그래프 통계 및 스키마 계산
         if draft.graph:
             nodes = draft.graph.get("nodes", [])
             edges = draft.graph.get("edges", [])
             draft.node_count = len(nodes)
             draft.edge_count = len(edges)
+
+            # 스키마 추출 (draft 생성 시 누락되었을 경우를 위해)
+            if not draft.input_schema or not draft.output_schema:
+                input_schema, output_schema = self._extract_schemas_from_graph(draft.graph)
+                draft.input_schema = input_schema
+                draft.output_schema = output_schema
+                logger.info(f"Extracted schemas during publish: input={len(input_schema or [])}, output={len(output_schema or [])}")
+
             logger.info(f"Workflow statistics: {draft.node_count} nodes, {draft.edge_count} edges")
 
         # Bot의 use_workflow_v2 활성화
@@ -189,6 +207,8 @@ class WorkflowVersionService:
             environment_variables=draft.environment_variables,
             conversation_variables=draft.conversation_variables,
             features=draft.features,  # features 필드도 복사
+            input_schema=draft.input_schema,  # 스키마 복사
+            output_schema=draft.output_schema,
             created_by=creator_uuid
         )
         self.db.add(new_draft)
@@ -351,3 +371,182 @@ class WorkflowVersionService:
         
         logger.info(f"Using bot creator UUID {bot_creator.uuid} for workflow version")
         return bot_creator.uuid
+
+    def _extract_schemas_from_graph(
+        self,
+        graph: Dict[str, Any]
+    ) -> tuple[Optional[List[Dict[str, Any]]], Optional[List[Dict[str, Any]]]]:
+        """
+        워크플로우 그래프에서 입출력 스키마 추출
+
+        Start 노드의 출력 포트를 input_schema로 사용
+        End 노드의 입력 포트를 output_schema로 사용
+
+        Args:
+            graph: 워크플로우 그래프 (nodes, edges)
+
+        Returns:
+            tuple: (input_schema, output_schema) - 각각 PortDefinition 딕셔너리 리스트
+        """
+        if not graph or "nodes" not in graph:
+            logger.warning("Graph is empty or missing 'nodes' field, cannot extract schemas")
+            return None, None
+
+        nodes = graph.get("nodes", [])
+        if not nodes:
+            logger.warning("Graph has no nodes, cannot extract schemas")
+            return None, None
+
+        input_schema = None
+        output_schema = None
+        has_start_node = False
+        has_end_node = False
+
+        for node in nodes:
+            node_type = node.get("type")
+            node_data = node.get("data", {})
+
+            # Start 노드: 출력 포트를 input_schema로 사용
+            if node_type == "start":
+                has_start_node = True
+                outputs = node_data.get("outputs", [])
+                if outputs:
+                    input_schema = [self._port_to_dict(port) for port in outputs]
+                    logger.debug(f"Extracted input_schema from Start node: {len(outputs)} ports")
+                else:
+                    logger.warning("Start node found but has no output ports")
+
+            # End 노드: 입력 포트를 output_schema로 사용
+            elif node_type == "end":
+                has_end_node = True
+                inputs = node_data.get("inputs", [])
+                if inputs:
+                    output_schema = [self._port_to_dict(port) for port in inputs]
+                    logger.debug(f"Extracted output_schema from End node: {len(inputs)} ports")
+                else:
+                    logger.warning("End node found but has no input ports")
+
+        # Start/End 노드 누락 경고
+        if not has_start_node:
+            logger.warning("Workflow graph missing Start node, input_schema will be None")
+        if not has_end_node:
+            logger.warning("Workflow graph missing End node, output_schema will be None")
+
+        return input_schema, output_schema
+
+    def _port_to_dict(self, port: Any) -> Dict[str, Any]:
+        """
+        포트 정의를 딕셔너리로 변환
+
+        Args:
+            port: PortDefinition 객체 또는 딕셔너리
+
+        Returns:
+            Dict[str, Any]: 포트 정의 딕셔너리
+        """
+        if isinstance(port, dict):
+            return port
+        elif hasattr(port, "dict"):
+            return port.dict()
+        elif hasattr(port, "model_dump"):
+            return port.model_dump()
+        else:
+            # 기본적인 속성만 추출
+            return {
+                "name": getattr(port, "name", ""),
+                "type": getattr(port, "type", "any"),
+                "required": getattr(port, "required", False),
+                "description": getattr(port, "description", ""),
+                "display_name": getattr(port, "display_name", getattr(port, "name", ""))
+            }
+
+    async def migrate_legacy_schemas(
+        self,
+        bot_id: Optional[str] = None,
+        dry_run: bool = True
+    ) -> Dict[str, Any]:
+        """
+        레거시 워크플로우 버전의 스키마 마이그레이션
+
+        기존 published 버전의 NULL 또는 dict 스키마를 그래프에서 재추출하여 업데이트합니다.
+
+        Args:
+            bot_id: 특정 봇의 버전만 마이그레이션 (None이면 전체)
+            dry_run: True이면 실제 업데이트 없이 결과만 반환
+
+        Returns:
+            Dict[str, Any]: 마이그레이션 결과 통계
+        """
+        logger.info(f"Starting schema migration (dry_run={dry_run}, bot_id={bot_id})")
+
+        # 마이그레이션 대상 조회
+        stmt = select(BotWorkflowVersion).where(
+            BotWorkflowVersion.status == WorkflowVersionStatus.PUBLISHED.value
+        )
+        if bot_id:
+            stmt = stmt.where(BotWorkflowVersion.bot_id == bot_id)
+
+        result = await self.db.execute(stmt)
+        versions = result.scalars().all()
+
+        stats = {
+            "total_versions": len(versions),
+            "migrated": 0,
+            "skipped": 0,
+            "errors": 0,
+            "details": []
+        }
+
+        for version in versions:
+            try:
+                # 스키마가 이미 배열이면 스킵
+                if (isinstance(version.input_schema, list) and
+                    isinstance(version.output_schema, list)):
+                    stats["skipped"] += 1
+                    stats["details"].append({
+                        "version_id": str(version.id),
+                        "bot_id": version.bot_id,
+                        "version": version.version,
+                        "status": "skipped",
+                        "reason": "schemas already migrated"
+                    })
+                    continue
+
+                # 그래프에서 스키마 재추출
+                input_schema, output_schema = self._extract_schemas_from_graph(version.graph)
+
+                if not dry_run:
+                    version.input_schema = input_schema
+                    version.output_schema = output_schema
+                    version.updated_at = datetime.now()
+
+                stats["migrated"] += 1
+                stats["details"].append({
+                    "version_id": str(version.id),
+                    "bot_id": version.bot_id,
+                    "version": version.version,
+                    "status": "migrated",
+                    "input_ports": len(input_schema) if input_schema else 0,
+                    "output_ports": len(output_schema) if output_schema else 0
+                })
+
+                logger.info(f"Migrated schemas for version {version.version} (bot: {version.bot_id})")
+
+            except Exception as e:
+                stats["errors"] += 1
+                stats["details"].append({
+                    "version_id": str(version.id),
+                    "bot_id": version.bot_id,
+                    "version": version.version,
+                    "status": "error",
+                    "error": str(e)
+                })
+                logger.error(f"Failed to migrate version {version.id}: {e}")
+
+        if not dry_run:
+            await self.db.commit()
+            logger.info(f"Schema migration completed: {stats['migrated']} migrated, {stats['errors']} errors")
+        else:
+            logger.info(f"Schema migration dry-run completed: {stats['migrated']} would be migrated")
+
+        return stats

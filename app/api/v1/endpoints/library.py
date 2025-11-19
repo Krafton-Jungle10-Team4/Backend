@@ -5,7 +5,7 @@
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional
+from typing import List, Optional, Any
 import logging
 
 from app.core.database import get_db
@@ -23,6 +23,33 @@ from app.services.library_service import LibraryService
 from app.services.bot_service import BotService
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_schema(schema: Any) -> Optional[List]:
+    """
+    레거시 스키마 데이터를 배열 형식으로 정규화
+
+    Args:
+        schema: input_schema 또는 output_schema (dict, list, 또는 None)
+
+    Returns:
+        Optional[List]: 정규화된 배열 또는 None
+    """
+    if schema is None:
+        return None
+
+    # 이미 리스트인 경우
+    if isinstance(schema, list):
+        return schema if schema else None
+
+    # dict인 경우 (레거시 데이터) - 빈 배열로 변환하고 경고
+    if isinstance(schema, dict):
+        logger.warning(f"Legacy dict schema detected, converting to empty list: {schema}")
+        return None
+
+    # 그 외의 경우
+    logger.warning(f"Unexpected schema type: {type(schema)}, returning None")
+    return None
 
 router = APIRouter(
     prefix="/library",
@@ -110,6 +137,11 @@ async def get_library_agent(
             )
 
         agent = result["agent"]
+
+        # 레거시 스키마 데이터 정규화
+        input_schema = _normalize_schema(agent.input_schema)
+        output_schema = _normalize_schema(agent.output_schema)
+
         return LibraryAgentDetailResponse(
             id=str(agent.id),
             bot_id=agent.bot_id,
@@ -126,8 +158,8 @@ async def get_library_agent(
             graph=agent.graph,
             environment_variables=agent.environment_variables,
             conversation_variables=agent.conversation_variables,
-            input_schema=agent.input_schema,
-            output_schema=agent.output_schema,
+            input_schema=input_schema,
+            output_schema=output_schema,
             port_definitions=agent.port_definitions,
             deployment_status=result["deployment_status"],
             widget_key=result["widget_key"],

@@ -409,3 +409,50 @@ legacy_router.add_api_route(
     summary="워크플로우 버전 아카이브",
     description="(레거시 경로) 특정 워크플로우 버전을 아카이브 상태로 변경합니다."
 )
+
+
+# 마이그레이션 라우터 (관리자용)
+migration_router = APIRouter(
+    prefix="/admin/workflow-versions",
+    tags=["workflow-versions-admin"]
+)
+
+
+@migration_router.post(
+    "/migrate-schemas",
+    response_model=dict,
+    summary="레거시 스키마 마이그레이션 (관리자)",
+    description="기존 워크플로우 버전의 NULL/dict 스키마를 배열로 마이그레이션합니다."
+)
+async def migrate_workflow_schemas(
+    bot_id: Optional[str] = None,
+    dry_run: bool = True,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    레거시 스키마 마이그레이션
+
+    - 모든 published 버전의 스키마를 재추출
+    - dry_run=True이면 결과만 반환하고 실제 업데이트는 하지 않음
+    - bot_id를 지정하면 해당 봇의 버전만 마이그레이션
+    """
+    try:
+        service = WorkflowVersionService(db)
+        stats = await service.migrate_legacy_schemas(
+            bot_id=bot_id,
+            dry_run=dry_run
+        )
+
+        return {
+            "success": True,
+            "dry_run": dry_run,
+            "statistics": stats
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to migrate schemas: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"스키마 마이그레이션 실패: {str(e)}"
+        )
