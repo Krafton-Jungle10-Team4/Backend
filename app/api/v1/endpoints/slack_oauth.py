@@ -157,15 +157,16 @@ async def slack_oauth_callback(
         bot_id = state_data.get("bot_id")
     except HTTPException as e:
         # 프론트엔드로 에러 리다이렉트
-        frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+        # 쉼표로 구분된 경우 첫 번째 URL 사용
+        frontend_urls = settings.get_frontend_urls()
+        frontend_url = frontend_urls[0] if frontend_urls else settings.frontend_url
         return RedirectResponse(
             url=f"{frontend_url}/slack/callback?error={e.detail}"
         )
     
     # Slack OAuth Client
     try:
-        from slack_sdk.oauth import OAuthClient
-        import os
+        from slack_sdk.web import WebClient
         
         slack_client_id = os.environ.get("SLACK_CLIENT_ID")
         slack_client_secret = os.environ.get("SLACK_CLIENT_SECRET")
@@ -177,28 +178,30 @@ async def slack_oauth_callback(
                 detail="Slack OAuth credentials not configured"
             )
         
-        oauth_client = OAuthClient(
+        # WebClient로 OAuth 토큰 교환
+        client = WebClient()
+        response = client.oauth_v2_access(
             client_id=slack_client_id,
-            client_secret=slack_client_secret
-        )
-        
-        # Access Token 교환
-        response = oauth_client.v2_access(
+            client_secret=slack_client_secret,
             code=code,
             redirect_uri=slack_redirect_uri
         )
         
         # 응답 파싱
-        access_token = response["access_token"]
-        workspace_id = response["team"]["id"]
-        workspace_name = response["team"]["name"]
-        bot_user_id = response.get("bot_user_id")
-        scopes = response["scope"].split(",")
+        response_data = response.data if hasattr(response, 'data') else response
+        access_token = response_data["access_token"]
+        workspace_id = response_data["team"]["id"]
+        workspace_name = response_data["team"]["name"]
+        bot_user_id = response_data.get("bot_user_id")
+        
+        # scopes는 공백으로 구분됨
+        scopes_str = response_data.get("scope", "")
+        scopes = scopes_str.split(",") if scopes_str else []
         
         # Workspace icon 조회 (선택)
         workspace_icon = None
-        if "team" in response and "icon" in response["team"]:
-            workspace_icon = response["team"]["icon"].get("image_68")
+        if "team" in response_data and "icon" in response_data["team"]:
+            workspace_icon = response_data["team"]["icon"].get("image_68")
         
         # DB에 저장
         integration = await SlackService.create_integration(
@@ -216,17 +219,25 @@ async def slack_oauth_callback(
         logger.info(f"Slack OAuth completed: user_id={user_id}, workspace={workspace_name}")
         
         # 프론트엔드로 성공 리다이렉트
-        frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+        # 배포 의존성 제거: 워크플로우 페이지로 돌아가기
+        # 쉼표로 구분된 경우 첫 번째 URL 사용
+        frontend_urls = settings.get_frontend_urls()
+        frontend_url = frontend_urls[0] if frontend_urls else settings.frontend_url
+        
         if bot_id:
-            redirect_url = f"{frontend_url}/workspace/deployment/{bot_id}?tab=integrations&slack=success"
+            # 워크플로우 빌더로 돌아가기
+            redirect_url = f"{frontend_url}/workspace/studio/{bot_id}?slack=success"
         else:
+            # 사용자 레벨 연동 (봇 없이)
             redirect_url = f"{frontend_url}/settings/integrations?slack=success"
         
         return RedirectResponse(url=redirect_url)
         
     except Exception as e:
         logger.error(f"Slack OAuth callback failed: {e}")
-        frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+        # 쉼표로 구분된 경우 첫 번째 URL 사용
+        frontend_urls = settings.get_frontend_urls()
+        frontend_url = frontend_urls[0] if frontend_urls else settings.frontend_url
         return RedirectResponse(
             url=f"{frontend_url}/slack/callback?error=oauth_failed"
         )

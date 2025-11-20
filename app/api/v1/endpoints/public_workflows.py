@@ -3,7 +3,7 @@
 
 RESTful API 배포 기능 - 외부 개발자용 API
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
@@ -12,6 +12,8 @@ from datetime import datetime
 from app.core.database import get_db
 from app.core.auth.public_dependencies import APIKeyContext, get_api_key_context
 from app.services.workflow_api_service import WorkflowAPIService
+from app.services.vector_service import VectorService
+from app.services.llm_service import LLMService
 
 router = APIRouter(prefix="/api/v1/public", tags=["Public Workflows"])
 
@@ -69,10 +71,17 @@ class WorkflowRunResponse(BaseModel):
 
 @router.post("/workflows/run", response_model=WorkflowRunResponse)
 async def run_workflow_simple(
-    request: Request,
-    run_request: WorkflowRunRequest,
+    input_value: Optional[str] = None,
+    inputs: Dict[str, Any] = {},
+    response_mode: str = "blocking",
+    stream: bool = False,
+    session_id: Optional[str] = None,
+    user: Optional[str] = None,
+    metadata: Dict[str, Any] = {},
     ctx: APIKeyContext = Depends(get_api_key_context),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    vector_service: VectorService = Depends(VectorService),
+    llm_service: LLMService = Depends(LLMService)
 ):
     """
     워크플로우 간단 실행 (Simple Run)
@@ -94,6 +103,17 @@ async def run_workflow_simple(
       }'
     ```
     """
+    # Request Body를 Pydantic 모델로 변환
+    run_request = WorkflowRunRequest(
+        input_value=input_value,
+        inputs=inputs,
+        response_mode=response_mode,
+        stream=stream,
+        session_id=session_id,
+        user=user,
+        metadata=metadata
+    )
+    
     # 1. 워크플로우 버전 결정
     workflow_version = await WorkflowAPIService.get_workflow_version_for_api_key(
         api_key=ctx.api_key,
@@ -117,7 +137,9 @@ async def run_workflow_simple(
         api_key=ctx.api_key,
         metadata=run_request.metadata,
         response_mode=run_request.response_mode,
-        db=db
+        db=db,
+        vector_service=vector_service,
+        llm_service=llm_service
     )
     
     return result
@@ -126,9 +148,17 @@ async def run_workflow_simple(
 @router.post("/workflows/run/{alias}", response_model=WorkflowRunResponse)
 async def run_workflow_with_alias(
     alias: str,
-    run_request: WorkflowRunRequest,
+    input_value: Optional[str] = None,
+    inputs: Dict[str, Any] = {},
+    response_mode: str = "blocking",
+    stream: bool = False,
+    session_id: Optional[str] = None,
+    user: Optional[str] = None,
+    metadata: Dict[str, Any] = {},
     ctx: APIKeyContext = Depends(get_api_key_context),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    vector_service: VectorService = Depends(VectorService),
+    llm_service: LLMService = Depends(LLMService)
 ):
     """
     Alias를 사용한 워크플로우 실행
@@ -178,6 +208,17 @@ async def run_workflow_with_alias(
             }
         )
     
+    # Request Body를 Pydantic 모델로 변환
+    run_request = WorkflowRunRequest(
+        input_value=input_value,
+        inputs=inputs,
+        response_mode=response_mode,
+        stream=stream,
+        session_id=session_id,
+        user=user,
+        metadata=metadata
+    )
+    
     # 3. 실행 (Simple Run과 동일)
     await WorkflowAPIService.validate_inputs_against_schema(
         inputs=run_request.inputs,
@@ -194,7 +235,9 @@ async def run_workflow_with_alias(
         api_key=ctx.api_key,
         metadata=run_request.metadata,
         response_mode=run_request.response_mode,
-        db=db
+        db=db,
+        vector_service=vector_service,
+        llm_service=llm_service
     )
     
     return result

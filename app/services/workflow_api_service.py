@@ -38,12 +38,17 @@ class WorkflowAPIService:
         Raises:
             HTTPException: 검증 실패 시
         """
+        # 디버깅 로그 추가
+        logger.info(f"🔍 Validating inputs: {inputs}")
+        logger.info(f"🔍 Input schema: {schema}")
+        
         if not schema:
             # 스키마가 정의되지 않았으면 검증 생략
             return
         
         for field in schema:
-            key = field.get("key")
+            # Input Schema는 'key' 또는 'name' 필드를 사용할 수 있음
+            key = field.get("key") or field.get("name")
             required = field.get("required", False)
             field_type = field.get("type", "string")
             is_primary = field.get("is_primary", False)
@@ -210,7 +215,9 @@ class WorkflowAPIService:
         api_key: BotAPIKey,
         metadata: Dict[str, Any],
         response_mode: str,
-        db: AsyncSession
+        db: AsyncSession,
+        vector_service,
+        llm_service
     ) -> Dict[str, Any]:
         """
         API를 통한 워크플로우 실행
@@ -251,21 +258,39 @@ class WorkflowAPIService:
         
         try:
             # 2. 워크플로우 실행
-            executor = WorkflowExecutorV2(
-                workflow_version=workflow_version,
-                session_id=execution_run.session_id,
-                db=db
-            )
+            executor = WorkflowExecutorV2()
+            
+            # 워크플로우 데이터 가져오기
+            workflow_data = workflow_version.graph
+            
+            # inputs에서 user_message 추출 (primary 또는 첫 번째 required 필드)
+            user_message = ""
+            if workflow_version.input_schema:
+                for field in workflow_version.input_schema:
+                    field_key = field.get("key") or field.get("name")
+                    if field_key and field_key in inputs:
+                        user_message = str(inputs[field_key])
+                        break
             
             # 실행 (blocking 모드)
-            result = await executor.execute(inputs=inputs)
+            result_text = await executor.execute(
+                workflow_data=workflow_data,
+                session_id=execution_run.session_id,
+                user_message=user_message,
+                bot_id=workflow_version.bot_id,
+                db=db,
+                vector_service=vector_service,
+                llm_service=llm_service,
+                stream_handler=None,
+                text_normalizer=None
+            )
             
             # 3. 실행 결과 업데이트
             execution_run.status = "completed"
-            execution_run.outputs = result.get("outputs", {})
+            execution_run.outputs = {"result": result_text}
             execution_run.finished_at = datetime.now(timezone.utc)
             execution_run.elapsed_time = int((execution_run.finished_at - execution_run.started_at).total_seconds() * 1000)
-            execution_run.total_tokens = result.get("usage", {}).get("total_tokens", 0)
+            execution_run.total_tokens = 0  # V2 Executor는 토큰 정보를 반환하지 않음
             
             await db.commit()
             await db.refresh(execution_run)
@@ -277,9 +302,10 @@ class WorkflowAPIService:
                 "workflow_version_id": str(execution_run.workflow_version_id),
                 "status": execution_run.status,
                 "outputs": execution_run.outputs,
+                "result": result_text,  # 실제 결과 텍스트
                 "usage": {
-                    "prompt_tokens": result.get("usage", {}).get("prompt_tokens", 0),
-                    "completion_tokens": result.get("usage", {}).get("completion_tokens", 0),
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
                     "total_tokens": execution_run.total_tokens
                 },
                 "created_at": execution_run.started_at.isoformat(),

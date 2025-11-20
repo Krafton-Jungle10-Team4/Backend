@@ -59,7 +59,7 @@ class LLMServiceWithCostTracking(LLMService):
         model: Optional[str] = None,
         provider: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 1000,
+        max_tokens: int = 4000,
         on_chunk: Optional[Callable[[str], Awaitable[Optional[str]]]] = None
     ) -> str:
         """비용 추적이 포함된 스트리밍 응답 생성"""

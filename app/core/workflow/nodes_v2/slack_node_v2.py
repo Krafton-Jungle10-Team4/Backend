@@ -103,9 +103,10 @@ class SlackNodeV2(BaseNodeV2):
         title = context.get_input("title") or ""
         
         # 설정 조회
+        logger.info(f"[SlackNodeV2] Config for node {self.node_id}: {self.config}")
         channel = self.config.get("channel")
         if not channel:
-            logger.error(f"[SlackNodeV2] Channel configuration is required for node {self.node_id}")
+            logger.error(f"[SlackNodeV2] Channel configuration is required for node {self.node_id}. Config keys: {list(self.config.keys())}")
             return {
                 "success": False,
                 "message_ts": "",
@@ -122,12 +123,12 @@ class SlackNodeV2(BaseNodeV2):
         if integration_id:
             # DB에서 연동 정보 조회
             try:
-                from app.core.database import async_session_maker
+                from app.core.database import AsyncSessionLocal
                 from app.services.slack_service import SlackService
                 from sqlalchemy import select
                 from app.models.slack_integration import SlackIntegration
                 
-                async with async_session_maker() as db:
+                async with AsyncSessionLocal() as db:
                     result = await db.execute(
                         select(SlackIntegration).where(
                             SlackIntegration.id == integration_id,

@@ -68,8 +68,14 @@ async def create_or_update_draft(
 
         # Draft 생성/수정
         graph_payload = request.graph.dict()
-        validator = WorkflowValidator()
+        
+        # DEBUG: Slack 노드 데이터 로깅
         nodes = graph_payload.get("nodes", [])
+        for node in nodes:
+            if node.get("type") == "slack" or node.get("data", {}).get("type") == "slack":
+                logger.info(f"[DEBUG] Saving Slack node: id={node.get('id')}, data keys={list(node.get('data', {}).keys())}, data={node.get('data', {})}")
+        
+        validator = WorkflowValidator()
         edges = graph_payload.get("edges", [])
         is_valid, errors, warnings = validator.validate(nodes, edges)
 
