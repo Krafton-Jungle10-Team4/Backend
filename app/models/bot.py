@@ -73,6 +73,7 @@ class Bot(Base):
     deployments = relationship("BotDeployment", back_populates="bot", cascade="all, delete-orphan")
     document_embeddings = relationship("DocumentEmbedding", back_populates="bot", cascade="all, delete-orphan")
     workflow_versions = relationship("BotWorkflowVersion", back_populates="bot", cascade="all, delete-orphan")
+    slack_integration = relationship("SlackIntegration", back_populates="bot", uselist=False, cascade="all, delete-orphan")
 
 
 class BotKnowledge(Base):

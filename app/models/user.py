@@ -39,6 +39,7 @@ class User(Base):
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     bots = relationship("Bot", back_populates="user", cascade="all, delete-orphan")
     api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
+    slack_integrations = relationship("SlackIntegration", back_populates="user", cascade="all, delete-orphan")
 
 
 class RefreshToken(Base):
