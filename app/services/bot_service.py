@@ -616,15 +616,19 @@ class BotService:
             search: 검색어
             category: 봇 카테고리 필터
             tags: 태그 필터 (하나라도 일치하면 포함)
+            only_mine: 내가 만든 봇만 보기 여부
 
         Returns:
             (봇 목록, 전체 개수) 튜플
         """
-        # 기본 쿼리
+        # 기본 쿼리: only_mine=True일 때만 내 봇으로 제한
         query = select(Bot)
 
         if only_mine:
             query = query.where(Bot.user_id == user_id)
+        else:
+            # TODO: AccessControl 도입 시 공유/팀 봇 권한 조건 추가
+            pass
 
         # 카테고리 필터
         if category:
@@ -659,6 +663,9 @@ class BotService:
 
         if only_mine:
             count_query = count_query.where(Bot.user_id == user_id)
+        else:
+            # TODO: 공유 권한 조건 추가 시 동일하게 반영
+            pass
 
         # 카테고리 필터 적용
         if category:
