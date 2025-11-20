@@ -38,6 +38,12 @@ slowapi==0.1.9  # Rate limiting
 # Redis
 redis==5.0.1
 
+# Slack SDK
+slack-sdk==3.38.0
+
+# 암호화 (Slack OAuth token encryption)
+cryptography==42.0.8
+
 # 데이터베이스
 sqlalchemy==2.0.25
 alembic==1.13.1
