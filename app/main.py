@@ -30,7 +30,7 @@ from app.api.v1.endpoints import (
     library,
     public_workflows,
     bot_api_keys,
-    bot_api_schema
+    bot_api_schema,
     marketplace
 )
 from app.core.exceptions import BaseAppException
