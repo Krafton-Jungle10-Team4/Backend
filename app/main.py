@@ -31,7 +31,8 @@ from app.api.v1.endpoints import (
     public_workflows,
     bot_api_keys,
     bot_api_schema,
-    marketplace
+    marketplace,
+    slack_oauth
 )
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -119,6 +120,9 @@ app.include_router(marketplace.router, prefix="/api/v1/marketplace", tags=["마�
 app.include_router(public_workflows.router, tags=["공개 API - 워크플로우 실행"])
 app.include_router(bot_api_keys.router, tags=["API 키 관리"])
 app.include_router(bot_api_schema.router, tags=["API 스키마 관리"])
+
+# Slack OAuth
+app.include_router(slack_oauth.router, tags=["Slack OAuth"])
 
 
 @app.on_event("startup")
