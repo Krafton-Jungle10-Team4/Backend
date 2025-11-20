@@ -32,7 +32,8 @@ from app.api.v1.endpoints import (
     bot_api_keys,
     bot_api_schema,
     marketplace,
-    slack_oauth
+    slack_oauth,
+    studio
 )
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -99,6 +100,7 @@ app.middleware("http")(rate_limit_middleware)
 # API 라우터 등록
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])
 app.include_router(bots.router, prefix="/api/v1/bots", tags=["봇 관리"])
+app.include_router(studio.router, prefix="/api/v1/studio", tags=["스튜디오"])
 app.include_router(workflows.router, prefix="/api/v1", tags=["워크플로우"])
 app.include_router(workflow_versions.router, prefix="/api/v1", tags=["워크플로우 V2 - 버전 관리"])
 app.include_router(workflow_versions.legacy_router, prefix="/api/v1", tags=["워크플로우 V2 - 버전 관리 (레거시 경로)"])
