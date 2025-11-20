@@ -628,7 +628,7 @@ class BotService:
             query = query.where(Bot.user_id == user_id)
         else:
             # TODO: AccessControl 도입 시 공유/팀 봇 권한 조건 추가
-            pass
+            query = query.where(Bot.user_id == user_id)
 
         # 카테고리 필터
         if category:
@@ -665,7 +665,7 @@ class BotService:
             count_query = count_query.where(Bot.user_id == user_id)
         else:
             # TODO: 공유 권한 조건 추가 시 동일하게 반영
-            pass
+            count_query = count_query.where(Bot.user_id == user_id)
 
         # 카테고리 필터 적용
         if category:
