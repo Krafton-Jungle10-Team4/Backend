@@ -7,8 +7,8 @@ from datetime import datetime
 
 # Enums
 WorkflowStatus = Literal["running", "stopped", "pending", "error"]
-DeploymentState = Literal["not-deployed", "draft", "published", "disabled"]
-MarketplaceState = Literal["unpublished", "published"]
+DeploymentState = Literal["deployed", "stopped", "error", "deploying"]
+MarketplaceState = Literal["unpublished", "published", "pending"]
 
 
 class StudioWorkflowItem(BaseModel):
@@ -22,10 +22,13 @@ class StudioWorkflowItem(BaseModel):
     # 워크플로우 상태
     status: WorkflowStatus = Field(..., description="워크플로우 상태")
     latestVersion: Optional[str] = Field(None, description="최신 버전 번호")
+    latestVersionId: Optional[str] = Field(
+        None, description="최신 버전 UUID (배포/게시용)"
+    )
     previousVersionCount: int = Field(0, description="이전 버전 개수")
 
     # 배포 정보
-    deploymentState: DeploymentState = Field("not-deployed", description="배포 상태")
+    deploymentState: DeploymentState = Field("stopped", description="배포 상태")
     deploymentUrl: Optional[str] = Field(None, description="배포 URL")
     lastDeployedAt: Optional[str] = Field(None, description="마지막 배포 시간 (ISO 8601)")
 
@@ -47,8 +50,9 @@ class StudioWorkflowItem(BaseModel):
                 "tags": ["Production", "Customer Support", "AI"],
                 "status": "running",
                 "latestVersion": "v1.2",
+                "latestVersionId": "0e7a6c06-9d17-4a0d-8b51-7b6b8cbb2f27",
                 "previousVersionCount": 3,
-                "deploymentState": "published",
+                "deploymentState": "deployed",
                 "deploymentUrl": "https://widget.snapagent.shop/app/abc123",
                 "lastDeployedAt": "2024-11-15T10:30:00Z",
                 "marketplaceState": "published",
@@ -65,6 +69,8 @@ class StatsInfo(BaseModel):
     total: int = Field(..., description="전체 워크플로우 수")
     running: int = Field(..., description="실행 중인 워크플로우 수")
     stopped: int = Field(..., description="중지된 워크플로우 수")
+    pending: int = Field(0, description="대기 중인 워크플로우 수")
+    error: int = Field(0, description="오류 상태 워크플로우 수")
 
 
 class FiltersInfo(BaseModel):
@@ -100,7 +106,7 @@ class StudioWorkflowListResponse(BaseModel):
                         "status": "running",
                         "latestVersion": "v1.2",
                         "previousVersionCount": 3,
-                        "deploymentState": "published",
+                        "deploymentState": "deployed",
                         "deploymentUrl": "https://widget.snapagent.shop/app/abc123",
                         "lastDeployedAt": "2024-11-15T10:30:00Z",
                         "marketplaceState": "published",
@@ -118,7 +124,9 @@ class StudioWorkflowListResponse(BaseModel):
                 "stats": {
                     "total": 24,
                     "running": 16,
-                    "stopped": 8
+                    "stopped": 6,
+                    "pending": 1,
+                    "error": 1
                 },
                 "filters": {
                     "availableTags": ["Production", "Customer Support", "AI"]
