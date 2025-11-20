@@ -33,25 +33,56 @@ def _convert_bot_status_to_workflow_status(bot_status: BotStatus) -> WorkflowSta
     return mapping.get(bot_status, "stopped")
 
 
-def _convert_deployment_status(deployment_status: Optional[str]) -> DeploymentState:
-    """Deployment 상태 변환"""
-    if not deployment_status:
-        return "not-deployed"
+def _convert_deployment_status(
+    deployment: Optional['BotDeployment'],
+    marketplace_active: bool = False
+) -> DeploymentState:
+    """
+    Deployment 상태 변환 (개선된 로직)
 
-    mapping = {
-        "draft": "draft",
-        "published": "published",
-        "suspended": "disabled"
-    }
-    return mapping.get(deployment_status, "not-deployed")
+    Args:
+        deployment: BotDeployment 객체 (None이면 stopped)
+        marketplace_active: 마켓플레이스에 게시 여부
+
+    Returns:
+        DeploymentState: deployed, stopped, error, deploying 중 하나
+    """
+    if not deployment:
+        return "stopped"
+
+    status = deployment.status
+
+    if status == "published":
+        return "deployed"
+    elif status == "draft":
+        return "deploying"
+    elif status == "suspended":
+        return "error"
+    else:
+        return "stopped"
 
 
 def _build_deployment_url(widget_key: Optional[str]) -> Optional[str]:
-    """Widget URL 동적 생성"""
+    """
+    Widget URL 동적 생성
+
+    우선순위:
+    1. settings.api_public_url (환경 변수 API_PUBLIC_URL)
+    2. settings.backend_url (환경 변수 BACKEND_URL)
+    3. fallback: localhost (개발용)
+    """
     if not widget_key:
         return None
 
-    base_url = settings.api_public_url or settings.backend_url or "http://localhost:8001"
+    base_url = settings.api_public_url or settings.backend_url
+
+    if not base_url or base_url == "http://localhost:8001":
+        logger.warning(
+            "API_PUBLIC_URL이 설정되지 않았습니다. "
+            "프로덕션 환경에서는 반드시 .env에 API_PUBLIC_URL을 설정하세요."
+        )
+        base_url = "http://localhost:8001"
+
     return f"{base_url}/widget/{widget_key}"
 
 
@@ -234,19 +265,20 @@ async def get_studio_workflows(
         total_versions = version_count_map.get(bot.bot_id, 0)
         previous_version_count = max(0, total_versions - 1)
 
-        # 배포 정보
-        deployment = deployment_map.get(bot.id)
-        deployment_state = _convert_deployment_status(deployment.status if deployment else None)
-        deployment_url = _build_deployment_url(deployment.widget_key if deployment else None)
-        last_deployed_at = deployment.updated_at.isoformat() + "Z" if deployment and deployment.updated_at else None
-
-        # 마켓플레이스 정보
+        # 마켓플레이스 정보 먼저 조회
         marketplace_item = None
         if latest_version:
             marketplace_item = marketplace_map.get(latest_version.id)
 
-        marketplace_state: MarketplaceState = "published" if (marketplace_item and marketplace_item.is_active) else "unpublished"
+        marketplace_active = bool(marketplace_item and marketplace_item.is_active)
+        marketplace_state: MarketplaceState = "published" if marketplace_active else "unpublished"
         last_published_at = marketplace_item.published_at.isoformat() + "Z" if marketplace_item and marketplace_item.published_at else None
+
+        # 배포 정보 (마켓플레이스 상태 고려)
+        deployment = deployment_map.get(bot.id)
+        deployment_state = _convert_deployment_status(deployment, marketplace_active)
+        deployment_url = _build_deployment_url(deployment.widget_key if deployment else None)
+        last_deployed_at = deployment.updated_at.isoformat() + "Z" if deployment and deployment.updated_at else None
 
         # StudioWorkflowItem 생성
         item = StudioWorkflowItem(
@@ -257,6 +289,7 @@ async def get_studio_workflows(
             tags=bot.tags if bot.tags else [],
             status=_convert_bot_status_to_workflow_status(bot.status),
             latestVersion=latest_version_str,
+            latestVersionId=str(latest_version.id) if latest_version else None,
             previousVersionCount=previous_version_count,
             deploymentState=deployment_state,
             deploymentUrl=deployment_url,
@@ -272,7 +305,9 @@ async def get_studio_workflows(
     stats_query = select(
         func.count(Bot.id).label("total"),
         func.sum(case((Bot.status == BotStatus.ACTIVE, 1), else_=0)).label("running"),
-        func.sum(case((Bot.status == BotStatus.INACTIVE, 1), else_=0)).label("stopped")
+        func.sum(case((Bot.status == BotStatus.INACTIVE, 1), else_=0)).label("stopped"),
+        func.sum(case((Bot.status == BotStatus.DRAFT, 1), else_=0)).label("pending"),
+        func.sum(case((Bot.status == BotStatus.ERROR, 1), else_=0)).label("error")
     )
 
     for condition in access_filters:
@@ -284,7 +319,9 @@ async def get_studio_workflows(
     stats = {
         "total": stats_row.total or 0,
         "running": stats_row.running or 0,
-        "stopped": stats_row.stopped or 0
+        "stopped": stats_row.stopped or 0,
+        "pending": stats_row.pending or 0,
+        "error": stats_row.error or 0
     }
 
     return studio_items, total, stats
