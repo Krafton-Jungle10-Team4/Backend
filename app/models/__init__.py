@@ -17,6 +17,7 @@ from app.models.knowledge import Knowledge
 from app.models.import_history import AgentImportHistory
 from app.models.bot_api_key import BotAPIKey, APIKeyUsage
 from app.models.marketplace import MarketplaceItem, MarketplaceReview
+from app.models.slack_integration import SlackIntegration
 
 __all__ = [
     "User",
@@ -44,4 +45,5 @@ __all__ = [
     "APIKeyUsage",
     "MarketplaceItem",
     "MarketplaceReview",
+    "SlackIntegration",
 ]
