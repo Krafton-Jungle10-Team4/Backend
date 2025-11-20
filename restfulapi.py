@@ -20,7 +20,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 # ==========================================
 
 # SnapAgent API 설정
-SNAPAGENT_API_KEY = os.environ.get("SNAPAGENT_API_KEY", "sk-proj-your-api-key-here")
+SNAPAGENT_API_KEY = os.environ.get("SNAPAGENT_API_KEY", "")
 SNAPAGENT_API_URL = os.environ.get(
     "SNAPAGENT_API_URL", 
     "https://api.snapagent.com/api/v1/public/workflows/run"
