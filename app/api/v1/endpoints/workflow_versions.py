@@ -16,7 +16,8 @@ from app.schemas.workflow import (
     WorkflowVersionResponse,
     WorkflowVersionDetail,
     WorkflowVersionStatus,
-    PublishWorkflowRequest
+    PublishWorkflowRequest,
+    WorkflowVersionResponseWithLibrary
 )
 from app.services.workflow_version_service import WorkflowVersionService
 from app.services.bot_service import BotService
@@ -203,20 +204,21 @@ legacy_router.add_api_route(
 
 @router.get(
     "",
-    response_model=List[WorkflowVersionResponse],
+    response_model=List[WorkflowVersionResponseWithLibrary],
     summary="워크플로우 버전 목록 조회",
     description="Bot의 모든 워크플로우 버전을 조회합니다."
 )
 async def list_workflow_versions(
     bot_id: str,
-    status: Optional[str] = None,
+    version_status: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
-) -> List[WorkflowVersionResponse]:
+) -> List[WorkflowVersionResponseWithLibrary]:
     """
     워크플로우 버전 목록 조회
 
-    - status 파라미터로 필터링 가능 (draft, published, archived)
+    - version_status 파라미터로 필터링 가능 (draft, published, archived)
+    - 라이브러리 필드 포함
     """
     try:
         # 봇 접근 권한 확인
@@ -232,18 +234,30 @@ async def list_workflow_versions(
         service = WorkflowVersionService(db)
         versions = await service.list_versions(
             bot_id=bot_id,
-            status=status
+            status=version_status
         )
 
         return [
-            WorkflowVersionResponse(
+            WorkflowVersionResponseWithLibrary(
                 id=str(v.id),
                 bot_id=v.bot_id,
                 version=v.version,
                 status=WorkflowVersionStatus(v.status),
                 created_at=v.created_at,
                 updated_at=v.updated_at,
-                published_at=v.published_at
+                published_at=v.published_at,
+                library_name=v.library_name,
+                library_description=v.library_description,
+                library_category=v.library_category,
+                library_tags=v.library_tags,
+                library_visibility=v.library_visibility,
+                is_in_library=v.is_in_library,
+                library_published_at=v.library_published_at,
+                input_schema=v.input_schema,
+                output_schema=v.output_schema,
+                node_count=v.node_count,
+                edge_count=v.edge_count,
+                port_definitions=v.port_definitions
             )
             for v in versions
         ]
@@ -262,7 +276,7 @@ legacy_router.add_api_route(
     "",
     list_workflow_versions,
     methods=["GET"],
-    response_model=List[WorkflowVersionResponse],
+    response_model=List[WorkflowVersionResponseWithLibrary],
     summary="워크플로우 버전 목록 조회",
     description="(레거시 경로) Bot의 모든 워크플로우 버전을 조회합니다."
 )
