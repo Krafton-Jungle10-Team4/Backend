@@ -288,12 +288,13 @@ async def import_marketplace_workflow(
     """
     마켓플레이스 아이템의 워크플로우를 내 스튜디오로 가져옵니다.
 
-    - 워크플로우를 복제하여 새로운 봇으로 생성합니다.
+    - 워크플로우를 복제하여 새로운 봇과 draft 버전으로 생성합니다.
     - 다운로드 카운트가 자동으로 증가합니다.
     """
-    from app.services.bot_service import get_bot_service
+    from app.services.bot_service import get_bot_service, generate_bot_id
     from app.schemas.bot import CreateBotRequest
     from app.schemas.workflow import Workflow
+    import uuid as uuid_module
 
     # 마켓플레이스 아이템 조회
     stmt = select(MarketplaceItem).where(MarketplaceItem.id == item_id)
@@ -311,7 +312,7 @@ async def import_marketplace_workflow(
     if not workflow_version:
         raise HTTPException(status_code=404, detail="워크플로우 버전을 찾을 수 없습니다.")
 
-    # 원본 봇 조회 (워크플로우 복제용)
+    # 원본 봇 조회 (메타데이터 복제용)
     stmt = select(Bot).where(Bot.bot_id == workflow_version.bot_id)
     result = await db.execute(stmt)
     original_bot = result.scalar_one_or_none()
@@ -319,24 +320,18 @@ async def import_marketplace_workflow(
     if not original_bot:
         raise HTTPException(status_code=404, detail="원본 봇을 찾을 수 없습니다.")
 
-    # 워크플로우 데이터 준비
-    workflow_dict = workflow_version.graph if workflow_version.graph else original_bot.workflow
+    # 워크플로우 데이터 준비 (workflow_version.graph 우선 사용)
+    workflow_dict = workflow_version.graph
 
     if not workflow_dict:
         raise HTTPException(status_code=400, detail="워크플로우 데이터가 없습니다.")
 
-    # Workflow 객체 생성
-    try:
-        workflow_data = Workflow(**workflow_dict)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"워크플로우 데이터 형식이 올바르지 않습니다: {str(e)}")
-
-    # 새 봇 생성 요청 데이터 구성
+    # 새 봇 생성 (workflow 없이 - Bot 테이블에만 메타데이터 저장)
     create_request = CreateBotRequest(
         name=f"{item.display_name} (Imported)",
         goal=original_bot.goal,
         personality=original_bot.personality,
-        workflow=workflow_data,
+        workflow=None,  # workflow는 나중에 BotWorkflowVersion으로 생성
         knowledge=[],
         category=original_bot.category,
         tags=item.tags or []
@@ -346,8 +341,36 @@ async def import_marketplace_workflow(
     bot_service = get_bot_service()
     try:
         new_bot = await bot_service.create_bot(create_request, current_user.id, db)
+        await db.flush()  # bot ID 확정
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"봇 생성 실패: {str(e)}")
+
+    # BotWorkflowVersion draft 생성 (마켓플레이스 워크플로우 복제)
+    try:
+        # 노드/엣지 개수 계산
+        node_count = len(workflow_dict.get("nodes", []))
+        edge_count = len(workflow_dict.get("edges", []))
+
+        draft_version = BotWorkflowVersion(
+            id=uuid_module.uuid4(),
+            bot_id=new_bot.bot_id,
+            version="v0.1",
+            status="draft",
+            graph=workflow_dict,  # 마켓플레이스 워크플로우 전체 복제
+            environment_variables=workflow_version.environment_variables or {},
+            conversation_variables=workflow_version.conversation_variables or {},
+            features=workflow_version.features or {},
+            created_by=current_user.uuid,
+            node_count=node_count,
+            edge_count=edge_count,
+            input_schema=workflow_version.input_schema,
+            output_schema=workflow_version.output_schema,
+        )
+
+        db.add(draft_version)
+        await db.flush()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"워크플로우 버전 생성 실패: {str(e)}")
 
     # 다운로드 카운트 증가
     item.download_count += 1
@@ -356,7 +379,8 @@ async def import_marketplace_workflow(
     return {
         "message": "워크플로우를 성공적으로 가져왔습니다.",
         "bot_id": new_bot.bot_id,
-        "bot_name": new_bot.name
+        "bot_name": new_bot.name,
+        "workflow_version_id": str(draft_version.id)
     }
 
 
