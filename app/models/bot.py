@@ -1,7 +1,8 @@
 """
 봇 관련 데이터베이스 모델
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum as SQLEnum, JSON, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum as SQLEnum, Boolean
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -55,14 +56,14 @@ class Bot(Base):
         server_default=BotCategory.WORKFLOW.value,
         index=True,
     )
-    tags = Column(JSON, nullable=False, default=list, server_default="[]")
+    tags = Column(JSONB, nullable=False, default=list, server_default="'[]'::jsonb")
 
     # Workflow 정의 (JSON 형식)
-    workflow = Column(JSON, nullable=True)
+    workflow = Column(JSONB, nullable=True)
 
     # V2 마이그레이션 필드
     use_workflow_v2 = Column(Boolean, default=True, nullable=False)  # V2 전용으로 전환
-    legacy_workflow = Column(JSON, nullable=True)  # 백업용 (deprecated)
+    legacy_workflow = Column(JSONB, nullable=True)  # 백업용 (deprecated)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

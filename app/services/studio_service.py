@@ -5,6 +5,8 @@ import logging
 from typing import List, Tuple, Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case, and_, or_, desc, asc
+from sqlalchemy.types import JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import selectinload, joinedload
 
 from app.models.bot import Bot, BotStatus, BotCategory
@@ -156,7 +158,12 @@ async def get_studio_workflows(
 
     # 태그 필터 (OR 조건: 태그 중 하나라도 포함하면 매칭)
     if tags:
-        tag_conditions = [Bot.tags.contains([tag]) for tag in tags]
+        # JSONB 배열에서 태그 검색: PostgreSQL의 @> 연산자 사용
+        # tags 컬럼이 jsonb 타입이므로 직접 연산자 사용 가능
+        tag_conditions = [
+            Bot.tags.op('@>')(func.cast([tag], JSONB))
+            for tag in tags
+        ]
         query = query.where(or_(*tag_conditions))
 
     # === 3. 전체 개수 조회 (페이지네이션용) ===

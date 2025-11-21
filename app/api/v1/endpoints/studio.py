@@ -2,7 +2,7 @@
 스튜디오 통합 뷰 API 엔드포인트
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
 
@@ -25,7 +25,7 @@ router = APIRouter()
 @router.get(
     "/workflows",
     response_model=StudioWorkflowListResponse,
-    status_code=status.HTTP_200_OK,
+    status_code=http_status.HTTP_200_OK,
     summary="워크플로우 카드 목록 조회 (통합 뷰)",
     description="""
     스튜디오 페이지에서 사용할 워크플로우 카드 목록을 조회합니다.
@@ -113,7 +113,7 @@ async def get_studio_workflow_list(
     except Exception as e:
         logger.error(f"스튜디오 워크플로우 목록 조회 실패: {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "error": {
                     "code": "INTERNAL_SERVER_ERROR",
