@@ -279,6 +279,87 @@ async def increment_download_count(
     return {"message": "다운로드 카운트가 증가되었습니다.", "download_count": item.download_count}
 
 
+@router.post("/{item_id}/import", summary="마켓플레이스 워크플로우 가져오기")
+async def import_marketplace_workflow(
+    item_id: UUID,
+    current_user: User = Depends(get_current_user_from_jwt),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    마켓플레이스 아이템의 워크플로우를 내 스튜디오로 가져옵니다.
+
+    - 워크플로우를 복제하여 새로운 봇으로 생성합니다.
+    - 다운로드 카운트가 자동으로 증가합니다.
+    """
+    from app.services.bot_service import get_bot_service
+    from app.schemas.bot import CreateBotRequest
+    from app.schemas.workflow import Workflow
+
+    # 마켓플레이스 아이템 조회
+    stmt = select(MarketplaceItem).where(MarketplaceItem.id == item_id)
+    result = await db.execute(stmt)
+    item = result.scalar_one_or_none()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="마켓플레이스 아이템을 찾을 수 없습니다.")
+
+    # 워크플로우 버전 조회
+    stmt = select(BotWorkflowVersion).where(BotWorkflowVersion.id == item.workflow_version_id)
+    result = await db.execute(stmt)
+    workflow_version = result.scalar_one_or_none()
+
+    if not workflow_version:
+        raise HTTPException(status_code=404, detail="워크플로우 버전을 찾을 수 없습니다.")
+
+    # 원본 봇 조회 (워크플로우 복제용)
+    stmt = select(Bot).where(Bot.bot_id == workflow_version.bot_id)
+    result = await db.execute(stmt)
+    original_bot = result.scalar_one_or_none()
+
+    if not original_bot:
+        raise HTTPException(status_code=404, detail="원본 봇을 찾을 수 없습니다.")
+
+    # 워크플로우 데이터 준비
+    workflow_dict = workflow_version.graph if workflow_version.graph else original_bot.workflow
+
+    if not workflow_dict:
+        raise HTTPException(status_code=400, detail="워크플로우 데이터가 없습니다.")
+
+    # Workflow 객체 생성
+    try:
+        workflow_data = Workflow(**workflow_dict)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"워크플로우 데이터 형식이 올바르지 않습니다: {str(e)}")
+
+    # 새 봇 생성 요청 데이터 구성
+    create_request = CreateBotRequest(
+        name=f"{item.display_name} (Imported)",
+        goal=original_bot.goal,
+        personality=original_bot.personality,
+        workflow=workflow_data,
+        knowledge=[],
+        category=original_bot.category,
+        tags=item.tags or []
+    )
+
+    # 봇 서비스로 새 봇 생성
+    bot_service = get_bot_service()
+    try:
+        new_bot = await bot_service.create_bot(create_request, current_user.id, db)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"봇 생성 실패: {str(e)}")
+
+    # 다운로드 카운트 증가
+    item.download_count += 1
+    await db.commit()
+
+    return {
+        "message": "워크플로우를 성공적으로 가져왔습니다.",
+        "bot_id": new_bot.bot_id,
+        "bot_name": new_bot.name
+    }
+
+
 async def _build_marketplace_item_response(
     item: MarketplaceItem,
     db: AsyncSession,
