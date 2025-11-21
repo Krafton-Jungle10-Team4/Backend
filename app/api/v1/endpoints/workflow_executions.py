@@ -22,6 +22,8 @@ from app.schemas.workflow import (
 )
 from app.services.workflow_execution_service import WorkflowExecutionService
 from app.services.bot_service import BotService
+from app.core.pricing import calculate_token_cost
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -81,23 +83,48 @@ async def list_execution_runs(
             offset=offset
         )
 
-        runs = [
-            WorkflowRunResponse(
-                id=str(run.id),
-                bot_id=run.bot_id,
-                workflow_version_id=str(run.workflow_version_id) if run.workflow_version_id else None,
-                session_id=run.session_id,
-                status=run.status,
-                error_message=run.error_message,
-                started_at=run.started_at,
-                finished_at=run.finished_at,
-                elapsed_time=run.elapsed_time,
-                total_tokens=run.total_tokens,
-                total_steps=run.total_steps,
-                created_at=run.created_at
+        # 각 실행에 대해 비용 계산
+        runs = []
+        for run in result["items"]:
+            # 비용 계산: LLM 노드의 비용 합산
+            total_cost = None
+            try:
+                node_executions = await service.get_node_executions(str(run.id))
+                cost_sum = Decimal("0")
+                for ne in node_executions:
+                    if ne.node_type.lower() == "llm" or ne.node_type == "LLMNodeV2":
+                        if ne.outputs:
+                            prompt_tokens = ne.outputs.get("prompt_tokens", 0)
+                            completion_tokens = ne.outputs.get("completion_tokens", 0)
+                            model = ne.outputs.get("model")
+                            
+                            if model and (prompt_tokens > 0 or completion_tokens > 0):
+                                cost = calculate_token_cost(model, prompt_tokens, completion_tokens)
+                                if cost:
+                                    cost_sum += cost
+                
+                if cost_sum > 0:
+                    total_cost = float(cost_sum)
+            except Exception as e:
+                logger.warning(f"Failed to calculate cost for run {run.id}: {e}")
+            
+            runs.append(
+                WorkflowRunResponse(
+                    id=str(run.id),
+                    bot_id=run.bot_id,
+                    workflow_version_id=str(run.workflow_version_id) if run.workflow_version_id else None,
+                    session_id=run.session_id,
+                    status=run.status,
+                    error_message=run.error_message,
+                    started_at=run.started_at,
+                    finished_at=run.finished_at,
+                    elapsed_time=run.elapsed_time,
+                    total_tokens=run.total_tokens,
+                    total_cost=total_cost,
+                    total_steps=run.total_steps,
+                    created_at=run.created_at
+                )
             )
-            for run in result["items"]
-        ]
 
         return PaginatedWorkflowRuns(
             items=runs,
@@ -163,6 +190,36 @@ async def get_execution_run(
                 detail="실행 기록을 찾을 수 없습니다"
             )
 
+        # 총 비용 계산: 모든 LLM 노드의 비용 합산
+        total_cost = None
+        node_executions = await service.get_node_executions(run_id)
+        
+        logger.info(f"[get_execution_run] Calculating cost for run {run_id}, found {len(node_executions)} nodes")
+        
+        cost_sum = Decimal("0")
+        for ne in node_executions:
+            logger.info(f"[get_execution_run] Checking node {ne.node_id}, type={ne.node_type}, has_outputs={ne.outputs is not None}")
+            if ne.node_type.lower() == "llm" or ne.node_type == "LLMNodeV2":
+                if ne.outputs:
+                    prompt_tokens = ne.outputs.get("prompt_tokens", 0)
+                    completion_tokens = ne.outputs.get("completion_tokens", 0)
+                    model = ne.outputs.get("model")
+                    
+                    logger.info(f"[get_execution_run] LLM node {ne.node_id}: model={model}, prompt={prompt_tokens}, completion={completion_tokens}")
+                    
+                    if model and (prompt_tokens > 0 or completion_tokens > 0):
+                        cost = calculate_token_cost(model, prompt_tokens, completion_tokens)
+                        logger.info(f"[get_execution_run] Calculated cost: ${cost}")
+                        if cost:
+                            cost_sum += cost
+                else:
+                    logger.warning(f"[get_execution_run] LLM node {ne.node_id} has no outputs!")
+        
+        if cost_sum > 0:
+            total_cost = float(cost_sum)
+        
+        logger.info(f"[get_execution_run] Total cost for run {run_id}: ${total_cost}")
+
         return WorkflowRunDetail(
             id=str(run.id),
             bot_id=run.bot_id,
@@ -174,6 +231,7 @@ async def get_execution_run(
             finished_at=run.finished_at,
             elapsed_time=run.elapsed_time,
             total_tokens=run.total_tokens,
+            total_cost=total_cost,
             total_steps=run.total_steps,
             created_at=run.created_at,
             graph_snapshot=run.graph_snapshot,
@@ -241,24 +299,44 @@ async def get_node_executions(
         # 노드 실행 기록 조회
         node_executions = await exec_service.get_node_executions(run_id)
 
-        return [
-            NodeExecutionResponse(
-                id=str(ne.id),
-                workflow_run_id=str(ne.workflow_run_id),
-                node_id=ne.node_id,
-                node_type=ne.node_type,
-                execution_order=ne.execution_order,
-                status=ne.status,
-                error_message=ne.error_message,
-                started_at=ne.started_at,
-                finished_at=ne.finished_at,
-                elapsed_time=ne.elapsed_time,
-                tokens_used=ne.tokens_used,
-                is_truncated=ne.is_truncated,
-                created_at=ne.created_at
+        results = []
+        for ne in node_executions:
+            # LLM 노드인 경우 비용 계산
+            cost = None
+            model = None
+            
+            if (ne.node_type.lower() == "llm" or ne.node_type == "LLMNodeV2") and ne.outputs:
+                # outputs에서 토큰 및 모델 정보 추출
+                prompt_tokens = ne.outputs.get("prompt_tokens", 0)
+                completion_tokens = ne.outputs.get("completion_tokens", 0)
+                model = ne.outputs.get("model")
+                
+                if model and (prompt_tokens > 0 or completion_tokens > 0):
+                    cost_decimal = calculate_token_cost(model, prompt_tokens, completion_tokens)
+                    if cost_decimal:
+                        cost = float(cost_decimal)
+            
+            results.append(
+                NodeExecutionResponse(
+                    id=str(ne.id),
+                    workflow_run_id=str(ne.workflow_run_id),
+                    node_id=ne.node_id,
+                    node_type=ne.node_type,
+                    execution_order=ne.execution_order,
+                    status=ne.status,
+                    error_message=ne.error_message,
+                    started_at=ne.started_at,
+                    finished_at=ne.finished_at,
+                    elapsed_time=ne.elapsed_time,
+                    tokens_used=ne.tokens_used,
+                    cost=cost,
+                    model=model,
+                    is_truncated=ne.is_truncated,
+                    created_at=ne.created_at
+                )
             )
-            for ne in node_executions
-        ]
+        
+        return results
 
     except HTTPException:
         raise

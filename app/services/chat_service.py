@@ -201,7 +201,11 @@ class ChatService:
             vector_service=vector_service,
             llm_service=llm_service,
             stream_handler=None,
-            text_normalizer=strip_markdown
+            text_normalizer=strip_markdown,
+            # API 전용 파라미터는 None (일반 챗봇 사용)
+            api_key_id=None,
+            user_id=None,
+            api_request_id=None
         )
 
         # ChatResponse 형식으로 변환

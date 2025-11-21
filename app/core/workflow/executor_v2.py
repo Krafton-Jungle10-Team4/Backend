@@ -62,7 +62,10 @@ class WorkflowExecutorV2:
         llm_service: Optional[LLMService] = None,
         stream_handler: Optional[Any] = None,
         text_normalizer: Optional[Callable[[str], str]] = None,
-        initial_node_outputs: Optional[Dict[str, Dict[str, Any]]] = None
+        initial_node_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
+        api_key_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        api_request_id: Optional[str] = None
     ) -> str:
         """
         V2 워크플로우 실행
@@ -78,6 +81,9 @@ class WorkflowExecutorV2:
             stream_handler: 스트림 핸들러
             text_normalizer: 텍스트 정규화 함수
             initial_node_outputs: 특정 노드/포트에 미리 주입할 값 (nested execution용)
+            api_key_id: API 키 ID (RESTful API 호출 시)
+            user_id: 최종 사용자 ID (RESTful API 호출 시)
+            api_request_id: API 요청 ID (추적용)
 
         Returns:
             str: 최종 응답
@@ -141,6 +147,18 @@ class WorkflowExecutorV2:
             self.service_container.register("stream_handler", stream_handler)
             self.service_container.register("text_normalizer", text_normalizer)
 
+            # API 메타데이터 등록 (중첩 워크플로우에서 접근 가능)
+            if api_key_id:
+                self.service_container.register("api_key_id", api_key_id)
+            if user_id:
+                self.service_container.register("user_id", user_id)
+            if api_request_id:
+                self.service_container.register("api_request_id", api_request_id)
+
+            logger.debug(
+                f"ServiceContainer initialized with services: {self.service_container.list_services()}"
+            )
+
             # V2 노드 인스턴스 생성
             self._create_v2_nodes(nodes_data, edges_data)
             self.edges = edges_data
@@ -160,7 +178,10 @@ class WorkflowExecutorV2:
                 bot_id=bot_id,
                 user_message=user_message,
                 db=db,
-                workflow_version_id=self.workflow_version_id
+                workflow_version_id=self.workflow_version_id,
+                api_key_id=api_key_id,
+                user_id=user_id,
+                api_request_id=api_request_id
             )
 
             # 노드 실행
@@ -926,7 +947,10 @@ class WorkflowExecutorV2:
         bot_id: str,
         user_message: str,
         db: Any,
-        workflow_version_id: Optional[str] = None
+        workflow_version_id: Optional[str] = None,
+        api_key_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        api_request_id: Optional[str] = None
     ) -> None:
         """
         워크플로우 실행 기록 생성
@@ -937,6 +961,10 @@ class WorkflowExecutorV2:
             bot_id: 봇 ID
             user_message: 사용자 메시지
             db: 데이터베이스 세션
+            workflow_version_id: 워크플로우 버전 ID
+            api_key_id: API 키 ID (RESTful API 호출 시)
+            user_id: 최종 사용자 ID (RESTful API 호출 시)
+            api_request_id: API 요청 ID (추적용)
         """
         if not db:
             logger.warning("DB 세션이 없어 실행 기록을 저장하지 않습니다")
@@ -960,12 +988,19 @@ class WorkflowExecutorV2:
                 outputs={},
                 status="running",
                 started_at=self.run_start_time,
-                total_steps=len(self.execution_order)
+                total_steps=len(self.execution_order),
+                # API 전용 필드 설정
+                api_key_id=api_key_id,
+                user_id=user_id,
+                api_request_id=api_request_id
             )
 
             db.add(self.execution_run)
             await db.commit()
-            logger.info(f"V2 워크플로우 실행 기록 생성: run_id={self.execution_run.id}")
+            logger.info(
+                f"V2 워크플로우 실행 기록 생성: run_id={self.execution_run.id}, "
+                f"api_key_id={api_key_id}, user_id={user_id}"
+            )
 
         except Exception as e:
             logger.error(f"실행 기록 생성 실패: {str(e)}")

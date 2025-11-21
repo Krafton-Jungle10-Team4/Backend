@@ -10,8 +10,9 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 import uuid
 import logging
+import copy
 
-from app.models.workflow_version import BotWorkflowVersion, WorkflowExecutionRun
+from app.models.workflow_version import BotWorkflowVersion, WorkflowExecutionRun, WorkflowNodeExecution
 from app.models.bot_api_key import BotAPIKey
 from app.core.workflow.executor_v2 import WorkflowExecutorV2
 
@@ -236,34 +237,15 @@ class WorkflowAPIService:
         Returns:
             실행 결과 딕셔너리
         """
-        # 1. WorkflowExecutionRun 생성
-        run_id = uuid.uuid4()
-        execution_run = WorkflowExecutionRun(
-            id=run_id,
-            bot_id=workflow_version.bot_id,
-            workflow_version_id=workflow_version.id,
-            session_id=session_id or f"api_session_{uuid.uuid4().hex[:16]}",
-            user_id=user_id,
-            api_key_id=api_key.id,
-            api_request_id=metadata.get("request_id"),
-            graph_snapshot=workflow_version.graph,
-            inputs=inputs,
-            status="running",
-            started_at=datetime.now(timezone.utc)
-        )
-        
-        db.add(execution_run)
-        await db.commit()
-        await db.refresh(execution_run)
-        
         try:
-            # 2. 워크플로우 실행
+            # 1. Executor 실행 (Executor가 실행 기록 생성)
             executor = WorkflowExecutorV2()
             
-            # 워크플로우 데이터 가져오기
-            workflow_data = workflow_version.graph
+            # Deep copy로 그래프 복사 (참조 공유 방지)
+            workflow_data = copy.deepcopy(workflow_version.graph)
+            workflow_data["workflow_version_id"] = str(workflow_version.id)
             
-            # inputs에서 user_message 추출 (primary 또는 첫 번째 required 필드)
+            # inputs에서 user_message 추출
             user_message = ""
             if workflow_version.input_schema:
                 for field in workflow_version.input_schema:
@@ -272,65 +254,89 @@ class WorkflowAPIService:
                         user_message = str(inputs[field_key])
                         break
             
-            # 실행 (blocking 모드)
             result_text = await executor.execute(
                 workflow_data=workflow_data,
-                session_id=execution_run.session_id,
+                session_id=session_id or f"api_session_{uuid.uuid4().hex[:16]}",
                 user_message=user_message,
                 bot_id=workflow_version.bot_id,
                 db=db,
                 vector_service=vector_service,
                 llm_service=llm_service,
                 stream_handler=None,
-                text_normalizer=None
+                text_normalizer=None,
+                # API 전용 파라미터 전달
+                api_key_id=api_key.id,
+                user_id=user_id,
+                api_request_id=metadata.get("request_id")
             )
             
-            # 3. 실행 결과 업데이트
-            execution_run.status = "completed"
-            execution_run.outputs = {"result": result_text}
-            execution_run.finished_at = datetime.now(timezone.utc)
-            execution_run.elapsed_time = int((execution_run.finished_at - execution_run.started_at).total_seconds() * 1000)
-            execution_run.total_tokens = 0  # V2 Executor는 토큰 정보를 반환하지 않음
+            # 2. Executor가 생성한 execution_run 조회
+            execution_run = executor.execution_run
             
-            await db.commit()
+            if not execution_run:
+                raise RuntimeError("Executor failed to create execution_run")
+            
+            # 3. DB에서 최신 상태 조회 (commit 이후)
             await db.refresh(execution_run)
             
-            # 4. 응답 생성
+            logger.info(
+                f"✅ 워크플로우 실행 완료: run_id={execution_run.id}, "
+                f"tokens={execution_run.total_tokens}, elapsed={execution_run.elapsed_time}ms"
+            )
+            
+            # 4. 노드 실행 기록에서 토큰 집계
+            node_executions_result = await db.execute(
+                select(WorkflowNodeExecution).where(
+                    WorkflowNodeExecution.workflow_run_id == execution_run.id
+                )
+            )
+            node_executions = node_executions_result.scalars().all()
+            
+            # 개별 토큰 합계 계산
+            prompt_tokens_sum = 0
+            completion_tokens_sum = 0
+            
+            for node_exec in node_executions:
+                if node_exec.node_type == "LLMNodeV2" and node_exec.outputs:
+                    prompt_tokens_sum += node_exec.outputs.get("prompt_tokens", 0)
+                    completion_tokens_sum += node_exec.outputs.get("completion_tokens", 0)
+            
+            logger.info(
+                f"✅ 토큰 집계: prompt={prompt_tokens_sum}, "
+                f"completion={completion_tokens_sum}, "
+                f"total={execution_run.total_tokens}"
+            )
+            
+            # 5. 응답 생성 (토큰 정보 포함)
             return {
                 "workflow_run_id": str(execution_run.id),
                 "bot_id": execution_run.bot_id,
                 "workflow_version_id": str(execution_run.workflow_version_id),
                 "status": execution_run.status,
                 "outputs": execution_run.outputs,
-                "result": result_text,  # 실제 결과 텍스트
+                "result": result_text,
                 "usage": {
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": execution_run.total_tokens
+                    "prompt_tokens": prompt_tokens_sum,
+                    "completion_tokens": completion_tokens_sum,
+                    "total_tokens": execution_run.total_tokens or 0
                 },
                 "created_at": execution_run.started_at.isoformat(),
-                "finished_at": execution_run.finished_at.isoformat(),
-                "elapsed_time": execution_run.elapsed_time / 1000.0,  # seconds
+                "finished_at": execution_run.finished_at.isoformat() if execution_run.finished_at else None,
+                "elapsed_time": execution_run.elapsed_time / 1000.0 if execution_run.elapsed_time else 0,
                 "session_id": execution_run.session_id
             }
         
         except Exception as e:
             # 실행 실패
-            logger.error(f"워크플로우 실행 실패 (run_id={run_id}): {e}")
+            logger.error(f"워크플로우 실행 실패: {e}")
             
-            execution_run.status = "failed"
-            execution_run.error_message = str(e)
-            execution_run.finished_at = datetime.now(timezone.utc)
-            execution_run.elapsed_time = int((execution_run.finished_at - execution_run.started_at).total_seconds() * 1000)
-            
-            await db.commit()
+            # Executor의 execution_run이 있으면 실패 상태로 업데이트 (이미 executor에서 처리됨)
             
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={
                     "code": "WORKFLOW_EXECUTION_FAILED",
                     "message": "Workflow execution failed",
-                    "workflow_run_id": str(run_id),
                     "error": str(e)
                 }
             )

@@ -276,6 +276,8 @@ class LLMNodeV2(BaseNodeV2):
 
             response_text: str
             tokens_used: int = 0
+            prompt_tokens: int = 0
+            completion_tokens: int = 0
 
             if isinstance(result, dict):
                 response_text = (
@@ -286,6 +288,22 @@ class LLMNodeV2(BaseNodeV2):
                 tokens_used = result.get("tokens", 0)
             else:
                 response_text = str(result)
+
+            # Provider client에서 토큰 정보 가져오기
+            try:
+                provider_key = llm_service._resolve_provider(provider, model)
+                client = llm_service._get_client(provider_key)
+                
+                if hasattr(client, 'last_usage') and client.last_usage:
+                    usage = client.last_usage
+                    prompt_tokens = usage.get("input_tokens", 0)
+                    completion_tokens = usage.get("output_tokens", 0)
+                    tokens_used = usage.get("total_tokens", prompt_tokens + completion_tokens)
+                    logger.info(f"[LLMNodeV2] Token usage: prompt={prompt_tokens}, completion={completion_tokens}, total={tokens_used}")
+                else:
+                    logger.warning(f"[LLMNodeV2] Provider client에 last_usage 정보가 없습니다.")
+            except Exception as e:
+                logger.warning(f"[LLMNodeV2] 토큰 사용량 조회 실패: {e}")
 
             logger.info(f"LLMNodeV2: Generated response ({tokens_used} tokens)")
             
@@ -300,6 +318,8 @@ class LLMNodeV2(BaseNodeV2):
             return {
                 "response": response_text,
                 "tokens": tokens_used,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
                 "model": model
             }
 

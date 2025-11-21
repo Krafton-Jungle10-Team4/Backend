@@ -399,6 +399,7 @@ class WorkflowRunResponse(BaseModel):
     finished_at: Optional[datetime] = Field(None, description="종료 시간")
     elapsed_time: Optional[int] = Field(None, description="실행 시간 (milliseconds)")
     total_tokens: int = Field(0, description="총 사용 토큰 수")
+    total_cost: Optional[float] = Field(None, description="총 비용 (USD)")
     total_steps: int = Field(0, description="총 실행 단계 수")
     created_at: datetime = Field(..., description="생성 시간")
 
@@ -423,6 +424,8 @@ class NodeExecutionResponse(BaseModel):
     finished_at: Optional[datetime] = Field(None, description="종료 시간")
     elapsed_time: Optional[int] = Field(None, description="실행 시간 (milliseconds)")
     tokens_used: int = Field(0, description="사용 토큰 수")
+    cost: Optional[float] = Field(None, description="비용 (USD)")
+    model: Optional[str] = Field(None, description="사용된 모델명")
     is_truncated: bool = Field(False, description="데이터 잘림 여부")
     created_at: datetime = Field(..., description="생성 시간")
 

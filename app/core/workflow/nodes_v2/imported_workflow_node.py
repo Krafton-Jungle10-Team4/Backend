@@ -181,6 +181,15 @@ class ImportedWorkflowNode(BaseNodeV2):
             # Child executor 생성
             child_executor = WorkflowExecutorV2()
 
+            # ServiceContainer에서 API 메타데이터 조회
+            api_key_id = context.service_container.get("api_key_id") if context.service_container else None
+            user_id_from_parent = context.service_container.get("user_id") if context.service_container else None
+            api_request_id = context.service_container.get("api_request_id") if context.service_container else None
+
+            logger.debug(
+                f"Nested workflow execution: api_key_id={api_key_id}, user_id={user_id_from_parent}"
+            )
+
             result = await child_executor.execute(
                 workflow_data=workflow_data,
                 session_id=session_id or f"nested_{self.node_id}",
@@ -191,7 +200,11 @@ class ImportedWorkflowNode(BaseNodeV2):
                 llm_service=llm_service,
                 stream_handler=None,
                 text_normalizer=None,
-                initial_node_outputs=initial_node_outputs
+                initial_node_outputs=initial_node_outputs,
+                # 중첩 워크플로우도 API 파라미터 전달 (부모로부터 상속)
+                api_key_id=api_key_id,
+                user_id=user_id_from_parent,
+                api_request_id=api_request_id
             )
 
             # 출력 값 수집 및 매핑

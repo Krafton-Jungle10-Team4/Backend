@@ -280,8 +280,13 @@ class Settings(BaseSettings):
             # 프로덕션: 설정된 프론트엔드 URL만 허용
             return frontend_urls if frontend_urls else []
         else:
-            # 개발/스테이징: 프론트엔드 URL + localhost 허용
-            dev_origins = ["http://localhost:5173", "http://localhost:3000", "http://localhost:3001"]
+            # 개발/스테이징: 프론트엔드 URL + localhost 허용 (HTTP + HTTPS)
+            dev_origins = [
+                "http://localhost:5173", 
+                "https://localhost:5173",  # HTTPS 로컬 개발
+                "http://localhost:3000", 
+                "http://localhost:3001"
+            ]
             return list(set(frontend_urls + dev_origins)) if frontend_urls else ["*"]
 
     @property

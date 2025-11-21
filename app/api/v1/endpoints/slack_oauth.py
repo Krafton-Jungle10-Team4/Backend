@@ -151,6 +151,7 @@ async def slack_oauth_callback(
     Slack에서 리다이렉트된 후 Access Token을 교환하고 DB에 저장합니다.
     """
     # State 검증
+    bot_id = None  # 초기화
     try:
         state_data = verify_oauth_state(state)
         user_id = state_data["user_id"]
@@ -160,9 +161,16 @@ async def slack_oauth_callback(
         # 쉼표로 구분된 경우 첫 번째 URL 사용
         frontend_urls = settings.get_frontend_urls()
         frontend_url = frontend_urls[0] if frontend_urls else settings.frontend_url
-        return RedirectResponse(
-            url=f"{frontend_url}/slack/callback?error={e.detail}"
-        )
+        
+        # bot_id가 있으면 워크플로우 빌더로, 없으면 설정 페이지로
+        if bot_id:
+            return RedirectResponse(
+                url=f"{frontend_url}/bot/{bot_id}/workflow?slack_error={e.detail}"
+            )
+        else:
+            return RedirectResponse(
+                url=f"{frontend_url}/slack/callback?error={e.detail}"
+            )
     
     # Slack OAuth Client
     try:
@@ -226,7 +234,7 @@ async def slack_oauth_callback(
         
         if bot_id:
             # 워크플로우 빌더로 돌아가기
-            redirect_url = f"{frontend_url}/workspace/studio/{bot_id}?slack=success"
+            redirect_url = f"{frontend_url}/bot/{bot_id}/workflow?slack=success"
         else:
             # 사용자 레벨 연동 (봇 없이)
             redirect_url = f"{frontend_url}/settings/integrations?slack=success"
@@ -238,9 +246,16 @@ async def slack_oauth_callback(
         # 쉼표로 구분된 경우 첫 번째 URL 사용
         frontend_urls = settings.get_frontend_urls()
         frontend_url = frontend_urls[0] if frontend_urls else settings.frontend_url
-        return RedirectResponse(
-            url=f"{frontend_url}/slack/callback?error=oauth_failed"
-        )
+        
+        # bot_id가 있으면 워크플로우 빌더로, 없으면 설정 페이지로
+        if bot_id:
+            return RedirectResponse(
+                url=f"{frontend_url}/bot/{bot_id}/workflow?slack_error=oauth_failed"
+            )
+        else:
+            return RedirectResponse(
+                url=f"{frontend_url}/slack/callback?error=oauth_failed"
+            )
 
 
 # ==========================================

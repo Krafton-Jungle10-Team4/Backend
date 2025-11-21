@@ -194,7 +194,41 @@ except Exception as e:
     print(f"⚠️  SQL migration failed (will retry with alembic): {e}")
 EOF
 
-# 4. Alembic 마이그레이션 실행
+# 4. Alembic 마이그레이션 준비 - 삭제된 revision 수정
+echo "🔧 Checking alembic version..."
+python << EOF
+import os
+from sqlalchemy import create_engine, text
+
+database_url = os.getenv("DATABASE_URL")
+if not database_url:
+    user = os.getenv("DATABASE_USER", os.getenv("POSTGRES_USER", "postgres"))
+    password = os.getenv("DATABASE_PASSWORD", os.getenv("POSTGRES_PASSWORD", ""))
+    host = os.getenv("DATABASE_HOST", "localhost")
+    port = os.getenv("DATABASE_PORT", "5432")
+    db = os.getenv("DATABASE_NAME", os.getenv("POSTGRES_DB", "ragdb"))
+    database_url = f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
+database_url = database_url.replace('+asyncpg', '')
+
+try:
+    engine = create_engine(database_url)
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT version_num FROM alembic_version"))
+        current_version = result.scalar()
+        print(f"ℹ️  Current alembic version: {current_version}")
+        
+        # 삭제된 revision (p7q8r9s0t1u2)을 현재 유효한 revision으로 변경
+        if current_version == 'p7q8r9s0t1u2':
+            print("🔧 Fixing deleted revision p7q8r9s0t1u2 → 0248ea7e10f5")
+            conn.execute(text("UPDATE alembic_version SET version_num = '0248ea7e10f5'"))
+            conn.commit()
+            print("✅ Alembic version fixed!")
+except Exception as e:
+    print(f"⚠️  Alembic version check failed: {e}")
+EOF
+
+# 5. Alembic 마이그레이션 실행
 echo "📦 Running alembic migrations..."
 if alembic upgrade head; then
     echo "✅ Alembic migrations completed successfully!"
@@ -202,7 +236,7 @@ else
     echo "⚠️  Alembic migration failed, but continuing startup..."
 fi
 
-# 5. 애플리케이션 시작
+# 6. 애플리케이션 시작
 echo "🚀 Starting FastAPI application..."
 
 # 환경에 따라 reload 옵션 설정
