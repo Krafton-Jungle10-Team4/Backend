@@ -135,10 +135,17 @@ class WidgetService:
         # Bot 정보 로드 (relationship 사용)
         await db.refresh(deployment, ["bot"])
 
+        # 위젯 설정에서 bot_name 조회 (기본값이면 실제 bot.name 사용)
+        widget_bot_name = deployment.widget_config.get("bot_name")
+        if not widget_bot_name or widget_bot_name == "AI Assistant":
+            bot_name = deployment.bot.name
+        else:
+            bot_name = widget_bot_name
+
         # 설정 구성 (명세서의 모든 필수 필드 포함)
         config = {
             "bot_id": deployment.bot.bot_id,
-            "bot_name": deployment.widget_config.get("bot_name", deployment.bot.name),
+            "bot_name": bot_name,
             "avatar_url": deployment.widget_config.get("avatar_url"),
             "theme": deployment.widget_config.get("theme", "light"),
             "position": deployment.widget_config.get("position", "bottom-right"),
@@ -216,10 +223,17 @@ class WidgetService:
             # Bot 정보 로드 (relationship 사용)
             await db.refresh(deployment, ["bot"])
 
+            # 위젯 설정에서 bot_name 조회 (기본값이면 실제 bot.name 사용)
+            widget_bot_name = deployment.widget_config.get("bot_name")
+            if not widget_bot_name or widget_bot_name == "AI Assistant":
+                bot_name = deployment.bot.name
+            else:
+                bot_name = widget_bot_name
+
             # 설정 구성 (get_widget_config와 동일한 로직)
             config = {
                 "bot_id": deployment.bot.bot_id,
-                "bot_name": deployment.widget_config.get("bot_name", deployment.bot.name),
+                "bot_name": bot_name,
                 "avatar_url": deployment.widget_config.get("avatar_url"),
                 "theme": deployment.widget_config.get("theme", "light"),
                 "position": deployment.widget_config.get("position", "bottom-right"),
