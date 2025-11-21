@@ -181,13 +181,23 @@ class ImportedWorkflowNode(BaseNodeV2):
             # Child executor 생성
             child_executor = WorkflowExecutorV2()
 
-            # ServiceContainer에서 API 메타데이터 조회
+            # ServiceContainer에서 user_uuid, API 메타데이터, 스트리밍 관련 조회
+            user_uuid = context.service_container.get("user_uuid") if context.service_container else None
             api_key_id = context.service_container.get("api_key_id") if context.service_container else None
             user_id_from_parent = context.service_container.get("user_id") if context.service_container else None
             api_request_id = context.service_container.get("api_request_id") if context.service_container else None
 
+            # 스트리밍 관련 서비스 조회 (부모로부터 전달받음)
+            stream_handler = context.service_container.get("stream_handler") if context.service_container else None
+            text_normalizer = context.service_container.get("text_normalizer") if context.service_container else None
+
+            # user_uuid가 없으면 기본값 설정 (Widget 실행 등)
+            if not user_uuid:
+                logger.warning(f"user_uuid가 ServiceContainer에 없습니다. 빈 문자열로 설정합니다.")
+                user_uuid = ""
+
             logger.debug(
-                f"Nested workflow execution: api_key_id={api_key_id}, user_id={user_id_from_parent}"
+                f"Nested workflow execution: user_uuid={user_uuid}, api_key_id={api_key_id}, user_id={user_id_from_parent}, stream_handler={stream_handler is not None}"
             )
 
             result = await child_executor.execute(
@@ -195,11 +205,12 @@ class ImportedWorkflowNode(BaseNodeV2):
                 session_id=session_id or f"nested_{self.node_id}",
                 user_message=user_message,
                 bot_id=bot_id or "",
+                user_uuid=user_uuid,  # 필수 위치 인자 추가
                 db=db,
                 vector_service=vector_service,
                 llm_service=llm_service,
-                stream_handler=None,
-                text_normalizer=None,
+                stream_handler=stream_handler,  # 부모의 stream_handler 전달
+                text_normalizer=text_normalizer,  # 부모의 text_normalizer 전달
                 initial_node_outputs=initial_node_outputs,
                 # 중첩 워크플로우도 API 파라미터 전달 (부모로부터 상속)
                 api_key_id=api_key_id,
