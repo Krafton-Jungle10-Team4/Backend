@@ -85,6 +85,7 @@ class DeploymentResponse(BaseModel):
     """봇 배포 응답"""
     deployment_id: UUID
     bot_id: str
+    bot_name: Optional[str] = Field(None, description="봇 이름")
     widget_key: str
     status: str
     workflow_version_id: Optional[UUID] = Field(None, description="배포된 워크플로우 버전 ID")

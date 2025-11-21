@@ -43,6 +43,7 @@ async def create_or_update_deployment(
         return DeploymentResponse(
             deployment_id=deployment.deployment_id,
             bot_id=deployment.bot.bot_id,
+            bot_name=deployment.bot.name,
             widget_key=deployment.widget_key,
             status=deployment.status,
             workflow_version_id=deployment.workflow_version_id,
@@ -83,6 +84,7 @@ async def get_deployment(
     return DeploymentResponse(
         deployment_id=deployment.deployment_id,
         bot_id=deployment.bot.bot_id,
+        bot_name=deployment.bot.name,
         widget_key=deployment.widget_key,
         status=deployment.status,
         workflow_version_id=deployment.workflow_version_id,
