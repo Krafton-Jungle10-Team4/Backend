@@ -19,40 +19,42 @@ class VectorService:
 
     async def search_similar_chunks(
         self,
-        bot_id: str,
+        user_uuid: str,
         query: str,
         top_k: int,
         db: Optional[AsyncSession] = None,
-        document_ids: Optional[List[str]] = None
+        document_ids: Optional[List[str]] = None,
+        bot_id: Optional[str] = None  # 레거시 호환용, 사용하지 않음
     ) -> List[Dict[str, Any]]:
         """
-        유사 문서 검색
+        유사 문서 검색 (user_uuid 기반, 같은 유저의 모든 문서 검색)
 
         Args:
-            bot_id: 봇 ID
+            user_uuid: 사용자 UUID
             query: 검색 쿼리
             top_k: 검색할 문서 개수
             db: 데이터베이스 세션
             document_ids: 특정 문서만 검색 (document_id 리스트)
+            bot_id: 레거시 호환용 (더 이상 사용하지 않음)
 
         Returns:
             검색 결과 리스트
         """
-        if not bot_id:
-            raise ValueError("bot_id는 필수입니다")
+        if not user_uuid:
+            raise ValueError("user_uuid는 필수입니다")
 
         if document_ids:
             logger.info(
-                "[VectorService] 벡터 검색: bot_id=%s, query='%s...', top_k=%s, document_ids=%s",
-                bot_id,
+                "[VectorService] 벡터 검색: user_uuid=%s, query='%s...', top_k=%s, document_ids=%s",
+                user_uuid,
                 query[:50],
                 top_k,
                 document_ids
             )
         else:
             logger.info(
-                "[VectorService] 벡터 검색: bot_id=%s, query='%s...', top_k=%s",
-                bot_id,
+                "[VectorService] 벡터 검색: user_uuid=%s, query='%s...', top_k=%s",
+                user_uuid,
                 query[:50],
                 top_k
             )
@@ -60,8 +62,8 @@ class VectorService:
         # 1. 쿼리 임베딩 생성
         query_embedding = await self.embedding_service.embed_query(query)
 
-        # 2. 벡터 스토어에서 검색
-        vector_store = get_vector_store(bot_id=bot_id, db=db)
+        # 2. 벡터 스토어에서 검색 (user_uuid 기반)
+        vector_store = get_vector_store(user_uuid=user_uuid, db=db)
         search_results = await vector_store.search(
             query_embedding=query_embedding,
             top_k=top_k,
@@ -90,10 +92,11 @@ class VectorService:
     async def search(
         self,
         query: str,
-        bot_id: str,
+        user_uuid: str,
         top_k: int = 5,
         search_mode: str = "semantic",
-        db: Optional[AsyncSession] = None
+        db: Optional[AsyncSession] = None,
+        bot_id: Optional[str] = None  # 레거시 호환용
     ) -> List[Dict[str, Any]]:
         """
         Workflow에서 사용하는 검색 메서드
@@ -102,21 +105,23 @@ class VectorService:
 
         Args:
             query: 검색 쿼리
-            bot_id: 검색할 봇 ID
+            user_uuid: 사용자 UUID
             top_k: 검색할 문서 개수
             search_mode: 검색 모드 (semantic, keyword) - 현재는 semantic만 지원
+            db: 데이터베이스 세션
+            bot_id: 레거시 호환용 (더 이상 사용하지 않음)
 
         Returns:
             검색 결과 리스트
         """
         logger.info(
-            "[VectorService.search] Workflow 검색 호출: bot_id=%s, mode=%s",
-            bot_id,
+            "[VectorService.search] Workflow 검색 호출: user_uuid=%s, mode=%s",
+            user_uuid,
             search_mode
         )
 
         return await self.search_similar_chunks(
-            bot_id=bot_id,
+            user_uuid=user_uuid,
             query=query,
             top_k=top_k,
             db=db

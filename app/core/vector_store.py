@@ -60,10 +60,20 @@ class VectorStore:
         return self.db
 
     def _apply_user_filter(self, query):
-        """user_uuid가 설정되었으면 JSON 메타데이터를 기준으로 필터를 추가"""
+        """
+        user_uuid가 설정되었으면 Documents 테이블과 조인하여 user_uuid로 필터링
+        
+        metadata에 user_uuid가 없는 기존 문서도 검색할 수 있도록 
+        Documents 테이블의 user_uuid를 사용합니다.
+        """
         if self.user_uuid:
-            user_filter = cast(DocumentEmbedding.doc_metadata["user_uuid"], String) == self.user_uuid
-            query = query.where(user_filter)
+            from app.models.document import Document
+            # Documents 테이블과 조인하여 user_uuid 필터링
+            # metadata에 user_uuid가 없어도 Documents 테이블의 user_uuid로 검색 가능
+            query = query.join(
+                Document,
+                DocumentEmbedding.document_id == Document.document_id
+            ).where(Document.user_uuid == self.user_uuid)
         return query
 
     async def add_documents(
@@ -100,6 +110,14 @@ class VectorStore:
                     details={"bot_id": self.bot_id}
                 )
 
+            # 첫 번째 metadata 확인 (디버깅)
+            if metadatas and len(metadatas) > 0:
+                first_metadata = metadatas[0]
+                logger.info(
+                    f"[VectorStore] 저장 전 첫 번째 metadata keys: {list(first_metadata.keys())}, "
+                    f"user_uuid={first_metadata.get('user_uuid', 'NOT FOUND')}"
+                )
+            
             for doc_id, embedding, document, metadata in zip(ids, embeddings, documents, metadatas):
                 metadata_copy = metadata.copy()
                 metadata_copy["document_id"] = doc_id
@@ -163,9 +181,7 @@ class VectorStore:
                 distance_expr.label('distance')
             )
 
-            if self.bot_id:
-                query = query.where(DocumentEmbedding.bot_id == self.bot_id)
-
+            # user_uuid 기반 필터링 (bot_id 필터링 제거 - 같은 유저의 모든 문서 검색)
             query = self._apply_user_filter(query)
 
             # document_id 필터링 (특정 문서만 검색)
@@ -186,8 +202,51 @@ class VectorStore:
             # 거리순 정렬 및 top_k 제한
             query = query.order_by(distance_expr).limit(top_k)
 
+            # 디버깅: 쿼리 조건 로깅
+            logger.info(
+                f"[VectorStore] 검색 조건 - user_uuid={self.user_uuid}, "
+                f"document_ids={document_ids}, filter_dict={filter_dict}"
+            )
+            
             # 쿼리 실행
             results = (await db.execute(query)).all()
+            
+            # 디버깅: 결과가 없을 때 전체 임베딩 개수 확인
+            if len(results) == 0 and document_ids:
+                count_query = select(func.count(DocumentEmbedding.id)).where(
+                    DocumentEmbedding.document_id.in_(document_ids)
+                )
+                total_count = (await db.execute(count_query)).scalar()
+                logger.warning(
+                    f"[VectorStore] 검색 결과 0개! document_ids={document_ids}에 해당하는 "
+                    f"전체 임베딩: {total_count}개"
+                )
+                
+                # user_uuid 필터링 때문인지 확인
+                if self.user_uuid:
+                    count_with_filter = select(func.count(DocumentEmbedding.id)).where(
+                        DocumentEmbedding.document_id.in_(document_ids)
+                    ).where(
+                        cast(DocumentEmbedding.doc_metadata["user_uuid"], String) == self.user_uuid
+                    )
+                    filtered_count = (await db.execute(count_with_filter)).scalar()
+                    logger.warning(
+                        f"[VectorStore] user_uuid={self.user_uuid} 필터 적용 시: {filtered_count}개"
+                    )
+                    
+                    # 실제 저장된 첫 번째 임베딩의 metadata 확인
+                    sample_query = select(DocumentEmbedding.doc_metadata).where(
+                        DocumentEmbedding.document_id.in_(document_ids)
+                    ).limit(1)
+                    sample_result = (await db.execute(sample_query)).scalar_one_or_none()
+                    if sample_result:
+                        logger.warning(
+                            f"[VectorStore] 실제 저장된 metadata 샘플 - keys: {list(sample_result.keys())}, "
+                            f"user_uuid: {sample_result.get('user_uuid', 'NOT FOUND')}, "
+                            f"bot_id: {sample_result.get('bot_id', 'NOT FOUND')}"
+                        )
+                    else:
+                        logger.warning("[VectorStore] metadata 샘플을 가져올 수 없습니다")
 
             # ChromaDB 호환 형식으로 변환
             ids = []
@@ -202,6 +261,8 @@ class VectorStore:
                 metadatas.append(result.doc_metadata)
                 distances.append(float(distance))
 
+            logger.info(f"벡터 검색 완료: user_uuid={self.user_uuid}, {len(results)}개 결과")
+
             return {
                 "ids": [ids],
                 "documents": [documents],
@@ -214,7 +275,7 @@ class VectorStore:
             raise VectorStoreQueryError(
                 message="벡터 검색 중 오류가 발생했습니다",
                 details={
-                    "bot_id": self.bot_id,
+                    "user_uuid": self.user_uuid,
                     "top_k": top_k,
                     "error": str(e)
                 }

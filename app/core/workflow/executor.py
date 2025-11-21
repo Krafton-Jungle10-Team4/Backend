@@ -41,7 +41,7 @@ class WorkflowExecutionContext:
         # 서비스 인스턴스
         self.vector_service: Optional[VectorService] = None
         self.llm_service: Optional[LLMService] = None
-        self.bot_id: Optional[str] = None
+        self.user_uuid: Optional[str] = None
         self.db: Optional[Any] = None
         self.stream_handler: Optional[Any] = None
         self.text_normalizer: Optional[Callable[[str], str]] = None
@@ -88,7 +88,7 @@ class WorkflowExecutor:
         workflow_data: Dict[str, Any],
         session_id: str,
         user_message: str,
-        bot_id: str,
+        user_uuid: str,
         db: Any,
         vector_service: Optional[VectorService] = None,
         llm_service: Optional[LLMService] = None,
@@ -144,7 +144,7 @@ class WorkflowExecutor:
             context = WorkflowExecutionContext(session_id, user_message)
             context.vector_service = vector_service
             context.llm_service = llm_service
-            context.bot_id = bot_id
+            context.user_uuid = user_uuid
             context.db = db
             context.stream_handler = stream_handler
             context.text_normalizer = text_normalizer

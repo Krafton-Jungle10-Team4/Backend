@@ -225,14 +225,53 @@ class DocumentService:
         bot_id: Optional[str] = None,
         db = None
     ):
-        """문서 삭제"""
+        """문서 삭제 (임베딩 + documents 테이블 레코드)"""
         if not user_uuid:
             raise ValueError("user_uuid는 필수입니다")
 
+        logger.info(f"문서 삭제 요청: {document_id} (bot_id={bot_id}, user_uuid={user_uuid})")
+        
+        # 1. 벡터 임베딩 삭제
         vector_store = get_vector_store(bot_id=bot_id, user_uuid=user_uuid, db=db)
-
-        logger.info(f"문서 삭제 요청: {document_id} (bot_id={bot_id})")
         await vector_store.delete_document(document_id)
+        logger.info(f"벡터 임베딩 삭제 완료: {document_id}")
+        
+        # 2. documents 테이블에서 S3 URI 조회 및 레코드 삭제
+        from app.models.document import Document
+        from sqlalchemy import select, delete as sql_delete
+        
+        # S3 URI 조회
+        result = await db.execute(
+            select(Document).where(
+                Document.document_id == document_id,
+                Document.user_uuid == user_uuid
+            )
+        )
+        document = result.scalar_one_or_none()
+        
+        if document:
+            s3_uri = document.s3_uri
+            
+            # documents 테이블 레코드 삭제
+            delete_stmt = sql_delete(Document).where(
+                Document.document_id == document_id,
+                Document.user_uuid == user_uuid
+            )
+            await db.execute(delete_stmt)
+            await db.commit()
+            logger.info(f"documents 테이블 레코드 삭제 완료: {document_id}")
+            
+            # 3. S3 파일 삭제
+            if s3_uri:
+                try:
+                    from app.core.aws_clients import get_s3_client
+                    s3_client = get_s3_client()
+                    await s3_client.delete_file(s3_uri)
+                    logger.info(f"S3 파일 삭제 완료: {s3_uri}")
+                except Exception as e:
+                    logger.warning(f"S3 파일 삭제 실패 (무시하고 계속): {e}")
+        else:
+            logger.warning(f"문서를 찾을 수 없음: {document_id} (user_uuid={user_uuid})")
     
     async def search_documents(
         self,

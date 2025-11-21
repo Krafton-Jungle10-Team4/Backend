@@ -57,6 +57,7 @@ class WorkflowExecutorV2:
         session_id: str,
         user_message: str,
         bot_id: str,
+        user_uuid: str,
         db: Any,
         vector_service: Optional[VectorService] = None,
         llm_service: Optional[LLMService] = None,
@@ -142,6 +143,7 @@ class WorkflowExecutorV2:
             self.service_container.register("vector_service", vector_service)
             self.service_container.register("llm_service", llm_service)
             self.service_container.register("bot_id", bot_id)
+            self.service_container.register("user_uuid", user_uuid)
             self.service_container.register("session_id", session_id)
             self.service_container.register("db_session", db)
             self.service_container.register("stream_handler", stream_handler)

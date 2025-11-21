@@ -33,7 +33,8 @@ from app.api.v1.endpoints import (
     bot_api_schema,
     marketplace,
     slack_oauth,
-    studio
+    studio,
+    debug
 )
 from app.core.exceptions import BaseAppException
 from app.api.exception_handlers import (
@@ -125,6 +126,9 @@ app.include_router(bot_api_schema.router, tags=["API 스키마 관리"])
 
 # Slack OAuth
 app.include_router(slack_oauth.router, tags=["Slack OAuth"])
+
+# Debug (임시)
+app.include_router(debug.router, prefix="/api/v1/debug", tags=["디버깅"])
 
 
 @app.on_event("startup")

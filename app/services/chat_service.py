@@ -146,7 +146,7 @@ class ChatService:
         """Workflow 기반 응답 생성"""
         from app.services.bot_service import get_bot_service
 
-        logger.info(f"[ChatService] Workflow 실행: bot_id={request.bot_id}")
+        logger.info(f"[ChatService] Workflow 실행: bot_id={request.bot_id}, user_uuid={user_uuid}")
 
         # Bot 조회
         bot_service = get_bot_service()
@@ -179,8 +179,9 @@ class ChatService:
 
         workflow_version_id = workflow_data.get("workflow_version_id")
         logger.info(
-            "[ChatService] Workflow context: bot_id=%s mode=%s version=%s nodes=%d edges=%d",
+            "[ChatService] Workflow context: bot_id=%s user_uuid=%s mode=%s version=%s nodes=%d edges=%d",
             bot.bot_id,
+            user_uuid,
             "V2" if getattr(bot, "use_workflow_v2", False) else "V1",
             workflow_version_id,
             len(workflow_data.get("nodes", [])),
@@ -197,6 +198,7 @@ class ChatService:
             session_id=request.session_id or "default",
             user_message=request.message,
             bot_id=bot.bot_id,
+            user_uuid=user_uuid,
             db=db,
             vector_service=vector_service,
             llm_service=llm_service,
@@ -360,6 +362,15 @@ class ChatService:
     ) -> AsyncGenerator[str, None]:
         """워크플로우 실행 결과를 실시간으로 전송"""
         from app.services.vector_service import VectorService
+        from app.models.user import User
+        from sqlalchemy import select
+
+        # Bot의 user_uuid 가져오기
+        user_result = await db.execute(select(User).where(User.id == bot.user_id))
+        user = user_result.scalar_one_or_none()
+        if not user:
+            raise ValueError(f"User not found for bot: {bot.bot_id}")
+        user_uuid = user.uuid
 
         workflow_data = await self._prepare_workflow_data(bot, request, db)
         vector_service = VectorService()
@@ -370,7 +381,7 @@ class ChatService:
         )
 
         # V2 Workflow Executor 실행 (V2 전용)
-        logger.info(f"[ChatService] V2 Workflow 스트리밍: bot_id={bot.bot_id}")
+        logger.info(f"[ChatService] V2 Workflow 스트리밍: bot_id={bot.bot_id}, user_uuid={user_uuid}")
         from app.core.workflow.executor_v2 import WorkflowExecutorV2
         executor = WorkflowExecutorV2()
 
@@ -392,6 +403,7 @@ class ChatService:
                     session_id=request.session_id or "default",
                     user_message=request.message,
                     bot_id=bot.bot_id,
+                    user_uuid=user_uuid,
                     db=db,
                     vector_service=vector_service,
                     llm_service=llm_service,

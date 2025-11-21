@@ -238,6 +238,22 @@ class WorkflowAPIService:
             실행 결과 딕셔너리
         """
         try:
+            # Bot의 user_uuid 가져오기
+            from app.models.bot import Bot
+            from app.models.user import User
+            from sqlalchemy import select
+            
+            bot_result = await db.execute(select(Bot).where(Bot.bot_id == workflow_version.bot_id))
+            bot = bot_result.scalar_one_or_none()
+            if not bot:
+                raise ValueError(f"Bot not found: {workflow_version.bot_id}")
+            
+            user_result = await db.execute(select(User).where(User.id == bot.user_id))
+            user = user_result.scalar_one_or_none()
+            if not user:
+                raise ValueError(f"User not found for bot: {workflow_version.bot_id}")
+            user_uuid = user.uuid
+            
             # 1. Executor 실행 (Executor가 실행 기록 생성)
             executor = WorkflowExecutorV2()
             
@@ -259,6 +275,7 @@ class WorkflowAPIService:
                 session_id=session_id or f"api_session_{uuid.uuid4().hex[:16]}",
                 user_message=user_message,
                 bot_id=workflow_version.bot_id,
+                user_uuid=user_uuid,
                 db=db,
                 vector_service=vector_service,
                 llm_service=llm_service,

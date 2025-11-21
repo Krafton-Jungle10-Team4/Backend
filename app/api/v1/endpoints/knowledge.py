@@ -65,7 +65,7 @@ async def get_knowledge(
             if any(tag in k.tags for tag in tags)
         ]
 
-    # 문서 목록 조회 (임베딩 완료된 문서만)
+    # 문서 목록 조회 (사용자의 모든 문서)
     if include_documents:
         documents_query = select(Document).where(
             Document.user_uuid == current_user.uuid,
@@ -102,8 +102,8 @@ async def get_knowledge(
                 "name": k.name,
                 "description": k.description,
                 "tags": k.tags,
-                "document_count": len(document_list),  # 실제 문서 개수로 업데이트
-                "documents": document_list,  # 문서 목록 포함
+                "document_count": len(document_list),  # 사용자의 전체 문서 개수
+                "documents": document_list,  # 사용자의 모든 문서
                 "created_at": k.created_at,
                 "updated_at": k.updated_at
             }
@@ -178,7 +178,7 @@ async def get_knowledge_detail(
             detail="지식을 찾을 수 없습니다."
         )
 
-    # 문서 목록 조회 (임베딩 완료된 문서만)
+    # 문서 목록 조회 (사용자의 모든 문서)
     if include_documents:
         documents_query = select(Document).where(
             Document.user_uuid == current_user.uuid,
@@ -213,8 +213,8 @@ async def get_knowledge_detail(
             "name": knowledge.name,
             "description": knowledge.description,
             "tags": knowledge.tags,
-            "document_count": len(document_list),  # 실제 문서 개수로 업데이트
-            "documents": document_list,  # 문서 목록 포함
+            "document_count": len(document_list),  # 사용자의 전체 문서 개수
+            "documents": document_list,  # 사용자의 모든 문서
             "created_at": knowledge.created_at,
             "updated_at": knowledge.updated_at
         }

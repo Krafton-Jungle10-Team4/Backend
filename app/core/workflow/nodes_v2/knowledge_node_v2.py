@@ -95,24 +95,22 @@ class KnowledgeNodeV2(BaseNodeV2):
         if not vector_service:
             raise ValueError("vector_service not found in service container")
 
-        bot_id = context.get_service("bot_id")
+        user_uuid = context.get_service("user_uuid")
         db_session = context.get_service("db_session")
 
         # 설정 파라미터
         top_k = self.config.get("top_k", 5)
-        dataset_id = self.config.get("dataset_id")
         document_ids = self.config.get("document_ids", [])
 
-        logger.info(f"KnowledgeNodeV2: Searching with query='{query[:50]}...', top_k={top_k}")
+        logger.info(f"KnowledgeNodeV2: Searching with query='{query[:50]}...', top_k={top_k}, user_uuid={user_uuid}")
 
-        target_bot_id = dataset_id or bot_id
-        if not target_bot_id:
-            raise ValueError("bot_id를 찾을 수 없습니다")
+        if not user_uuid:
+            raise ValueError("user_uuid를 찾을 수 없습니다")
 
-        # 벡터 검색 수행
+        # 벡터 검색 수행 (user_uuid 기반, 같은 유저의 모든 문서 검색)
         try:
             results = await vector_service.search_similar_chunks(
-                bot_id=target_bot_id,
+                user_uuid=user_uuid,
                 query=query,
                 top_k=top_k,
                 db=db_session,
@@ -163,4 +161,4 @@ class KnowledgeNodeV2(BaseNodeV2):
 
     def get_required_services(self) -> List[str]:
         """필요한 서비스 목록"""
-        return ["vector_service", "bot_id", "db_session"]
+        return ["vector_service", "user_uuid", "db_session"]

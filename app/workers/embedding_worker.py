@@ -228,6 +228,10 @@ class EmbeddingWorker:
                         "created_at": datetime.now().isoformat(),
                         "chunk_count": len(chunks)
                     })
+                    logger.info(
+                        f"[EmbeddingWorker] metadata 생성 완료: document_id={document_id}, "
+                        f"user_uuid={user_uuid}, metadata_keys={list(metadata.keys())}"
+                    )
 
                     # 8. 벡터 스토어에 저장
                     logger.info(f"벡터 스토어에 저장 시작 (bot_id={bot_id})")
