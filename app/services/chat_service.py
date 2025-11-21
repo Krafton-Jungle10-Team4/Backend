@@ -25,7 +25,7 @@ from app.models.chat import (
 )
 from app.config import settings
 from app.utils.validators import sanitize_chat_query
-from app.utils.text_utils import strip_markdown
+from app.utils.text_utils import strip_markdown, strip_markdown_preserve_whitespace
 from app.core.exceptions import (
     ChatServiceError,
     ChatMessageError,
@@ -203,7 +203,7 @@ class ChatService:
             vector_service=vector_service,
             llm_service=llm_service,
             stream_handler=None,
-            text_normalizer=strip_markdown,
+            text_normalizer=strip_markdown,  # 비-스트리밍에서는 strip_markdown 사용 (최종 정리)
             # API 전용 파라미터는 None (일반 챗봇 사용)
             api_key_id=None,
             user_id=None,
@@ -299,7 +299,7 @@ class ChatService:
                 max_tokens=max_tokens,
                 model=resolved_model
             ):
-                normalized_chunk = strip_markdown(chunk)
+                normalized_chunk = strip_markdown_preserve_whitespace(chunk)
                 if not normalized_chunk:
                     continue
                 content_event = ContentEvent(data=normalized_chunk)
@@ -393,7 +393,7 @@ class ChatService:
         stream_handler = WorkflowStreamHandler(
             emit_fn=emit,
             include_sources=request.include_sources,
-            text_normalizer=strip_markdown
+            text_normalizer=strip_markdown_preserve_whitespace
         )
 
         async def run_workflow():
@@ -408,13 +408,12 @@ class ChatService:
                     vector_service=vector_service,
                     llm_service=llm_service,
                     stream_handler=stream_handler,
-                    text_normalizer=strip_markdown
+                    text_normalizer=strip_markdown_preserve_whitespace
                 )
 
-                # 최종 응답을 ContentEvent로 전송
-                if final_response:
-                    logger.info(f"[ChatService] 워크플로우 최종 응답 전송: {len(final_response)}자")
-                    await stream_handler.emit_content_chunk(final_response)
+                # 최종 응답은 이미 LLM 노드에서 스트리밍되었으므로 재전송하지 않음
+                # 중복 출력 방지를 위해 final_response 전송 코드 제거
+                logger.info(f"[ChatService] 워크플로우 스트리밍 완료: {len(final_response) if final_response else 0}자")
 
             except Exception as exc:
                 logger.error(f"[ChatService] 워크플로우 스트리밍 실패: {exc}")
