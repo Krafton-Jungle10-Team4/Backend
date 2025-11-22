@@ -221,6 +221,10 @@ class ImportedWorkflowNode(BaseNodeV2):
             # 출력 값 수집 및 매핑
             output_schema = agent_data.get("output_schema", [])
             output_mappings = agent_data.get("output_mappings", {})
+
+            logger.info(f"Output schema: {output_schema}")
+            logger.info(f"Output mappings: {output_mappings}")
+
             output_values = self._collect_output_values(
                 agent_data=agent_data,
                 child_executor=child_executor,
@@ -228,18 +232,31 @@ class ImportedWorkflowNode(BaseNodeV2):
                 default_value=result,
                 output_mappings=output_mappings
             )
+
+            logger.info(f"Collected output values: {output_values}")
+
             outputs = self._map_output_variables(output_values, output_schema)
+
+            logger.info(f"Mapped outputs: {outputs}")
 
             # 실행 기록
             await self._record_execution(source_version_id, context)
 
             logger.info(f"Imported Workflow 실행 완료: {source_version_id}")
+            logger.info(f"Final return value keys: {list(outputs.keys())}")
 
-            return {
-                "status": "success",
-                "output": result,
-                **outputs
-            }
+            # 하위 호환성을 위해 일반적인 포트 이름도 추가
+            # 프론트엔드에서 text 포트로 연결할 수 있도록
+            if outputs:
+                # output_schema의 첫 번째 포트 값을 text로도 제공
+                first_port_value = next(iter(outputs.values()), None)
+                if first_port_value is not None and "text" not in outputs:
+                    outputs["text"] = first_port_value
+                    logger.info(f"하위 호환성을 위해 'text' 포트 추가")
+
+            # status와 output은 내부 메타데이터이므로 VariablePool에 등록하지 않음
+            # output_schema에 정의된 포트만 반환
+            return outputs
 
         except Exception as e:
             logger.error(f"Imported Workflow 실행 실패: {e}", exc_info=True)
@@ -453,25 +470,36 @@ class ImportedWorkflowNode(BaseNodeV2):
         values: Dict[str, Any] = {}
         pool = getattr(child_executor, "variable_pool", None)
 
+        logger.debug(f"_collect_output_values: output_schema has {len(output_schema)} ports")
+        logger.debug(f"_collect_output_values: output_mappings={output_mappings}")
+        logger.debug(f"_collect_output_values: pool exists={pool is not None}")
+
         for port_def in output_schema:
             port_name = port_def.get("name")
             if not port_name:
+                logger.warning(f"Port definition without name: {port_def}")
                 continue
 
             value = None
 
             selector = output_mappings.get(port_name)
+            logger.debug(f"Port '{port_name}': selector={selector}")
+
             if selector and pool:
                 value = pool.resolve_value_selector(selector)
+                logger.debug(f"Port '{port_name}': resolved value={value is not None} (type={type(value).__name__ if value is not None else 'None'})")
 
             if value is None:
                 value = default_value
+                logger.debug(f"Port '{port_name}': using default_value")
 
             values[port_name] = value
 
         if not values and default_value is not None:
             values["output"] = default_value
+            logger.debug("No schema values, added 'output' with default_value")
 
+        logger.info(f"_collect_output_values result: {list(values.keys())}")
         return values
 
     def _map_output_variables(
@@ -479,17 +507,30 @@ class ImportedWorkflowNode(BaseNodeV2):
         output_values: Dict[str, Any],
         output_schema: List[Dict]
     ) -> Dict[str, Any]:
-        """출력 변수 매핑"""
+        """출력 변수 매핑
+
+        output_schema에 정의된 모든 포트를 반환합니다.
+        값이 없는 포트는 None으로 설정됩니다.
+        """
         external_outputs = {}
 
         for port_def in output_schema:
             port_name = port_def.get("name")
-            if port_name and port_name in output_values:
-                external_outputs[port_name] = output_values[port_name]
+            if not port_name:
+                continue
 
+            # output_schema에 정의된 포트는 반드시 포함
+            value = output_values.get(port_name)
+            external_outputs[port_name] = value
+
+            logger.debug(f"Mapped output port '{port_name}': {value is not None}")
+
+        # 스키마가 없고 output_values에 "output"이 있으면 사용
         if not external_outputs and "output" in output_values:
             external_outputs["output"] = output_values["output"]
+            logger.debug("No schema, using 'output' port as fallback")
 
+        logger.info(f"_map_output_variables result: {list(external_outputs.keys())}")
         return external_outputs
 
     async def _record_execution(
