@@ -255,6 +255,15 @@ class LLMNodeV2(BaseNodeV2):
 
         # LLM 호출
         try:
+            # 기본 시스템 프롬프트: 한국어 응답 강제
+            default_system_prompt = "당신은 유능한 AI 어시스턴트입니다. 사용자에게 친절하고 명확하게 답변해야 합니다. **항상 한국어로 응답하세요.**"
+
+            # 사용자가 제공한 system_prompt가 있으면 결합, 없으면 기본 시스템 프롬프트만 사용
+            final_system_prompt = system_prompt if system_prompt else default_system_prompt
+            if system_prompt and system_prompt != default_system_prompt:
+                # 사용자 시스템 프롬프트 + 한국어 강제
+                final_system_prompt = f"{system_prompt}\n\n**중요: 반드시 한국어로 응답하세요.**"
+
             # stream_handler가 있으면 스트리밍 사용, 없으면 일반 생성 사용
             if stream_handler:
                 result = await llm_service.generate_stream(
@@ -263,7 +272,8 @@ class LLMNodeV2(BaseNodeV2):
                     provider=provider,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    on_chunk=stream_handler.emit_content_chunk
+                    on_chunk=stream_handler.emit_content_chunk,
+                    system_prompt=final_system_prompt
                 )
             else:
                 result = await llm_service.generate(
