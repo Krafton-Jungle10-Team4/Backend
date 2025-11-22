@@ -528,20 +528,109 @@ async def get_models(
                 ),
             ])
         
-        # 기타 모델들 추가 (옵션, 로컬 개발용)
+        # ⭐️ OpenAI 모델 목록 동적으로 가져오기
+        try:
+            from openai import AsyncOpenAI
+            
+            if settings.openai_api_key:
+                openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+                openai_models_response = await openai_client.models.list()
+                
+                # OpenAI 모델 필터링 (gpt, o1 등 채팅 모델만)
+                openai_chat_models = [
+                    model for model in openai_models_response.data
+                    if any(model.id.startswith(prefix) for prefix in ['gpt-', 'o1-', 'o3-'])
+                    and 'instruct' not in model.id.lower()  # instruct 모델 제외
+                ]
+                
+                # 모델 이름 매핑 (더 읽기 쉬운 이름)
+                model_name_mapping = {
+                    'gpt-4o': 'GPT-4o',
+                    'gpt-4o-mini': 'GPT-4o mini',
+                    'gpt-4-turbo': 'GPT-4 Turbo',
+                    'gpt-4': 'GPT-4',
+                    'gpt-3.5-turbo': 'GPT-3.5 Turbo',
+                    'o1-preview': 'O1 Preview',
+                    'o1-mini': 'O1 Mini',
+                    'o3-mini': 'O3 Mini',
+                }
+                
+                for model in openai_chat_models:
+                    model_id = model.id
+                    display_name = model_name_mapping.get(model_id, model_id.replace('gpt-', 'GPT-').replace('o1-', 'O1 ').replace('o3-', 'O3 ').title())
+                    
+                    # 설명 생성
+                    if 'gpt-4o' in model_id:
+                        description = "OpenAI의 고성능 멀티모달 모델"
+                    elif 'gpt-4o-mini' in model_id:
+                        description = "OpenAI의 빠르고 저렴한 멀티모달 모델"
+                    elif 'gpt-4-turbo' in model_id:
+                        description = "OpenAI의 고성능 GPT-4 Turbo 모델"
+                    elif 'gpt-4' in model_id:
+                        description = "OpenAI의 고성능 GPT-4 모델"
+                    elif 'gpt-3.5' in model_id:
+                        description = "OpenAI의 빠르고 저렴한 GPT-3.5 모델"
+                    elif 'o1' in model_id or 'o3' in model_id:
+                        description = "OpenAI의 추론 최적화 모델"
+                    else:
+                        description = f"OpenAI {display_name} 모델"
+                    
+                    models.append(ModelInfo(
+                        id=model_id,
+                        name=display_name,
+                        provider="openai",
+                        description=description
+                    ))
+                
+                logger.info(f"OpenAI API에서 {len(openai_chat_models)}개의 모델을 가져왔습니다.")
+            else:
+                logger.warning("OpenAI API 키가 설정되지 않아 기본 모델 목록을 사용합니다.")
+                raise ValueError("OpenAI API key not configured")
+                
+        except Exception as e:
+            logger.warning(f"OpenAI 모델 목록을 가져오는 중 오류 발생: {e}. 기본 모델 목록을 사용합니다.")
+            # 폴백: 일반적으로 사용 가능한 OpenAI 모델 목록
+            models.extend([
+                ModelInfo(
+                    id="gpt-4o",
+                    name="GPT-4o",
+                    provider="openai",
+                    description="OpenAI의 고성능 멀티모달 모델"
+                ),
+                ModelInfo(
+                    id="gpt-4o-mini",
+                    name="GPT-4o mini",
+                    provider="openai",
+                    description="OpenAI의 빠르고 저렴한 멀티모달 모델"
+                ),
+                ModelInfo(
+                    id="gpt-4-turbo",
+                    name="GPT-4 Turbo",
+                    provider="openai",
+                    description="OpenAI의 고성능 GPT-4 Turbo 모델"
+                ),
+                ModelInfo(
+                    id="gpt-4",
+                    name="GPT-4",
+                    provider="openai",
+                    description="OpenAI의 고성능 GPT-4 모델"
+                ),
+                ModelInfo(
+                    id="gpt-3.5-turbo",
+                    name="GPT-3.5 Turbo",
+                    provider="openai",
+                    description="OpenAI의 빠르고 저렴한 GPT-3.5 모델"
+                ),
+                ModelInfo(
+                    id="gpt-5-chat-latest",
+                    name="GPT-5 Chat",
+                    provider="openai",
+                    description="OpenAI GPT-5 채팅 모델 (로컬 개발용)"
+                ),
+            ])
+        
+        # Anthropic Direct 모델 (로컬 개발용)
         models.extend([
-            ModelInfo(
-                id="gpt-5-chat-latest",
-                name="GPT-5 Chat",
-                provider="openai",
-                description="OpenAI GPT-5 채팅 모델 (로컬 개발용)"
-            ),
-            ModelInfo(
-                id="chatgpt-4o-latest",
-                name="GPT-4o",
-                provider="openai",
-                description="OpenAI의 고성능 멀티모달 모델 (로컬 개발용)"
-            ),
             ModelInfo(
                 id="claude-sonnet-4-5-20250929",
                 name="Claude 4.5 Sonnet",
@@ -554,6 +643,10 @@ async def get_models(
                 provider="anthropic",
                 description="낮은 지연시간의 경량 Claude 모델 (로컬 개발용)"
             ),
+        ])
+        
+        # Google Gemini 모델 (로컬 개발용)
+        models.extend([
             ModelInfo(
                 id="gemini-2.5-flash",
                 name="Gemini 2.5 Flash",
