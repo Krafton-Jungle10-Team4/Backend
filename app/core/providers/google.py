@@ -38,7 +38,7 @@ class GoogleClient(BaseLLMClient):
         """Gemini 비스트리밍 응답 생성"""
         try:
             model_name = kwargs.pop("model", None) or self.default_model
-            contents = self._format_messages(messages)
+            contents, system_instruction = self._format_messages(messages)
             generation_config = {
                 "temperature": temperature,
                 "max_output_tokens": max_tokens
@@ -48,7 +48,8 @@ class GoogleClient(BaseLLMClient):
                 self._sync_generate,
                 model_name,
                 contents,
-                generation_config
+                generation_config,
+                system_instruction
             )
             return text
         except Exception as e:
@@ -67,7 +68,7 @@ class GoogleClient(BaseLLMClient):
     ) -> AsyncGenerator[str, None]:
         """Gemini 스트리밍 응답"""
         model_name = kwargs.pop("model", None) or self.default_model
-        contents = self._format_messages(messages)
+        contents, system_instruction = self._format_messages(messages)
         generation_config = {
             "temperature": temperature,
             "max_output_tokens": max_tokens
@@ -78,7 +79,15 @@ class GoogleClient(BaseLLMClient):
 
         def producer():
             try:
-                model = genai.GenerativeModel(model_name=model_name)
+                # system_instruction이 있으면 모델 생성 시 포함
+                if system_instruction:
+                    model = genai.GenerativeModel(
+                        model_name=model_name,
+                        system_instruction=system_instruction
+                    )
+                else:
+                    model = genai.GenerativeModel(model_name=model_name)
+
                 stream = model.generate_content(
                     contents,
                     generation_config=generation_config,
@@ -111,13 +120,27 @@ class GoogleClient(BaseLLMClient):
             )
 
     @staticmethod
-    def _format_messages(messages: List[Dict[str, str]]) -> List[Dict[str, Any]]:
-        """OpenAI 스타일 메시지를 Gemini 포맷으로 변환"""
+    def _format_messages(messages: List[Dict[str, str]]) -> tuple[List[Dict[str, Any]], str | None]:
+        """
+        OpenAI 스타일 메시지를 Gemini 포맷으로 변환
+
+        Returns:
+            tuple: (formatted_messages, system_instruction)
+                - formatted_messages: Gemini 포맷의 메시지 리스트
+                - system_instruction: 시스템 프롬프트 (있으면 별도 처리)
+        """
         formatted = []
+        system_instruction = None
+
         for message in messages:
             role = message.get("role", "user")
             content = message.get("content")
             if not content:
+                continue
+
+            # system 역할은 Gemini의 system_instruction으로 처리
+            if role == "system":
+                system_instruction = content
                 continue
 
             if role == "assistant":
@@ -134,15 +157,24 @@ class GoogleClient(BaseLLMClient):
 
         if not formatted:
             formatted.append({"role": "user", "parts": [""]})
-        return formatted
+        return formatted, system_instruction
 
     def _sync_generate(
         self,
         model_name: str,
         contents: List[Dict[str, Any]],
-        generation_config: Dict[str, Any]
+        generation_config: Dict[str, Any],
+        system_instruction: str | None = None
     ) -> str:
-        model = genai.GenerativeModel(model_name=model_name)
+        # system_instruction이 있으면 모델 생성 시 포함
+        if system_instruction:
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=system_instruction
+            )
+        else:
+            model = genai.GenerativeModel(model_name=model_name)
+
         response = model.generate_content(
             contents,
             generation_config=generation_config

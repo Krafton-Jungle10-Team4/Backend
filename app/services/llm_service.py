@@ -64,13 +64,19 @@ class LLMService:
         provider: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 4000,
-        on_chunk: Optional[Callable[[str], Awaitable[Optional[str]]]] = None
+        on_chunk: Optional[Callable[[str], Awaitable[Optional[str]]]] = None,
+        system_prompt: Optional[str] = None
     ) -> str:
         """스트리밍 응답 생성"""
         provider_key = self._resolve_provider(provider, model)
         client = self._get_client(provider_key)
 
-        messages = [{"role": "user", "content": prompt}]
+        # 시스템 프롬프트 추가 (제공된 경우)
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
         buffer: List[str] = []
 
         async for chunk in client.generate_stream(
