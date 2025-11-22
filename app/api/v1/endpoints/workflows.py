@@ -464,6 +464,7 @@ async def get_models(
     """
     LLM 모델 목록 조회
     모델 카탈로그에서 동적으로 사용 가능한 모델을 가져옵니다.
+    ⚠️ 실제로 사용 가능한 provider의 모델만 반환합니다.
 
     Returns:
         ModelsResponse: 모델 목록
@@ -471,182 +472,247 @@ async def get_models(
     try:
         models = []
         
-        # ⭐️ Bedrock 모델 카탈로그에서 동적으로 가져오기
-        try:
-            import boto3
-            from app.config import settings
-            
-            bedrock_client = boto3.client(
-                'bedrock',
-                region_name=settings.bedrock_region or 'ap-northeast-2'
-            )
-            
-            # ⚠️ ON_DEMAND vs INFERENCE_PROFILE 설명:
-            # - ON_DEMAND: 사용량 기반 과금, 프로비저닝 불필요, 즉시 사용 가능 (대부분의 모델)
-            #   → 사용한 만큼만 비용 지불, AWS 크레딧으로 사용 가능
-            # - INFERENCE_PROFILE: 프로비저닝된 용량(Provisioned Throughput) 필요, 약정 기반
-            #   → 사전에 용량을 예약해야 함 (월 약정), AWS 크레딧으로도 사용 가능하지만
-            #   → 별도로 프로비저닝된 용량을 구매/설정해야 함
-            #   → Claude 4.5, 3.7 등 최신 모델은 INFERENCE_PROFILE만 지원
-            #   → 프로비저닝 없이는 사용 불가능 (ON_DEMAND 옵션 없음)
-            # ON_DEMAND 필터를 제거하여 모든 사용 가능한 모델 조회
-            response = bedrock_client.list_foundation_models(
-                byProvider='Anthropic'
-            )
-            
-            for model_summary in response.get('modelSummaries', []):
-                model_id = model_summary.get('modelId', '')
-                model_name = model_summary.get('modelName', '')
-                inference_types = model_summary.get('inferenceTypesSupported', [])
-                
-                # Claude 모델만 필터링 (Claude Code 제외)
-                if 'claude' in model_id.lower() and 'code' not in model_id.lower():
-                    # 모델 이름에 버전 정보 추가
-                    display_name = f"{model_name} (Bedrock)"
-                    
-                    # INFERENCE_PROFILE 모델인지 확인
-                    is_inference_profile_only = (
-                        'INFERENCE_PROFILE' in inference_types and 
-                        'ON_DEMAND' not in inference_types
-                    )
-                    
-                    # 설명 생성
-                    if 'haiku' in model_id.lower():
-                        base_description = "AWS Bedrock Claude Haiku - 빠르고 저렴한 모델"
-                    elif 'sonnet' in model_id.lower():
-                        base_description = "AWS Bedrock Claude Sonnet - 고성능 모델 (비쌈)"
-                    else:
-                        base_description = f"AWS Bedrock {model_name}"
-                    
-                    # INFERENCE_PROFILE만 지원하는 모델인 경우 경고 추가
-                    if is_inference_profile_only:
-                        description = f"{base_description} ⚠️ 프로비저닝된 용량 필요"
-                    else:
-                        description = base_description
-                    
-                    models.append(ModelInfo(
-                        id=model_id,
-                        name=display_name,
-                        provider="bedrock",
-                        description=description
-                    ))
-            
-            logger.info(f"모델 카탈로그에서 {len(models)}개의 Bedrock Claude 모델을 가져왔습니다.")
-        except Exception as e:
-            logger.warning(f"모델 카탈로그에서 모델을 가져오는 중 오류 발생: {e}. 기본 모델 목록을 사용합니다.")
-            # 폴백: 기본 모델 목록
-            models.extend([
-                ModelInfo(
-                    id="anthropic.claude-3-haiku-20240307-v1:0",
-                    name="Claude Haiku 3 (Bedrock)",
-                    provider="bedrock",
-                    description="AWS Bedrock Claude Haiku 3 - 빠르고 저렴한 모델 (기본값)"
-                ),
-                ModelInfo(
-                    id="anthropic.claude-3-5-sonnet-20240620-v1:0",
-                    name="Claude Sonnet 3.5 (Bedrock)",
-                    provider="bedrock",
-                    description="AWS Bedrock Claude Sonnet 3.5 - 고성능 모델 (비쌈)"
-                ),
-            ])
+        # 실제로 사용 가능한 provider 확인 (LLMService 사용)
+        from app.services.llm_service import LLMService
+        llm_service = LLMService()
         
-        # ⭐️ OpenAI 모델 추가 (Bedrock이 아닌 직접 OpenAI API 사용)
+        # Bedrock 사용 가능 여부 확인
+        bedrock_available = False
+        try:
+            bedrock_config = llm_service.config.get_provider_config("bedrock")
+            bedrock_available = bedrock_config is not None and bedrock_config.enabled
+        except Exception:
+            pass
+        
+        # ⭐️ Bedrock 모델 카탈로그에서 동적으로 가져오기 (사용 가능한 경우만)
+        if bedrock_available:
+            try:
+                import boto3
+                from app.config import settings
+                
+                bedrock_client = boto3.client(
+                    'bedrock',
+                    region_name=settings.bedrock_region or 'ap-northeast-2'
+                )
+                
+                # ⚠️ ON_DEMAND vs INFERENCE_PROFILE 설명:
+                # - ON_DEMAND: 사용량 기반 과금, 프로비저닝 불필요, 즉시 사용 가능 (대부분의 모델)
+                #   → 사용한 만큼만 비용 지불, AWS 크레딧으로 사용 가능
+                # - INFERENCE_PROFILE: 프로비저닝된 용량(Provisioned Throughput) 필요, 약정 기반
+                #   → 사전에 용량을 예약해야 함 (월 약정), AWS 크레딧으로도 사용 가능하지만
+                #   → 별도로 프로비저닝된 용량을 구매/설정해야 함
+                #   → Claude 4.5, 3.7 등 최신 모델은 INFERENCE_PROFILE만 지원
+                #   → 프로비저닝 없이는 사용 불가능 (ON_DEMAND 옵션 없음)
+                # ON_DEMAND 필터를 제거하여 모든 사용 가능한 모델 조회
+                response = bedrock_client.list_foundation_models(
+                    byProvider='Anthropic'
+                )
+                
+                bedrock_models = []
+                # 프로비저닝된 용량 확인
+                provisioned_units = settings.bedrock_provisioned_model_units or 0
+                
+                for model_summary in response.get('modelSummaries', []):
+                    model_id = model_summary.get('modelId', '')
+                    model_name = model_summary.get('modelName', '')
+                    inference_types = model_summary.get('inferenceTypesSupported', [])
+                    
+                    # Claude 모델만 필터링 (Claude Code 제외)
+                    if 'claude' in model_id.lower() and 'code' not in model_id.lower():
+                        # 프로비저닝이 없으면 ON_DEMAND 모델만 표시
+                        if provisioned_units == 0:
+                            # ON_DEMAND를 지원하지 않는 모델은 제외
+                            if 'ON_DEMAND' not in inference_types:
+                                continue
+                        
+                        # 모델 이름에 버전 정보 추가
+                        display_name = f"{model_name} (Bedrock)"
+                        
+                        # 설명 생성
+                        if 'haiku' in model_id.lower():
+                            base_description = "AWS Bedrock Claude Haiku - 빠르고 저렴한 모델"
+                        elif 'sonnet' in model_id.lower():
+                            base_description = "AWS Bedrock Claude Sonnet - 고성능 모델 (비쌈)"
+                        else:
+                            base_description = f"AWS Bedrock {model_name}"
+                        
+                        description = base_description
+                        
+                        bedrock_models.append(ModelInfo(
+                            id=model_id,
+                            name=display_name,
+                            provider="bedrock",
+                            description=description
+                        ))
+                
+                logger.info(f"모델 카탈로그에서 {len(bedrock_models)}개의 Bedrock Claude 모델을 가져왔습니다.")
+                models.extend(bedrock_models)
+            except Exception as e:
+                logger.warning(f"모델 카탈로그에서 모델을 가져오는 중 오류 발생: {e}. 기본 모델 목록을 사용합니다.")
+                # 폴백: 기본 모델 목록
+                models.extend([
+                    ModelInfo(
+                        id="anthropic.claude-3-haiku-20240307-v1:0",
+                        name="Claude Haiku 3 (Bedrock)",
+                        provider="bedrock",
+                        description="AWS Bedrock Claude Haiku 3 - 빠르고 저렴한 모델 (기본값)"
+                    ),
+                    ModelInfo(
+                        id="anthropic.claude-3-5-sonnet-20240620-v1:0",
+                        name="Claude Sonnet 3.5 (Bedrock)",
+                        provider="bedrock",
+                        description="AWS Bedrock Claude Sonnet 3.5 - 고성능 모델 (비쌈)"
+                    ),
+                ])
+        else:
+            logger.info("Bedrock provider가 사용 불가능하여 Bedrock 모델을 추가하지 않습니다.")
+        
+        # ⭐️ OpenAI 모델 추가 (사용 가능한 경우만)
         # ⚠️ 주의: Bedrock에는 OpenAI GPT 모델이 없으므로 OpenAI API를 직접 사용
         # 사용자 요청: "OPENAI도 Bedrock에서 5.1,5,4,3버전 정도는 사용하고 싶은데"
         # → Bedrock에는 없지만 OpenAI API로 대표 모델만 제공
+        openai_available = False
         try:
-            from openai import AsyncOpenAI
-            
-            if settings.openai_api_key:
-                openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-                openai_models_response = await openai_client.models.list()
+            openai_config = llm_service.config.get_provider_config("openai")
+            openai_available = openai_config is not None and openai_config.enabled
+        except Exception:
+            pass
+        
+        if openai_available:
+            try:
+                from openai import AsyncOpenAI
                 
-                # 모든 OpenAI 모델 수집
-                all_models = [
-                    model for model in openai_models_response.data
-                    if any(model.id.startswith(prefix) for prefix in ['gpt-', 'o1-', 'o3-'])
-                    and 'instruct' not in model.id.lower()
-                ]
-                
-                # 대표 모델 선택 (GPT-5.1, GPT-5, GPT-4, GPT-3.5 각각 하나씩)
-                selected_models = []
-                
-                # GPT-5.1 (최신 버전 우선)
-                gpt_51_models = [m for m in all_models if 'gpt-5.1' in m.id.lower() or 'gpt-5-1' in m.id.lower()]
-                if gpt_51_models:
-                    selected_models.append(gpt_51_models[0])
-                
-                # GPT-5 (5.1이 없으면 5 선택)
-                if not gpt_51_models:
-                    gpt_5_models = [m for m in all_models if 'gpt-5' in m.id.lower() and 'gpt-5.1' not in m.id.lower() and 'gpt-5-1' not in m.id.lower()]
-                    if gpt_5_models:
-                        selected_models.append(gpt_5_models[0])
-                
-                # GPT-4 (gpt-4o 우선, 없으면 gpt-4-turbo, 없으면 gpt-4)
-                gpt_4o_models = [m for m in all_models if 'gpt-4o' in m.id.lower() and 'mini' not in m.id.lower()]
-                if gpt_4o_models:
-                    selected_models.append(gpt_4o_models[0])
+                if settings.openai_api_key:
+                    openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+                    openai_models_response = await openai_client.models.list()
+                    
+                    # 모든 OpenAI 모델 수집
+                    # ✅ codex, o1, o3 모델도 포함 (v1/responses 엔드포인트 지원)
+                    # ✅ GPT-5.0도 포함
+                    all_models = [
+                        model for model in openai_models_response.data
+                        if any(model.id.startswith(prefix) for prefix in ['gpt-', 'o1-', 'o3-'])
+                        and 'instruct' not in model.id.lower()
+                    ]
+                    
+                    # 대표 모델 선택 (GPT-5.1, GPT-5, GPT-4, GPT-3.5 각각 하나씩)
+                    selected_models = []
+                    
+                    # GPT-5.1 (최신 버전 우선)
+                    gpt_51_models = [
+                        m for m in all_models 
+                        if 'gpt-5.1' in m.id.lower() or 'gpt-5-1' in m.id.lower()
+                    ]
+                    if gpt_51_models:
+                        selected_models.append(gpt_51_models[0])
+                    
+                    # GPT-5.0 (5.1이 없으면 5.0 선택)
+                    if not gpt_51_models:
+                        gpt_50_models = [
+                            m for m in all_models 
+                            if ('gpt-5.0' in m.id.lower() or 'gpt-5-0' in m.id.lower())
+                            and 'gpt-5.1' not in m.id.lower() 
+                            and 'gpt-5-1' not in m.id.lower()
+                        ]
+                        if gpt_50_models:
+                            selected_models.append(gpt_50_models[0])
+                    
+                    # GPT-5 (5.1, 5.0이 없으면 일반 5 선택)
+                    if not gpt_51_models and not gpt_50_models:
+                        gpt_5_models = [
+                            m for m in all_models 
+                            if 'gpt-5' in m.id.lower() 
+                            and 'gpt-5.1' not in m.id.lower() 
+                            and 'gpt-5-1' not in m.id.lower()
+                            and 'gpt-5.0' not in m.id.lower()
+                            and 'gpt-5-0' not in m.id.lower()
+                        ]
+                        if gpt_5_models:
+                            selected_models.append(gpt_5_models[0])
+                    
+                    # GPT-4 (gpt-4o 우선, 없으면 gpt-4-turbo, 없으면 gpt-4)
+                    gpt_4o_models = [m for m in all_models if 'gpt-4o' in m.id.lower() and 'mini' not in m.id.lower()]
+                    if gpt_4o_models:
+                        selected_models.append(gpt_4o_models[0])
+                    else:
+                        gpt_4_turbo_models = [m for m in all_models if 'gpt-4-turbo' in m.id.lower()]
+                        if gpt_4_turbo_models:
+                            selected_models.append(gpt_4_turbo_models[0])
+                        else:
+                            gpt_4_models = [m for m in all_models if m.id.startswith('gpt-4') and 'turbo' not in m.id.lower() and 'o' not in m.id.lower()]
+                            if gpt_4_models:
+                                selected_models.append(gpt_4_models[0])
+                    
+                    # GPT-3.5 (gpt-3.5-turbo 우선)
+                    gpt_35_models = [m for m in all_models if 'gpt-3.5-turbo' in m.id.lower()]
+                    if gpt_35_models:
+                        selected_models.append(gpt_35_models[0])
+                    
+                    # 선택된 모델 추가
+                    model_name_mapping = {
+                        'gpt-4o': 'GPT-4o',
+                        'gpt-4-turbo': 'GPT-4 Turbo',
+                        'gpt-4': 'GPT-4',
+                        'gpt-3.5-turbo': 'GPT-3.5 Turbo',
+                    }
+                    
+                    for model in selected_models:
+                        model_id = model.id
+                        # 모델 이름 매핑 또는 자동 생성
+                        if 'gpt-5.1' in model_id.lower() or 'gpt-5-1' in model_id.lower():
+                            display_name = 'GPT-5.1'
+                        elif 'gpt-5.0' in model_id.lower() or 'gpt-5-0' in model_id.lower():
+                            display_name = 'GPT-5.0'
+                        elif 'gpt-5' in model_id.lower():
+                            display_name = 'GPT-5'
+                        elif model_id.startswith('o1-'):
+                            display_name = 'O1'
+                        elif model_id.startswith('o3-'):
+                            display_name = 'O3'
+                        elif 'codex' in model_id.lower():
+                            display_name = 'Codex'
+                        else:
+                            display_name = model_name_mapping.get(model_id, model_id.replace('gpt-', 'GPT-').title())
+                        
+                        # 설명 생성
+                        if 'gpt-5.1' in model_id.lower() or 'gpt-5-1' in model_id.lower():
+                            description = "OpenAI의 최신 GPT-5.1 모델"
+                        elif 'gpt-5.0' in model_id.lower() or 'gpt-5-0' in model_id.lower():
+                            description = "OpenAI의 GPT-5.0 모델"
+                        elif 'gpt-5' in model_id.lower():
+                            description = "OpenAI의 GPT-5 모델"
+                        elif model_id.startswith('o1-'):
+                            description = "OpenAI의 O1 추론 모델 (v1/responses 엔드포인트 사용)"
+                        elif model_id.startswith('o3-'):
+                            description = "OpenAI의 O3 추론 모델 (v1/responses 엔드포인트 사용)"
+                        elif 'codex' in model_id.lower():
+                            description = "OpenAI의 Codex 모델 (v1/responses 엔드포인트 사용)"
+                        elif 'gpt-4o' in model_id.lower():
+                            description = "OpenAI의 고성능 멀티모달 GPT-4o 모델"
+                        elif 'gpt-4-turbo' in model_id.lower():
+                            description = "OpenAI의 고성능 GPT-4 Turbo 모델"
+                        elif 'gpt-4' in model_id.lower():
+                            description = "OpenAI의 고성능 GPT-4 모델"
+                        elif 'gpt-3.5' in model_id.lower():
+                            description = "OpenAI의 빠르고 저렴한 GPT-3.5 Turbo 모델"
+                        else:
+                            description = f"OpenAI {display_name} 모델"
+                        
+                        models.append(ModelInfo(
+                            id=model_id,
+                            name=display_name,
+                            provider="openai",
+                            description=description
+                        ))
+                    
+                    logger.info(f"OpenAI API에서 {len(selected_models)}개의 대표 모델을 선택했습니다.")
                 else:
-                    gpt_4_turbo_models = [m for m in all_models if 'gpt-4-turbo' in m.id.lower()]
-                    if gpt_4_turbo_models:
-                        selected_models.append(gpt_4_turbo_models[0])
-                    else:
-                        gpt_4_models = [m for m in all_models if m.id.startswith('gpt-4') and 'turbo' not in m.id.lower() and 'o' not in m.id.lower()]
-                        if gpt_4_models:
-                            selected_models.append(gpt_4_models[0])
-                
-                # GPT-3.5 (gpt-3.5-turbo 우선)
-                gpt_35_models = [m for m in all_models if 'gpt-3.5-turbo' in m.id.lower()]
-                if gpt_35_models:
-                    selected_models.append(gpt_35_models[0])
-                
-                # 선택된 모델 추가
-                model_name_mapping = {
-                    'gpt-4o': 'GPT-4o',
-                    'gpt-4-turbo': 'GPT-4 Turbo',
-                    'gpt-4': 'GPT-4',
-                    'gpt-3.5-turbo': 'GPT-3.5 Turbo',
-                }
-                
-                for model in selected_models:
-                    model_id = model.id
-                    # 모델 이름 매핑 또는 자동 생성
-                    if 'gpt-5.1' in model_id.lower() or 'gpt-5-1' in model_id.lower():
-                        display_name = 'GPT-5.1'
-                    elif 'gpt-5' in model_id.lower():
-                        display_name = 'GPT-5'
-                    else:
-                        display_name = model_name_mapping.get(model_id, model_id.replace('gpt-', 'GPT-').title())
+                    logger.warning("OpenAI API 키가 설정되지 않아 OpenAI 모델을 추가하지 않습니다.")
                     
-                    # 설명 생성
-                    if 'gpt-5.1' in model_id.lower() or 'gpt-5-1' in model_id.lower():
-                        description = "OpenAI의 최신 GPT-5.1 모델"
-                    elif 'gpt-5' in model_id.lower():
-                        description = "OpenAI의 GPT-5 모델"
-                    elif 'gpt-4o' in model_id.lower():
-                        description = "OpenAI의 고성능 멀티모달 GPT-4o 모델"
-                    elif 'gpt-4-turbo' in model_id.lower():
-                        description = "OpenAI의 고성능 GPT-4 Turbo 모델"
-                    elif 'gpt-4' in model_id.lower():
-                        description = "OpenAI의 고성능 GPT-4 모델"
-                    elif 'gpt-3.5' in model_id.lower():
-                        description = "OpenAI의 빠르고 저렴한 GPT-3.5 Turbo 모델"
-                    else:
-                        description = f"OpenAI {display_name} 모델"
-                    
-                    models.append(ModelInfo(
-                        id=model_id,
-                        name=display_name,
-                        provider="openai",
-                        description=description
-                    ))
-                
-                logger.info(f"OpenAI API에서 {len(selected_models)}개의 대표 모델을 선택했습니다.")
-            else:
-                logger.warning("OpenAI API 키가 설정되지 않아 OpenAI 모델을 추가하지 않습니다.")
-                
-        except Exception as e:
-            logger.warning(f"OpenAI 모델 목록을 가져오는 중 오류 발생: {e}. OpenAI 모델을 추가하지 않습니다.")
+            except Exception as e:
+                logger.warning(f"OpenAI 모델 목록을 가져오는 중 오류 발생: {e}. OpenAI 모델을 추가하지 않습니다.")
+        else:
+            logger.info("OpenAI provider가 사용 불가능하여 OpenAI 모델을 추가하지 않습니다.")
 
         return ModelsResponse(models=models)
 

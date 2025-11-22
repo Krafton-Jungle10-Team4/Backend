@@ -283,7 +283,10 @@ class LLMNodeV2(BaseNodeV2):
             logger.error(f"Prompt rendering failed: {str(e)}")
             raise ValueError(f"Failed to render prompt template: {str(e)}")
 
-        # LLM 호출
+        # LLM 호출 (폴백 로직 포함)
+        original_model = model
+        fallback_attempted = False
+        
         try:
             # 기본 시스템 프롬프트: 한국어 응답 강제 + 검색 결과 관련성 검증
             default_system_prompt = (
@@ -386,8 +389,116 @@ class LLMNodeV2(BaseNodeV2):
             }
 
         except Exception as e:
-            logger.error(f"LLM generation failed: {str(e)}")
-            raise
+            # ON_DEMAND를 지원하지 않는 모델 에러인지 확인
+            from app.core.exceptions import LLMAPIError
+            from app.config import settings
+            
+            should_fallback = False
+            fallback_model = None
+            
+            if isinstance(e, LLMAPIError):
+                error_details = getattr(e, 'details', {}) or {}
+                if error_details.get('requires_provisioned_throughput', False):
+                    # ON_DEMAND를 지원하지 않는 모델 → 기본 모델로 폴백
+                    should_fallback = True
+                    if provider == "bedrock":
+                        fallback_model = settings.bedrock_model or "anthropic.claude-3-haiku-20240307-v1:0"
+                        logger.warning(
+                            f"모델 '{original_model}'이 ON_DEMAND를 지원하지 않습니다. "
+                            f"기본 모델 '{fallback_model}'로 자동 폴백합니다."
+                        )
+                elif error_details.get('requires_responses_endpoint', False):
+                    # chat/completions를 지원하지 않는 모델 → 기본 모델로 폴백
+                    should_fallback = True
+                    if provider == "openai":
+                        fallback_model = settings.openai_model or "gpt-3.5-turbo"
+                        logger.warning(
+                            f"모델 '{original_model}'이 chat/completions를 지원하지 않습니다. "
+                            f"기본 모델 '{fallback_model}'로 자동 폴백합니다."
+                        )
+            
+            # 폴백 시도
+            if should_fallback and fallback_model and not fallback_attempted:
+                fallback_attempted = True
+                model = fallback_model
+                try:
+                    logger.info(f"폴백 모델 '{fallback_model}'로 재시도 중...")
+                    if stream_handler:
+                        result = await llm_service.generate_stream(
+                            prompt=prompt,
+                            model=fallback_model,
+                            provider=provider,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            on_chunk=stream_handler.emit_content_chunk,
+                            system_prompt=final_system_prompt
+                        )
+                    else:
+                        result = await llm_service.generate(
+                            prompt=prompt,
+                            model=fallback_model,
+                            provider=provider,
+                            temperature=temperature,
+                            max_tokens=max_tokens
+                        )
+                    
+                    # 폴백 성공 - 결과 처리
+                    response_text: str
+                    tokens_used: int = 0
+                    prompt_tokens: int = 0
+                    completion_tokens: int = 0
+
+                    if isinstance(result, dict):
+                        response_text = (
+                            result.get("response")
+                            or result.get("text")
+                            or ""
+                        )
+                        tokens_used = result.get("tokens", 0)
+                    else:
+                        response_text = str(result)
+
+                    # Provider client에서 토큰 정보 가져오기
+                    try:
+                        provider_key = llm_service._resolve_provider(provider, fallback_model)
+                        client = llm_service._get_client(provider_key)
+                        
+                        if hasattr(client, 'last_usage') and client.last_usage:
+                            usage = client.last_usage
+                            prompt_tokens = usage.get("input_tokens", 0)
+                            completion_tokens = usage.get("output_tokens", 0)
+                            tokens_used = usage.get("total_tokens", prompt_tokens + completion_tokens)
+                            logger.info(f"[LLMNodeV2] Token usage: prompt={prompt_tokens}, completion={completion_tokens}, total={tokens_used}")
+                    except Exception as token_error:
+                        logger.warning(f"[LLMNodeV2] 토큰 사용량 조회 실패: {token_error}")
+
+                    logger.info(f"LLMNodeV2: Generated response with fallback model ({tokens_used} tokens)")
+                    
+                    return {
+                        "response": response_text,
+                        "tokens": tokens_used,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "model": fallback_model  # 폴백 모델 ID 반환
+                    }
+                except Exception as fallback_error:
+                    logger.error(f"폴백 모델 '{fallback_model}' 호출도 실패: {str(fallback_error)}")
+                    raise LLMAPIError(
+                        message=(
+                            f"원본 모델 '{original_model}'과 폴백 모델 '{fallback_model}' 모두 호출에 실패했습니다. "
+                            f"원본 에러: {str(e)}"
+                        ),
+                        details={
+                            "original_model": original_model,
+                            "fallback_model": fallback_model,
+                            "original_error": str(e),
+                            "fallback_error": str(fallback_error)
+                        }
+                    )
+            else:
+                # 폴백 불가능한 경우 원래 에러 그대로 전파
+                logger.error(f"LLM generation failed: {str(e)}")
+                raise
 
     def _render_prompt(
         self,

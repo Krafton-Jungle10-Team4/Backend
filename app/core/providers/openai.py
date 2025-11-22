@@ -3,6 +3,7 @@ OpenAI API 클라이언트 구현
 """
 from typing import List, Dict, AsyncGenerator, Any, Optional
 import logging
+import httpx
 from openai import AsyncOpenAI
 from openai import APIError, RateLimitError, APITimeoutError
 
@@ -20,6 +21,16 @@ logger = logging.getLogger(__name__)
 @register_provider("openai")
 class OpenAIClient(BaseLLMClient):
     """OpenAI API 클라이언트"""
+
+    @staticmethod
+    def _requires_responses_endpoint(model_name: str) -> bool:
+        """모델이 v1/responses 엔드포인트를 사용해야 하는지 확인"""
+        normalized = (model_name or "").lower()
+        return (
+            normalized.startswith("o1-") or
+            normalized.startswith("o3-") or
+            "codex" in normalized
+        )
 
     def __init__(self, config: OpenAIConfig):
         self.config = config
@@ -52,6 +63,19 @@ class OpenAIClient(BaseLLMClient):
 
             # 런타임 모델 오버라이드 지원
             model_name = kwargs.pop("model", None) or self.model
+            
+            # v1/responses 엔드포인트가 필요한 모델인지 확인
+            if self._requires_responses_endpoint(model_name):
+                # v1/responses 엔드포인트 사용 (o1, o3, codex 모델)
+                return await self._generate_with_responses_endpoint(
+                    model_name=model_name,
+                    messages=final_messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    **kwargs
+                )
+            
+            # 일반 chat/completions 엔드포인트 사용
             request_kwargs = self._build_request_kwargs(
                 model_name=model_name,
                 temperature=temperature,
@@ -90,6 +114,25 @@ class OpenAIClient(BaseLLMClient):
                 details={"model": self.model, "error": str(e)}
             )
         except APIError as e:
+            error_str = str(e)
+            # codex, o1, o3 모델은 v1/chat/completions를 지원하지 않음
+            if "only supported in v1/responses" in error_str.lower() or "not in v1/chat/completions" in error_str.lower():
+                logger.error(
+                    f"OpenAI 모델이 chat/completions를 지원하지 않음: {model_name}. "
+                    f"이 모델은 v1/responses 엔드포인트만 지원합니다."
+                )
+                raise LLMAPIError(
+                    message=(
+                        f"선택한 모델 '{model_name}'은(는) chat/completions 엔드포인트를 지원하지 않습니다. "
+                        f"이 모델은 v1/responses 엔드포인트만 지원합니다. "
+                        f"chat/completions를 지원하는 모델(예: GPT-4, GPT-3.5)을 선택해주세요."
+                    ),
+                    details={
+                        "model": model_name,
+                        "error": error_str,
+                        "requires_responses_endpoint": True
+                    }
+                )
             logger.error(f"OpenAI API 오류: {e}")
             raise LLMAPIError(
                 message=f"OpenAI API 호출 중 오류가 발생했습니다: {str(e)}",
@@ -123,6 +166,23 @@ class OpenAIClient(BaseLLMClient):
 
             # 런타임 모델 오버라이드 지원
             model_name = kwargs.pop("model", None) or self.model
+
+            # v1/responses 엔드포인트가 필요한 모델인지 확인
+            if self._requires_responses_endpoint(model_name):
+                # v1/responses 엔드포인트는 스트리밍을 지원하지 않으므로 일반 생성으로 폴백
+                logger.warning(
+                    f"Model {model_name} does not support streaming with responses endpoint; "
+                    "falling back to non-streamed response"
+                )
+                text = await self.generate(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    model=model_name,
+                    **kwargs
+                )
+                yield text
+                return
 
             if not self._supports_stream(model_name):
                 logger.warning(
@@ -173,6 +233,26 @@ class OpenAIClient(BaseLLMClient):
                 }
             )
         except APIError as e:
+            error_str = str(e)
+            # codex, o1, o3 모델은 v1/chat/completions를 지원하지 않음
+            if "only supported in v1/responses" in error_str.lower() or "not in v1/chat/completions" in error_str.lower():
+                logger.error(
+                    f"OpenAI 모델이 chat/completions를 지원하지 않음: {model_name}. "
+                    f"이 모델은 v1/responses 엔드포인트만 지원합니다."
+                )
+                raise LLMAPIError(
+                    message=(
+                        f"선택한 모델 '{model_name}'은(는) chat/completions 엔드포인트를 지원하지 않습니다. "
+                        f"이 모델은 v1/responses 엔드포인트만 지원합니다. "
+                        f"chat/completions를 지원하는 모델(예: GPT-4, GPT-3.5)을 선택해주세요."
+                    ),
+                    details={
+                        "model": model_name,
+                        "stream": True,
+                        "error": error_str,
+                        "requires_responses_endpoint": True
+                    }
+                )
             logger.error(f"OpenAI 스트리밍 오류: {e}")
             raise LLMAPIError(
                 message=f"OpenAI 스트리밍 중 오류가 발생했습니다: {str(e)}",
@@ -272,6 +352,143 @@ class OpenAIClient(BaseLLMClient):
             request_kwargs.setdefault("stream_options", {"include_usage": True})
 
         return request_kwargs
+
+    async def _generate_with_responses_endpoint(
+        self,
+        model_name: str,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 4000,
+        **kwargs
+    ) -> str:
+        """
+        v1/responses 엔드포인트를 사용한 생성 (o1, o3, codex 모델)
+        
+        ⚠️ 주의: 이 메서드는 실제 OpenAI API의 v1/responses 엔드포인트 형식에 맞춰 구현되었으나,
+        실제 API 문서가 공개되지 않아 추정에 기반한 구현입니다.
+        실제 사용 시 응답 형식이 다를 수 있으므로 로그를 확인하고 필요시 수정이 필요합니다.
+        """
+        try:
+            # messages를 단일 프롬프트로 변환
+            # o1, o3 모델은 일반적으로 단일 프롬프트를 받습니다
+            prompt_parts = []
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "system":
+                    prompt_parts.append(f"System: {content}")
+                elif role == "user":
+                    prompt_parts.append(f"User: {content}")
+                elif role == "assistant":
+                    prompt_parts.append(f"Assistant: {content}")
+            
+            prompt = "\n\n".join(prompt_parts)
+            
+            # v1/responses 엔드포인트 호출
+            # ⚠️ 실제 API 형식이 다를 수 있으므로, 에러 발생 시 자동 폴백 처리됨
+            api_key = self.config.api_key
+            base_url = str(self.client.base_url) if self.client.base_url else "https://api.openai.com/v1"
+            # base_url이 이미 /v1을 포함하는지 확인
+            if not base_url.endswith("/v1"):
+                base_url = base_url.rstrip("/") + "/v1"
+            
+            logger.info(f"[OpenAI] v1/responses 엔드포인트 호출 시도: model={model_name}")
+            
+            async with httpx.AsyncClient(timeout=60.0) as http_client:
+                # 실제 API 형식은 확인 필요 - 여러 가능한 형식 시도
+                request_body = {
+                    "model": model_name,
+                    "prompt": prompt,
+                    "max_tokens": max_tokens,
+                }
+                
+                # temperature는 일부 모델에서 지원하지 않을 수 있음
+                if temperature != 1.0:
+                    request_body["temperature"] = temperature
+                
+                response = await http_client.post(
+                    f"{base_url}/responses",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=request_body,
+                )
+                
+                logger.info(f"[OpenAI] v1/responses 응답: status={response.status_code}")
+                
+                if response.status_code != 200:
+                    error_data = {}
+                    try:
+                        if response.headers.get("content-type", "").startswith("application/json"):
+                            error_data = response.json()
+                    except:
+                        pass
+                    
+                    error_msg = error_data.get("error", {}).get("message", response.text) if error_data else response.text
+                    logger.error(f"[OpenAI] v1/responses API 호출 실패: {response.status_code}, {error_msg}")
+                    
+                    raise LLMAPIError(
+                        message=f"OpenAI responses API 호출 실패: {error_msg}",
+                        details={
+                            "model": model_name,
+                            "status_code": response.status_code,
+                            "error": error_data if error_data else response.text,
+                            "requires_responses_endpoint": True
+                        }
+                    )
+                
+                result = response.json()
+                logger.debug(f"[OpenAI] v1/responses 응답 형식: {list(result.keys())}")
+                
+                # responses 엔드포인트 응답 형식 처리 (여러 가능한 형식 시도)
+                text = None
+                if "output" in result:
+                    text = result["output"]
+                elif "text" in result:
+                    text = result["text"]
+                elif "response" in result:
+                    text = result["response"]
+                elif "content" in result:
+                    text = result["content"]
+                elif "choices" in result and len(result["choices"]) > 0:
+                    # chat/completions와 유사한 형식일 수도 있음
+                    text = result["choices"][0].get("text") or result["choices"][0].get("message", {}).get("content", "")
+                else:
+                    # 응답 형식이 예상과 다를 경우 전체 응답 로깅
+                    logger.warning(f"[OpenAI] 예상치 못한 responses API 응답 형식: {result}")
+                    # 일단 전체 응답을 문자열로 변환 (디버깅용)
+                    text = str(result)
+                
+                if not text:
+                    raise LLMAPIError(
+                        message="OpenAI responses API 응답에서 텍스트를 추출할 수 없습니다",
+                        details={"model": model_name, "response": result}
+                    )
+                
+                # 토큰 사용량 추출 (가능한 경우)
+                if "usage" in result:
+                    self._capture_usage(result["usage"], model_name)
+                else:
+                    self.last_usage = None
+                
+                logger.info(f"[OpenAI] v1/responses 성공: {len(text)} chars")
+                return text
+                
+        except LLMAPIError:
+            raise
+        except httpx.HTTPError as e:
+            logger.error(f"[OpenAI] responses API HTTP 오류: {e}", exc_info=True)
+            raise LLMAPIError(
+                message=f"OpenAI responses API 호출 중 네트워크 오류가 발생했습니다: {str(e)}",
+                details={"model": model_name, "error": str(e), "requires_responses_endpoint": True}
+            )
+        except Exception as e:
+            logger.error(f"[OpenAI] responses API 호출 실패: {e}", exc_info=True)
+            raise LLMAPIError(
+                message=f"OpenAI responses API 호출 중 오류가 발생했습니다: {str(e)}",
+                details={"model": model_name, "error": str(e), "requires_responses_endpoint": True}
+            )
 
     def _capture_usage(self, usage: Optional[Any], model_name: str) -> None:
         """토큰 사용량 메타데이터 저장"""

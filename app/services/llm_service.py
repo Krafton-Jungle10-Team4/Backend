@@ -167,13 +167,18 @@ class LLMService:
                 default_model=settings.google_default_model
             )
 
-        bedrock_cfg = None
-        if settings.llm_provider and settings.llm_provider.lower() == "bedrock":
-            bedrock_cfg = BedrockConfig(
-                region_name=settings.bedrock_region,
-                default_model=settings.bedrock_model,
-                system_prompt=None
-            )
+        # Bedrock은 IAM 기반 인증이므로 API Key가 필요 없음
+        # 항상 사용 가능하도록 설정 생성 (프론트엔드에서 선택 가능하도록)
+        bedrock_cfg = BedrockConfig(
+            region_name=settings.bedrock_region or "ap-northeast-2",
+            default_model=settings.bedrock_model or "anthropic.claude-3-haiku-20240307-v1:0",
+            system_prompt=None,
+            enabled=True  # 명시적으로 활성화
+        )
+        logger.info(
+            f"Bedrock 설정 생성 완료: region={bedrock_cfg.region_name}, "
+            f"model={bedrock_cfg.default_model}, enabled={bedrock_cfg.enabled}"
+        )
 
         return LLMConfig(
             default_provider=(settings.llm_provider or "openai").lower(),
@@ -218,7 +223,24 @@ class LLMService:
 
     def _get_provider_config(self, provider: str) -> ProviderConfig:
         config = self.config.get_provider_config(provider)
-        if not config or not config.enabled:
+        if not config:
+            # 디버깅: 설정이 None인 경우 상세 로깅
+            logger.error(
+                f"Provider '{provider}' 설정이 None입니다. "
+                f"LLMConfig 상태: bedrock={self.config.bedrock}, "
+                f"openai={self.config.openai is not None}, "
+                f"anthropic={self.config.anthropic is not None}, "
+                f"google={self.config.google is not None}"
+            )
+            raise LLMServiceError(
+                message=f"Provider '{provider}' 설정을 찾을 수 없습니다",
+                details={"provider": provider}
+            )
+        if not config.enabled:
+            logger.error(
+                f"Provider '{provider}' 설정이 비활성화되어 있습니다. "
+                f"config.enabled={config.enabled}"
+            )
             raise LLMServiceError(
                 message=f"Provider '{provider}' 설정을 찾을 수 없습니다",
                 details={"provider": provider}

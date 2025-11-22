@@ -195,6 +195,25 @@ class BedrockClient(BaseLLMClient):
                     message="Bedrock API 사용량 제한에 도달했습니다",
                     details={"model": model_id, "error": error_message}
                 )
+            elif "on-demand throughput isn't supported" in error_message.lower():
+                # ON_DEMAND를 지원하지 않는 모델 (INFERENCE_PROFILE만 지원)
+                logger.error(
+                    f"Bedrock 모델이 ON_DEMAND를 지원하지 않음: {model_id}. "
+                    f"이 모델은 프로비저닝된 용량(Provisioned Throughput)이 필요합니다."
+                )
+                raise LLMAPIError(
+                    message=(
+                        f"선택한 모델 '{model_id}'은(는) ON_DEMAND 모드를 지원하지 않습니다. "
+                        f"이 모델은 프로비저닝된 용량(Provisioned Throughput)이 필요합니다. "
+                        f"ON_DEMAND를 지원하는 모델(예: Claude 3 Haiku, Claude 3.5 Sonnet)을 선택해주세요."
+                    ),
+                    details={
+                        "model": model_id,
+                        "error_code": error_code,
+                        "error": error_message,
+                        "requires_provisioned_throughput": True
+                    }
+                )
             else:
                 logger.error(f"Bedrock API 오류: {error_message}")
                 raise LLMAPIError(
@@ -307,6 +326,25 @@ class BedrockClient(BaseLLMClient):
                 raise LLMRateLimitError(
                     message="Bedrock API 사용량 제한에 도달했습니다",
                     details={"model": model_id, "error": error_message}
+                )
+            elif "on-demand throughput isn't supported" in error_message.lower():
+                # ON_DEMAND를 지원하지 않는 모델 (INFERENCE_PROFILE만 지원)
+                logger.error(
+                    f"Bedrock 모델이 ON_DEMAND를 지원하지 않음: {model_id}. "
+                    f"이 모델은 프로비저닝된 용량(Provisioned Throughput)이 필요합니다."
+                )
+                raise LLMAPIError(
+                    message=(
+                        f"선택한 모델 '{model_id}'은(는) ON_DEMAND 모드를 지원하지 않습니다. "
+                        f"이 모델은 프로비저닝된 용량(Provisioned Throughput)이 필요합니다. "
+                        f"ON_DEMAND를 지원하는 모델(예: Claude 3 Haiku, Claude 3.5 Sonnet)을 선택해주세요."
+                    ),
+                    details={
+                        "model": model_id,
+                        "error_code": error_code,
+                        "error": error_message,
+                        "requires_provisioned_throughput": True
+                    }
                 )
             else:
                 logger.error(f"Bedrock API 오류: {error_message}")
