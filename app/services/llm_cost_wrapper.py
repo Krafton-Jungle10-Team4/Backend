@@ -60,7 +60,8 @@ class LLMServiceWithCostTracking(LLMService):
         provider: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 4000,
-        on_chunk: Optional[Callable[[str], Awaitable[Optional[str]]]] = None
+        on_chunk: Optional[Callable[[str], Awaitable[Optional[str]]]] = None,
+        system_prompt: Optional[str] = None
     ) -> str:
         """비용 추적이 포함된 스트리밍 응답 생성"""
         # 원본 generate_stream 호출
@@ -70,7 +71,8 @@ class LLMServiceWithCostTracking(LLMService):
             provider=provider,
             temperature=temperature,
             max_tokens=max_tokens,
-            on_chunk=on_chunk
+            on_chunk=on_chunk,
+            system_prompt=system_prompt
         )
 
         # 비용 추적
