@@ -248,3 +248,290 @@ def test_feedback_plan_graph_matches_validator_contract():
     ]
     for key in required_conv_keys:
         assert key in FEEDBACK_WORKFLOW_GRAPH["conversation_variables"]
+
+
+def test_multiple_end_nodes_allowed_with_branch_nodes():
+    """분기 노드가 있는 워크플로우에서 여러 End 노드를 허용한다"""
+    validator = WorkflowValidator()
+
+    nodes = [
+        {
+            "id": "start-1",
+            "type": "start",
+            "position": {"x": 0, "y": 0},
+            "data": {"type": "start"},
+            "ports": {
+                "inputs": [],
+                "outputs": [
+                    {"name": "query", "type": "string", "required": True},
+                ],
+            },
+        },
+        {
+            "id": "classifier-1",
+            "type": "question-classifier",
+            "position": {"x": 200, "y": 0},
+            "data": {"type": "question-classifier"},
+            "ports": {
+                "inputs": [
+                    {"name": "query", "type": "string", "required": True},
+                ],
+                "outputs": [
+                    {"name": "배송", "type": "string", "required": False},
+                    {"name": "제품", "type": "string", "required": False},
+                ],
+            },
+            "variable_mappings": {},
+        },
+        {
+            "id": "llm-shipping",
+            "type": "llm",
+            "position": {"x": 400, "y": -100},
+            "data": {"type": "llm"},
+            "ports": {
+                "inputs": [
+                    {"name": "query", "type": "string", "required": True},
+                ],
+                "outputs": [
+                    {"name": "response", "type": "string", "required": True},
+                ],
+            },
+            "variable_mappings": {},
+        },
+        {
+            "id": "llm-product",
+            "type": "llm",
+            "position": {"x": 400, "y": 100},
+            "data": {"type": "llm"},
+            "ports": {
+                "inputs": [
+                    {"name": "query", "type": "string", "required": True},
+                ],
+                "outputs": [
+                    {"name": "response", "type": "string", "required": True},
+                ],
+            },
+            "variable_mappings": {},
+        },
+        {
+            "id": "answer-shipping",
+            "type": "answer",
+            "position": {"x": 600, "y": -100},
+            "data": {"type": "answer", "template": "{{llm-shipping.response}}"},
+            "ports": {
+                "inputs": [],
+                "outputs": [
+                    {"name": "final_output", "type": "string", "required": True},
+                ],
+            },
+            "variable_mappings": {},
+        },
+        {
+            "id": "answer-product",
+            "type": "answer",
+            "position": {"x": 600, "y": 100},
+            "data": {"type": "answer", "template": "{{llm-product.response}}"},
+            "ports": {
+                "inputs": [],
+                "outputs": [
+                    {"name": "final_output", "type": "string", "required": True},
+                ],
+            },
+            "variable_mappings": {},
+        },
+        {
+            "id": "end-shipping",
+            "type": "end",
+            "position": {"x": 800, "y": -100},
+            "data": {"type": "end"},
+            "ports": {
+                "inputs": [
+                    {"name": "response", "type": "string", "required": True},
+                ],
+                "outputs": [],
+            },
+            "variable_mappings": {},
+        },
+        {
+            "id": "end-product",
+            "type": "end",
+            "position": {"x": 800, "y": 100},
+            "data": {"type": "end"},
+            "ports": {
+                "inputs": [
+                    {"name": "response", "type": "string", "required": True},
+                ],
+                "outputs": [],
+            },
+            "variable_mappings": {},
+        },
+    ]
+
+    edges = [
+        {
+            "id": "edge-start-classifier",
+            "source": "start-1",
+            "target": "classifier-1",
+            "source_port": "query",
+            "target_port": "query",
+        },
+        {
+            "id": "edge-classifier-shipping",
+            "source": "classifier-1",
+            "target": "llm-shipping",
+            "source_port": "배송",
+            "target_port": "query",
+        },
+        {
+            "id": "edge-classifier-product",
+            "source": "classifier-1",
+            "target": "llm-product",
+            "source_port": "제품",
+            "target_port": "query",
+        },
+        {
+            "id": "edge-shipping-answer",
+            "source": "llm-shipping",
+            "target": "answer-shipping",
+            "source_port": "response",
+            "target_port": "final_output",
+        },
+        {
+            "id": "edge-product-answer",
+            "source": "llm-product",
+            "target": "answer-product",
+            "source_port": "response",
+            "target_port": "final_output",
+        },
+        {
+            "id": "edge-answer-shipping-end",
+            "source": "answer-shipping",
+            "target": "end-shipping",
+            "source_port": "final_output",
+            "target_port": "response",
+        },
+        {
+            "id": "edge-answer-product-end",
+            "source": "answer-product",
+            "target": "end-product",
+            "source_port": "final_output",
+            "target_port": "response",
+        },
+    ]
+
+    is_valid, errors, warnings = validator.validate(nodes, edges)
+
+    # 분기 노드가 있으므로 여러 End 노드가 허용되어야 함
+    assert is_valid, f"workflow with branch nodes should allow multiple end nodes, got errors: {errors}"
+    assert not any("End 노드는 하나만" in error for error in errors)
+
+
+def test_multiple_end_nodes_rejected_without_branch_nodes():
+    """분기 노드가 없는 워크플로우에서 여러 End 노드는 거부된다"""
+    validator = WorkflowValidator()
+
+    nodes = [
+        {
+            "id": "start-1",
+            "type": "start",
+            "position": {"x": 0, "y": 0},
+            "data": {"type": "start"},
+            "ports": {
+                "inputs": [],
+                "outputs": [
+                    {"name": "query", "type": "string", "required": True},
+                ],
+            },
+        },
+        {
+            "id": "llm-1",
+            "type": "llm",
+            "position": {"x": 200, "y": 0},
+            "data": {"type": "llm"},
+            "ports": {
+                "inputs": [
+                    {"name": "query", "type": "string", "required": True},
+                ],
+                "outputs": [
+                    {"name": "response", "type": "string", "required": True},
+                ],
+            },
+            "variable_mappings": {},
+        },
+        {
+            "id": "answer-1",
+            "type": "answer",
+            "position": {"x": 400, "y": 0},
+            "data": {"type": "answer", "template": "{{llm-1.response}}"},
+            "ports": {
+                "inputs": [],
+                "outputs": [
+                    {"name": "final_output", "type": "string", "required": True},
+                ],
+            },
+            "variable_mappings": {},
+        },
+        {
+            "id": "end-1",
+            "type": "end",
+            "position": {"x": 600, "y": -50},
+            "data": {"type": "end"},
+            "ports": {
+                "inputs": [
+                    {"name": "response", "type": "string", "required": True},
+                ],
+                "outputs": [],
+            },
+            "variable_mappings": {},
+        },
+        {
+            "id": "end-2",
+            "type": "end",
+            "position": {"x": 600, "y": 50},
+            "data": {"type": "end"},
+            "ports": {
+                "inputs": [
+                    {"name": "response", "type": "string", "required": True},
+                ],
+                "outputs": [],
+            },
+            "variable_mappings": {},
+        },
+    ]
+
+    edges = [
+        {
+            "id": "edge-start-llm",
+            "source": "start-1",
+            "target": "llm-1",
+            "source_port": "query",
+            "target_port": "query",
+        },
+        {
+            "id": "edge-llm-answer",
+            "source": "llm-1",
+            "target": "answer-1",
+            "source_port": "response",
+            "target_port": "final_output",
+        },
+        {
+            "id": "edge-answer-end1",
+            "source": "answer-1",
+            "target": "end-1",
+            "source_port": "final_output",
+            "target_port": "response",
+        },
+        {
+            "id": "edge-answer-end2",
+            "source": "answer-1",
+            "target": "end-2",
+            "source_port": "final_output",
+            "target_port": "response",
+        },
+    ]
+
+    is_valid, errors, warnings = validator.validate(nodes, edges)
+
+    # 분기 노드가 없으므로 여러 End 노드는 거부되어야 함
+    assert not is_valid
+    assert any("End 노드는 하나만" in error for error in errors)

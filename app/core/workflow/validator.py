@@ -124,6 +124,33 @@ class WorkflowValidator:
                 adjacency_list[source].append(target)
         return dict(adjacency_list)
 
+    def _has_branch_nodes(self, nodes: List[Dict[str, Any]]) -> bool:
+        """
+        워크플로우에 분기 노드가 있는지 확인
+
+        분기 노드(question-classifier, if-else 등)가 있는 경우
+        여러 End 노드를 허용하기 위해 사용합니다.
+
+        Args:
+            nodes: 노드 리스트
+
+        Returns:
+            bool: 분기 노드가 있으면 True, 없으면 False
+        """
+        branch_node_types = {"if-else", "question-classifier"}
+        for node in nodes:
+            # V1 노드 타입 확인
+            node_type = node.get("type")
+            if node_type in branch_node_types:
+                return True
+
+            # V2 노드 타입 확인 (data.type)
+            node_data_type = node.get("data", {}).get("type")
+            if node_data_type in branch_node_types:
+                return True
+
+        return False
+
     def _validate_required_nodes(self, nodes: List[Dict[str, Any]]):
         """필수 노드 존재 여부 검증"""
         node_types = {node.get("type") for node in nodes}
@@ -140,7 +167,14 @@ class WorkflowValidator:
         if end_count == 0:
             self.errors.append("End 노드가 필요합니다")
         elif end_count > 1:
-            self.errors.append("End 노드는 하나만 있어야 합니다")
+            # 분기 노드가 있는 경우 여러 End 노드 허용
+            if not self._has_branch_nodes(nodes):
+                self.errors.append("End 노드는 하나만 있어야 합니다")
+            else:
+                logger.info(
+                    f"분기 노드가 감지되어 여러 End 노드({end_count}개)를 허용합니다. "
+                    "각 분기가 독립적인 종료 지점을 가질 수 있습니다."
+                )
 
         # Answer 노드 검증 (V2 그래프에만 적용)
         if self._is_v2_workflow(nodes=nodes, edges=[]):
@@ -200,6 +234,19 @@ class WorkflowValidator:
                         )
 
             # 노드 타입별 설정 검증
+            # V2 노드인 경우 data.type을 우선 확인
+            v2_node_type = node_data.get("type")
+            if v2_node_type:
+                # V2 노드는 node_registry_v2에서 확인
+                v2_node_class = node_registry_v2.get(v2_node_type)
+                if v2_node_class:
+                    # V2 노드는 검증 통과
+                    continue
+                elif node.get("ports") or node.get("variable_mappings"):
+                    # 포트나 변수 매핑이 있으면 V2 노드로 간주
+                    continue
+
+            # V1 노드 검증
             try:
                 node_type_enum = NodeType(node_type)
                 node_class = node_registry.get(node_type_enum)
@@ -220,7 +267,7 @@ class WorkflowValidator:
 
             except ValueError:
                 # V2 노드는 NodeType enum에 존재하지 않을 수 있으므로 포트 정보가 있으면 통과
-                if node.get("ports"):
+                if node.get("ports") or node.get("variable_mappings"):
                     continue
                 self.errors.append(f"유효하지 않은 노드 타입: {node_type}")
 
