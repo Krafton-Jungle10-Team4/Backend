@@ -66,7 +66,7 @@ class Bot(Base):
     legacy_workflow = Column(JSONB, nullable=True)  # 백업용 (deprecated)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # 관계
     user = relationship("User", back_populates="bots")
