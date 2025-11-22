@@ -101,8 +101,10 @@ class KnowledgeNodeV2(BaseNodeV2):
         # 설정 파라미터
         top_k = self.config.get("top_k", 5)
         document_ids = self.config.get("document_ids", [])
+        # 유사도 임계값: 0.4 미만인 결과는 제외 (낮은 관련성 필터링)
+        similarity_threshold = self.config.get("similarity_threshold", 0.4)
 
-        logger.info(f"KnowledgeNodeV2: Searching with query='{query[:50]}...', top_k={top_k}, user_uuid={user_uuid}")
+        logger.info(f"KnowledgeNodeV2: Searching with query='{query[:50]}...', top_k={top_k}, similarity_threshold={similarity_threshold}, user_uuid={user_uuid}")
 
         if not user_uuid:
             raise ValueError("user_uuid를 찾을 수 없습니다")
@@ -132,15 +134,45 @@ class KnowledgeNodeV2(BaseNodeV2):
                     "doc_count": 0
                 }
 
-            # 문서 텍스트 병합
-            context_text = "\n\n".join([doc.get("content", "") for doc in results])
+            # 유사도 임계값으로 필터링 (낮은 관련성 결과 제외)
+            filtered_results = [
+                doc for doc in results 
+                if doc.get("similarity", 0.0) >= similarity_threshold
+            ]
 
-            logger.info(f"KnowledgeNodeV2: Retrieved {len(results)} documents")
+            # 필터링된 결과가 없으면 관련 없는 결과로 판단
+            if not filtered_results:
+                logger.warning(
+                    f"검색 결과 {len(results)}개 중 유사도 임계값({similarity_threshold}) 이상인 결과가 없습니다. "
+                    f"최고 유사도: {max([doc.get('similarity', 0.0) for doc in results]):.3f}"
+                )
+                no_result_message = (
+                    "검색 결과가 없습니다. "
+                    "해당 질문에 대한 정보가 RAG 문서에 등록되지 않았습니다. "
+                    "다른 질문을 시도해주시거나, 필요한 문서를 업로드해주세요."
+                )
+                return {
+                    "context": no_result_message,
+                    "documents": [],
+                    "doc_count": 0
+                }
+
+            # 필터링 전후 로그
+            if len(filtered_results) < len(results):
+                logger.info(
+                    f"유사도 필터링: {len(results)}개 → {len(filtered_results)}개 "
+                    f"(임계값: {similarity_threshold}, 제외: {len(results) - len(filtered_results)}개)"
+                )
+
+            # 문서 텍스트 병합
+            context_text = "\n\n".join([doc.get("content", "") for doc in filtered_results])
+
+            logger.info(f"KnowledgeNodeV2: Retrieved {len(filtered_results)} documents (filtered from {len(results)})")
 
             return {
                 "context": context_text,
-                "documents": results,
-                "doc_count": len(results)
+                "documents": filtered_results,
+                "doc_count": len(filtered_results)
             }
 
         except Exception as e:
