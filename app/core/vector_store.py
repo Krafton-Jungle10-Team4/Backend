@@ -61,19 +61,16 @@ class VectorStore:
 
     def _apply_user_filter(self, query):
         """
-        user_uuid가 설정되었으면 Documents 테이블과 조인하여 user_uuid로 필터링
-        
-        metadata에 user_uuid가 없는 기존 문서도 검색할 수 있도록 
-        Documents 테이블의 user_uuid를 사용합니다.
+        user_uuid가 설정되었으면 Documents 테이블에서 문서 ID를 조회하고
+        DocumentEmbedding.document_id에 해당하는 행만 필터링합니다.
         """
         if self.user_uuid:
             from app.models.document import Document
-            # Documents 테이블과 조인하여 user_uuid 필터링
-            # metadata에 user_uuid가 없어도 Documents 테이블의 user_uuid로 검색 가능
-            query = query.join(
-                Document,
-                DocumentEmbedding.document_id == Document.document_id
-            ).where(Document.user_uuid == self.user_uuid)
+            subquery = (
+                select(Document.document_id)
+                .where(Document.user_uuid == self.user_uuid)
+            )
+            query = query.where(DocumentEmbedding.document_id.in_(subquery))
         return query
 
     async def add_documents(

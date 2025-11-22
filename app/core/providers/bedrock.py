@@ -4,6 +4,8 @@ AWS Bedrock (Anthropic Claude) API 클라이언트 구현
 from typing import List, Dict, AsyncGenerator, Optional
 import logging
 import json
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import boto3
 from botocore.exceptions import ClientError, BotoCoreError
 
@@ -20,7 +22,26 @@ logger = logging.getLogger(__name__)
 
 @register_provider("bedrock")
 class BedrockClient(BaseLLMClient):
-    """AWS Bedrock (Claude) API 클라이언트"""
+    """
+    AWS Bedrock (Claude) API 클라이언트
+    
+    동시성 처리:
+    - 비동기/논블로킹: FastAPI의 async/await 사용
+    - ThreadPoolExecutor: boto3 동기 호출을 스레드 풀에서 실행
+    - Semaphore: 동시 요청 수 제한 (프로비저닝된 용량 보호)
+    """
+
+    # 클래스 레벨 ThreadPoolExecutor (모든 인스턴스 공유)
+    # 프로비저닝된 용량 1 MU 기준: 동시 요청 10-20개 정도 처리 가능
+    _executor: Optional[ThreadPoolExecutor] = None
+    _executor_lock = asyncio.Lock()
+    
+    # 동시성 제한: Rate Limit 보호 및 비용 관리
+    # ON_DEMAND 모드: 10개 동시 요청 (Rate Limit 보호)
+    # 프로비저닝 모드: 1 MU = 약 15개 동시 요청 처리 가능
+    _semaphore: Optional[asyncio.Semaphore] = None
+    _max_concurrent_requests: Optional[int] = None  # 동적으로 계산됨
+    _provisioned_model_units: int = 0  # 프로비저닝된 용량 (Model Units)
 
     def __init__(self, config: BedrockConfig):
         self.config = config
@@ -33,6 +54,51 @@ class BedrockClient(BaseLLMClient):
             config.system_prompt
             or "당신은 유능한 AI 어시스턴트입니다. 사용자에게 친절하고 명확하게 답변해야 합니다."
         )
+        
+        # 프로비저닝된 용량 확인 및 동시성 제한 계산
+        from app.config import settings
+        provisioned_units = getattr(settings, 'bedrock_provisioned_model_units', 0) or 0
+        
+        # 동시성 제한 계산: 1 MU = 15개 동시 요청
+        # 프로비저닝된 용량이 없으면 (0) ON_DEMAND 모델 사용
+        if provisioned_units > 0:
+            max_concurrent = provisioned_units * 15
+            logger.info(
+                f"📊 프로비저닝된 용량: {provisioned_units} MU → "
+                f"동시성 제한: {max_concurrent}개 동시 요청"
+            )
+        else:
+            # ON_DEMAND 모델: 10개 동시 요청 제한
+            # - Rate Limit 보호
+            # - $300/월 예산 기준 안정적 운영 (일평균 950회 요청 처리 가능)
+            # - 100명 동시 접속 가능 (요청은 10개씩 순차 처리)
+            max_concurrent = 10
+            logger.info(
+                f"📊 ON_DEMAND 모델 사용 → 동시성 제한: {max_concurrent}개 동시 요청 "
+                f"(Rate Limit 보호, 예산: $300/월 기준)"
+            )
+        
+        # ThreadPoolExecutor 초기화 (최초 1회만)
+        if BedrockClient._executor is None:
+            # 스레드 풀 크기: 동시성 제한의 1.5배 (여유분 확보)
+            thread_pool_size = max(max_concurrent * 2, 20)
+            BedrockClient._executor = ThreadPoolExecutor(
+                max_workers=thread_pool_size,
+                thread_name_prefix="bedrock-llm"
+            )
+            logger.info(f"✅ Bedrock ThreadPoolExecutor 초기화 완료 (max_workers={thread_pool_size})")
+        
+        # Semaphore 초기화 (최초 1회만 또는 프로비저닝된 용량 변경 시)
+        if BedrockClient._semaphore is None or BedrockClient._max_concurrent_requests != max_concurrent:
+            BedrockClient._max_concurrent_requests = max_concurrent
+            BedrockClient._provisioned_model_units = provisioned_units
+            BedrockClient._semaphore = asyncio.Semaphore(max_concurrent)
+            logger.info(
+                f"✅ Bedrock 동시성 제한 설정 완료 "
+                f"(프로비저닝: {provisioned_units} MU, "
+                f"동시 요청: {max_concurrent}개)"
+            )
+        
         logger.info(f"Bedrock Client 초기화: 모델={self.model}, 리전={config.region_name}")
 
     def _convert_messages(
@@ -82,17 +148,18 @@ class BedrockClient(BaseLLMClient):
             if system_message:
                 body["system"] = system_message
 
-            # Bedrock API 호출 (동기 방식 - boto3는 async 미지원)
-            # 실제 프로덕션에서는 ThreadPoolExecutor 사용 권장
-            import asyncio
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.invoke_model(
-                    modelId=model_id,
-                    body=json.dumps(body)
+            # 동시성 제한: Semaphore로 동시 요청 수 제어
+            async with BedrockClient._semaphore:
+                # Bedrock API 호출 (동기 방식 - boto3는 async 미지원)
+                # ThreadPoolExecutor를 사용하여 논블로킹 처리
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    BedrockClient._executor,
+                    lambda: self.client.invoke_model(
+                        modelId=model_id,
+                        body=json.dumps(body)
+                    )
                 )
-            )
 
             # 응답 파싱
             response_body = json.loads(response['body'].read())
@@ -175,16 +242,18 @@ class BedrockClient(BaseLLMClient):
             if system_message:
                 body["system"] = system_message
 
-            # Bedrock 스트리밍 호출
-            import asyncio
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.invoke_model_with_response_stream(
-                    modelId=model_id,
-                    body=json.dumps(body)
+            # 동시성 제한: Semaphore로 동시 요청 수 제어
+            async with BedrockClient._semaphore:
+                # Bedrock 스트리밍 호출 (동기 방식 - boto3는 async 미지원)
+                # ThreadPoolExecutor를 사용하여 논블로킹 처리
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    BedrockClient._executor,
+                    lambda: self.client.invoke_model_with_response_stream(
+                        modelId=model_id,
+                        body=json.dumps(body)
+                    )
                 )
-            )
 
             # 스트림 처리
             stream = response.get('body')

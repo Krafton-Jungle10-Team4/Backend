@@ -211,6 +211,11 @@ class Settings(BaseSettings):
     # AWS Bedrock (Claude via AWS) - 서울 리전
     bedrock_region: str = "ap-northeast-2"
     bedrock_model: str = "anthropic.claude-3-haiku-20240307-v1:0"  # Haiku 3 (ON_DEMAND 지원)
+    
+    # 프로비저닝된 용량 설정 (Model Units)
+    # 1 MU = 약 15개 동시 요청 처리 가능 (안전한 기준)
+    # 프로비저닝된 용량이 없으면 0으로 설정 (ON_DEMAND 모델 사용)
+    bedrock_provisioned_model_units: int = 0  # 기본값: ON_DEMAND (프로비저닝 없음)
 
     # 챗봇 설정
     # 생성 응답의 다양성(창의성): 높을 수록 창의적, 낮을 수록 일관적

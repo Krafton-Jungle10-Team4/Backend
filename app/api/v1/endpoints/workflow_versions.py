@@ -5,7 +5,9 @@
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import List, Optional
+from uuid import UUID
 import logging
 
 from app.core.database import get_db
@@ -315,18 +317,10 @@ async def get_workflow_version(
     특정 버전 상세 조회
 
     - 워크플로우 그래프, 환경 변수 등 모든 정보 포함
+    - 마켓플레이스에 게시된 버전은 readonly 접근 허용
     """
     try:
-        # 봇 접근 권한 확인
-        bot_service = BotService()
-        bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
-        if not bot:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
-            )
-
-        # 버전 조회
+        # 먼저 버전 조회
         service = WorkflowVersionService(db)
         version = await service.get_version(version_id)
 
@@ -335,6 +329,31 @@ async def get_workflow_version(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="워크플로우 버전을 찾을 수 없습니다"
             )
+
+        # 마켓플레이스에 게시된 버전인지 확인
+        from app.models.marketplace import MarketplaceItem
+        # version.id를 UUID로 변환 (이미 UUID일 수도 있지만 안전하게 처리)
+        version_uuid = version.id if isinstance(version.id, UUID) else UUID(str(version.id))
+        stmt = select(MarketplaceItem).where(
+            MarketplaceItem.workflow_version_id == version_uuid,
+            MarketplaceItem.is_active == True
+        )
+        result = await db.execute(stmt)
+        marketplace_item = result.scalar_one_or_none()
+
+        # 마켓플레이스에 게시된 버전이면 접근 허용
+        if marketplace_item:
+            # 마켓플레이스에 게시된 버전은 readonly 접근 허용
+            pass
+        else:
+            # 마켓플레이스에 게시되지 않은 버전은 봇 소유권 확인 필요
+            bot_service = BotService()
+            bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
+            if not bot:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
+                )
 
         from app.schemas.workflow import WorkflowGraph
         return WorkflowVersionDetail(

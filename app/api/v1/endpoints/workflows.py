@@ -481,26 +481,48 @@ async def get_models(
                 region_name=settings.bedrock_region or 'ap-northeast-2'
             )
             
-            # 모델 카탈로그에서 Claude 모델 조회 (ON_DEMAND 지원 모델만)
+            # ⚠️ ON_DEMAND vs INFERENCE_PROFILE 설명:
+            # - ON_DEMAND: 사용량 기반 과금, 프로비저닝 불필요, 즉시 사용 가능 (대부분의 모델)
+            #   → 사용한 만큼만 비용 지불, AWS 크레딧으로 사용 가능
+            # - INFERENCE_PROFILE: 프로비저닝된 용량(Provisioned Throughput) 필요, 약정 기반
+            #   → 사전에 용량을 예약해야 함 (월 약정), AWS 크레딧으로도 사용 가능하지만
+            #   → 별도로 프로비저닝된 용량을 구매/설정해야 함
+            #   → Claude 4.5, 3.7 등 최신 모델은 INFERENCE_PROFILE만 지원
+            #   → 프로비저닝 없이는 사용 불가능 (ON_DEMAND 옵션 없음)
+            # ON_DEMAND 필터를 제거하여 모든 사용 가능한 모델 조회
             response = bedrock_client.list_foundation_models(
-                byProvider='Anthropic',
-                byInferenceType='ON_DEMAND'
+                byProvider='Anthropic'
             )
             
             for model_summary in response.get('modelSummaries', []):
                 model_id = model_summary.get('modelId', '')
                 model_name = model_summary.get('modelName', '')
+                inference_types = model_summary.get('inferenceTypesSupported', [])
                 
-                # Claude 모델만 필터링
-                if 'claude' in model_id.lower():
+                # Claude 모델만 필터링 (Claude Code 제외)
+                if 'claude' in model_id.lower() and 'code' not in model_id.lower():
                     # 모델 이름에 버전 정보 추가
                     display_name = f"{model_name} (Bedrock)"
+                    
+                    # INFERENCE_PROFILE 모델인지 확인
+                    is_inference_profile_only = (
+                        'INFERENCE_PROFILE' in inference_types and 
+                        'ON_DEMAND' not in inference_types
+                    )
+                    
+                    # 설명 생성
                     if 'haiku' in model_id.lower():
-                        description = "AWS Bedrock Claude Haiku - 빠르고 저렴한 모델"
+                        base_description = "AWS Bedrock Claude Haiku - 빠르고 저렴한 모델"
                     elif 'sonnet' in model_id.lower():
-                        description = "AWS Bedrock Claude Sonnet - 고성능 모델 (비쌈)"
+                        base_description = "AWS Bedrock Claude Sonnet - 고성능 모델 (비쌈)"
                     else:
-                        description = f"AWS Bedrock {model_name}"
+                        base_description = f"AWS Bedrock {model_name}"
+                    
+                    # INFERENCE_PROFILE만 지원하는 모델인 경우 경고 추가
+                    if is_inference_profile_only:
+                        description = f"{base_description} ⚠️ 프로비저닝된 용량 필요"
+                    else:
+                        description = base_description
                     
                     models.append(ModelInfo(
                         id=model_id,
@@ -509,7 +531,7 @@ async def get_models(
                         description=description
                     ))
             
-            logger.info(f"모델 카탈로그에서 {len(models)}개의 Bedrock 모델을 가져왔습니다.")
+            logger.info(f"모델 카탈로그에서 {len(models)}개의 Bedrock Claude 모델을 가져왔습니다.")
         except Exception as e:
             logger.warning(f"모델 카탈로그에서 모델을 가져오는 중 오류 발생: {e}. 기본 모델 목록을 사용합니다.")
             # 폴백: 기본 모델 목록
@@ -528,7 +550,10 @@ async def get_models(
                 ),
             ])
         
-        # ⭐️ OpenAI 모델 목록 동적으로 가져오기
+        # ⭐️ OpenAI 모델 추가 (Bedrock이 아닌 직접 OpenAI API 사용)
+        # ⚠️ 주의: Bedrock에는 OpenAI GPT 모델이 없으므로 OpenAI API를 직접 사용
+        # 사용자 요청: "OPENAI도 Bedrock에서 5.1,5,4,3버전 정도는 사용하고 싶은데"
+        # → Bedrock에는 없지만 OpenAI API로 대표 모델만 제공
         try:
             from openai import AsyncOpenAI
             
@@ -536,42 +561,76 @@ async def get_models(
                 openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
                 openai_models_response = await openai_client.models.list()
                 
-                # OpenAI 모델 필터링 (gpt, o1 등 채팅 모델만)
-                openai_chat_models = [
+                # 모든 OpenAI 모델 수집
+                all_models = [
                     model for model in openai_models_response.data
                     if any(model.id.startswith(prefix) for prefix in ['gpt-', 'o1-', 'o3-'])
-                    and 'instruct' not in model.id.lower()  # instruct 모델 제외
+                    and 'instruct' not in model.id.lower()
                 ]
                 
-                # 모델 이름 매핑 (더 읽기 쉬운 이름)
+                # 대표 모델 선택 (GPT-5.1, GPT-5, GPT-4, GPT-3.5 각각 하나씩)
+                selected_models = []
+                
+                # GPT-5.1 (최신 버전 우선)
+                gpt_51_models = [m for m in all_models if 'gpt-5.1' in m.id.lower() or 'gpt-5-1' in m.id.lower()]
+                if gpt_51_models:
+                    selected_models.append(gpt_51_models[0])
+                
+                # GPT-5 (5.1이 없으면 5 선택)
+                if not gpt_51_models:
+                    gpt_5_models = [m for m in all_models if 'gpt-5' in m.id.lower() and 'gpt-5.1' not in m.id.lower() and 'gpt-5-1' not in m.id.lower()]
+                    if gpt_5_models:
+                        selected_models.append(gpt_5_models[0])
+                
+                # GPT-4 (gpt-4o 우선, 없으면 gpt-4-turbo, 없으면 gpt-4)
+                gpt_4o_models = [m for m in all_models if 'gpt-4o' in m.id.lower() and 'mini' not in m.id.lower()]
+                if gpt_4o_models:
+                    selected_models.append(gpt_4o_models[0])
+                else:
+                    gpt_4_turbo_models = [m for m in all_models if 'gpt-4-turbo' in m.id.lower()]
+                    if gpt_4_turbo_models:
+                        selected_models.append(gpt_4_turbo_models[0])
+                    else:
+                        gpt_4_models = [m for m in all_models if m.id.startswith('gpt-4') and 'turbo' not in m.id.lower() and 'o' not in m.id.lower()]
+                        if gpt_4_models:
+                            selected_models.append(gpt_4_models[0])
+                
+                # GPT-3.5 (gpt-3.5-turbo 우선)
+                gpt_35_models = [m for m in all_models if 'gpt-3.5-turbo' in m.id.lower()]
+                if gpt_35_models:
+                    selected_models.append(gpt_35_models[0])
+                
+                # 선택된 모델 추가
                 model_name_mapping = {
                     'gpt-4o': 'GPT-4o',
-                    'gpt-4o-mini': 'GPT-4o mini',
                     'gpt-4-turbo': 'GPT-4 Turbo',
                     'gpt-4': 'GPT-4',
                     'gpt-3.5-turbo': 'GPT-3.5 Turbo',
-                    'o1-preview': 'O1 Preview',
-                    'o1-mini': 'O1 Mini',
-                    'o3-mini': 'O3 Mini',
                 }
                 
-                for model in openai_chat_models:
+                for model in selected_models:
                     model_id = model.id
-                    display_name = model_name_mapping.get(model_id, model_id.replace('gpt-', 'GPT-').replace('o1-', 'O1 ').replace('o3-', 'O3 ').title())
+                    # 모델 이름 매핑 또는 자동 생성
+                    if 'gpt-5.1' in model_id.lower() or 'gpt-5-1' in model_id.lower():
+                        display_name = 'GPT-5.1'
+                    elif 'gpt-5' in model_id.lower():
+                        display_name = 'GPT-5'
+                    else:
+                        display_name = model_name_mapping.get(model_id, model_id.replace('gpt-', 'GPT-').title())
                     
                     # 설명 생성
-                    if 'gpt-4o' in model_id:
-                        description = "OpenAI의 고성능 멀티모달 모델"
-                    elif 'gpt-4o-mini' in model_id:
-                        description = "OpenAI의 빠르고 저렴한 멀티모달 모델"
-                    elif 'gpt-4-turbo' in model_id:
+                    if 'gpt-5.1' in model_id.lower() or 'gpt-5-1' in model_id.lower():
+                        description = "OpenAI의 최신 GPT-5.1 모델"
+                    elif 'gpt-5' in model_id.lower():
+                        description = "OpenAI의 GPT-5 모델"
+                    elif 'gpt-4o' in model_id.lower():
+                        description = "OpenAI의 고성능 멀티모달 GPT-4o 모델"
+                    elif 'gpt-4-turbo' in model_id.lower():
                         description = "OpenAI의 고성능 GPT-4 Turbo 모델"
-                    elif 'gpt-4' in model_id:
+                    elif 'gpt-4' in model_id.lower():
                         description = "OpenAI의 고성능 GPT-4 모델"
-                    elif 'gpt-3.5' in model_id:
-                        description = "OpenAI의 빠르고 저렴한 GPT-3.5 모델"
-                    elif 'o1' in model_id or 'o3' in model_id:
-                        description = "OpenAI의 추론 최적화 모델"
+                    elif 'gpt-3.5' in model_id.lower():
+                        description = "OpenAI의 빠르고 저렴한 GPT-3.5 Turbo 모델"
                     else:
                         description = f"OpenAI {display_name} 모델"
                     
@@ -582,84 +641,12 @@ async def get_models(
                         description=description
                     ))
                 
-                logger.info(f"OpenAI API에서 {len(openai_chat_models)}개의 모델을 가져왔습니다.")
+                logger.info(f"OpenAI API에서 {len(selected_models)}개의 대표 모델을 선택했습니다.")
             else:
-                logger.warning("OpenAI API 키가 설정되지 않아 기본 모델 목록을 사용합니다.")
-                raise ValueError("OpenAI API key not configured")
+                logger.warning("OpenAI API 키가 설정되지 않아 OpenAI 모델을 추가하지 않습니다.")
                 
         except Exception as e:
-            logger.warning(f"OpenAI 모델 목록을 가져오는 중 오류 발생: {e}. 기본 모델 목록을 사용합니다.")
-            # 폴백: 일반적으로 사용 가능한 OpenAI 모델 목록
-            models.extend([
-                ModelInfo(
-                    id="gpt-4o",
-                    name="GPT-4o",
-                    provider="openai",
-                    description="OpenAI의 고성능 멀티모달 모델"
-                ),
-                ModelInfo(
-                    id="gpt-4o-mini",
-                    name="GPT-4o mini",
-                    provider="openai",
-                    description="OpenAI의 빠르고 저렴한 멀티모달 모델"
-                ),
-                ModelInfo(
-                    id="gpt-4-turbo",
-                    name="GPT-4 Turbo",
-                    provider="openai",
-                    description="OpenAI의 고성능 GPT-4 Turbo 모델"
-                ),
-                ModelInfo(
-                    id="gpt-4",
-                    name="GPT-4",
-                    provider="openai",
-                    description="OpenAI의 고성능 GPT-4 모델"
-                ),
-                ModelInfo(
-                    id="gpt-3.5-turbo",
-                    name="GPT-3.5 Turbo",
-                    provider="openai",
-                    description="OpenAI의 빠르고 저렴한 GPT-3.5 모델"
-                ),
-                ModelInfo(
-                    id="gpt-5-chat-latest",
-                    name="GPT-5 Chat",
-                    provider="openai",
-                    description="OpenAI GPT-5 채팅 모델 (로컬 개발용)"
-                ),
-            ])
-        
-        # Anthropic Direct 모델 (로컬 개발용)
-        models.extend([
-            ModelInfo(
-                id="claude-sonnet-4-5-20250929",
-                name="Claude 4.5 Sonnet",
-                provider="anthropic",
-                description="Anthropic의 범용 Sonnet 모델 (로컬 개발용)"
-            ),
-            ModelInfo(
-                id="claude-haiku-4-5-20251001",
-                name="Claude 4.5 Haiku",
-                provider="anthropic",
-                description="낮은 지연시간의 경량 Claude 모델 (로컬 개발용)"
-            ),
-        ])
-        
-        # Google Gemini 모델 (로컬 개발용)
-        models.extend([
-            ModelInfo(
-                id="gemini-2.5-flash",
-                name="Gemini 2.5 Flash",
-                provider="google",
-                description="Google Gemini 2.5 Flash 모델 (로컬 개발용)"
-            ),
-            ModelInfo(
-                id="gemini-2.5-pro",
-                name="Gemini 2.5 Pro",
-                provider="google",
-                description="Google Gemini 2.5 Pro 모델 (로컬 개발용)"
-            ),
-        ])
+            logger.warning(f"OpenAI 모델 목록을 가져오는 중 오류 발생: {e}. OpenAI 모델을 추가하지 않습니다.")
 
         return ModelsResponse(models=models)
 
