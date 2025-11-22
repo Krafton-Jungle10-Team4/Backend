@@ -240,14 +240,38 @@ async def list_workflow_versions(
     - 라이브러리 필드 포함
     """
     try:
-        # 봇 접근 권한 확인
-        bot_service = BotService()
-        bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
-        if not bot:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
+        # 먼저 해당 봇의 마켓플레이스 게시 여부 확인
+        from app.models.marketplace import MarketplaceItem
+        from app.models.workflow_version import BotWorkflowVersion
+        
+        # 봇의 모든 버전 조회 (마켓플레이스 확인용)
+        stmt = select(BotWorkflowVersion).where(
+            BotWorkflowVersion.bot_id == bot_id
+        )
+        result = await db.execute(stmt)
+        all_versions = result.scalars().all()
+        
+        # 마켓플레이스에 게시된 버전이 있는지 확인
+        has_marketplace_version = False
+        if all_versions:
+            version_ids = [v.id for v in all_versions]
+            stmt = select(MarketplaceItem).where(
+                MarketplaceItem.workflow_version_id.in_(version_ids),
+                MarketplaceItem.is_active == True
             )
+            result = await db.execute(stmt)
+            marketplace_items = result.scalars().all()
+            has_marketplace_version = len(marketplace_items) > 0
+
+        # 마켓플레이스에 게시된 버전이 없으면 봇 소유권 확인
+        if not has_marketplace_version:
+            bot_service = BotService()
+            bot = await bot_service.get_bot_by_id(bot_id, current_user.id, db)
+            if not bot:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="봇을 찾을 수 없거나 접근 권한이 없습니다"
+                )
 
         # 버전 목록 조회
         service = WorkflowVersionService(db)
