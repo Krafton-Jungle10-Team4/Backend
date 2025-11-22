@@ -67,16 +67,27 @@ async def create_or_update_draft(
             )
 
         # Draft 생성/수정
-        graph_payload = request.graph.dict()
-        
+        logger.info(f"[DEBUG] request.graph type: {type(request.graph)}, value: {request.graph}")
+        logger.info(f"[DEBUG] request.environment_variables: {request.environment_variables}")
+        logger.info(f"[DEBUG] request.conversation_variables: {request.conversation_variables}")
+
+        if not request.graph:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="워크플로우 그래프가 필요합니다"
+            )
+
+        graph_payload = request.graph.dict() if hasattr(request.graph, 'dict') else request.graph
+        logger.info(f"[DEBUG] graph_payload type: {type(graph_payload)}, keys: {graph_payload.keys() if graph_payload else None}")
+
         # DEBUG: Slack 노드 데이터 로깅
-        nodes = graph_payload.get("nodes", [])
+        nodes = graph_payload.get("nodes", []) if graph_payload else []
         for node in nodes:
             if node.get("type") == "slack" or node.get("data", {}).get("type") == "slack":
                 logger.info(f"[DEBUG] Saving Slack node: id={node.get('id')}, data keys={list(node.get('data', {}).keys())}, data={node.get('data', {})}")
-        
+
         validator = WorkflowValidator()
-        edges = graph_payload.get("edges", [])
+        edges = graph_payload.get("edges", []) if graph_payload else []
         is_valid, errors, warnings = validator.validate(nodes, edges)
 
         if not is_valid:

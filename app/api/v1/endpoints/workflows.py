@@ -57,6 +57,13 @@ V2_NODE_METADATA = {
         "icon": "brain",
         "category": "AI",
         "description": "언어 모델 응답 생성 노드",
+        "default_data": {
+            "provider": "openai",
+            "model": "chatgpt-4o-latest",  # 실제 OpenAI API 모델 ID 사용
+            "prompt": "",
+            "temperature": 0.7,
+            "maxTokens": 4000,
+        },
     },
     "knowledge-retrieval": {
         "label": "Knowledge Retrieval",
@@ -151,7 +158,8 @@ async def get_node_types(
                     category=metadata.get("category"),
                     description=metadata.get("description"),
                     input_ports=port_schema.inputs if port_schema else None,
-                    output_ports=port_schema.outputs if port_schema else None
+                    output_ports=port_schema.outputs if port_schema else None,
+                    default_data=metadata.get("default_data")
                 )
                 node_types.append(node_type_info)
                 processed_types.add(node_type_str)
@@ -209,7 +217,8 @@ async def get_node_type(
                     category=metadata.get("category"),
                     description=metadata.get("description"),
                     input_ports=port_schema.inputs if port_schema else None,
-                    output_ports=port_schema.outputs if port_schema else None
+                    output_ports=port_schema.outputs if port_schema else None,
+                    default_data=metadata.get("default_data")
                 )
             except Exception as e:
                 logger.error(f"Failed to get V2 node info for {node_type}: {e}")

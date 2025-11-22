@@ -4,7 +4,7 @@
 워크플로우 draft 생성/수정, 발행, 버전 목록 조회 등의 기능을 제공합니다.
 """
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, update
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import logging
@@ -66,6 +66,8 @@ class WorkflowVersionService:
             existing_draft.output_schema = output_schema
             existing_draft.updated_at = datetime.now()
 
+            await self._touch_bot_updated_at(bot_id)
+
             await self.db.commit()
             await self.db.refresh(existing_draft)
 
@@ -91,6 +93,7 @@ class WorkflowVersionService:
                 created_by=creator_uuid
             )
             self.db.add(draft)
+            await self._touch_bot_updated_at(bot_id)
             await self.db.commit()
             await self.db.refresh(draft)
 
@@ -197,6 +200,7 @@ class WorkflowVersionService:
         bot.use_workflow_v2 = True
         logger.info(f"Enabled workflow V2 for bot {bot_id}")
 
+        await self._touch_bot_updated_at(bot_id)
         await self.db.commit()
         await self.db.refresh(draft)
 
@@ -221,6 +225,14 @@ class WorkflowVersionService:
 
         logger.info(f"Published workflow version {new_version} for bot {bot_id}")
         return draft
+
+    async def _touch_bot_updated_at(self, bot_id: str) -> None:
+        """봇의 updated_at을 최신 시각으로 업데이트"""
+        await self.db.execute(
+            update(Bot)
+                .where(Bot.bot_id == bot_id)
+                .values(updated_at=datetime.now())
+        )
 
     async def list_versions(
         self,
@@ -409,12 +421,12 @@ class WorkflowVersionService:
 
         for node in nodes:
             node_type = node.get("type")
-            node_ports = node.get("ports", {})  # V2 구조: node.ports
+            node_ports = node.get("ports") or {}  # V2 구조: node.ports (None 처리)
 
             # Start 노드: 출력 포트를 input_schema로 사용
             if node_type == "start":
                 has_start_node = True
-                outputs = node_ports.get("outputs", [])
+                outputs = node_ports.get("outputs", []) if isinstance(node_ports, dict) else []
                 if outputs:
                     input_schema = [self._port_to_dict(port) for port in outputs]
                     logger.debug(f"Extracted input_schema from Start node: {len(outputs)} ports")
@@ -424,7 +436,7 @@ class WorkflowVersionService:
             # End 노드: 입력 포트를 output_schema로 사용
             elif node_type == "end":
                 has_end_node = True
-                inputs = node_ports.get("inputs", [])
+                inputs = node_ports.get("inputs", []) if isinstance(node_ports, dict) else []
                 if inputs:
                     output_schema = [self._port_to_dict(port) for port in inputs]
                     logger.debug(f"Extracted output_schema from End node: {len(inputs)} ports")

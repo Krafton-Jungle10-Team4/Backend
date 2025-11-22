@@ -324,6 +324,7 @@ class NodeTypeInfo(BaseModel):
     description: Optional[str] = Field(None, description="노드 설명")
     input_ports: Optional[List[PortDefinition]] = Field(None, description="입력 포트 목록")
     output_ports: Optional[List[PortDefinition]] = Field(None, description="출력 포트 목록")
+    default_data: Optional[Dict[str, Any]] = Field(None, description="노드 생성 시 기본값")
 
 
 class NodeTypesResponse(BaseModel):
