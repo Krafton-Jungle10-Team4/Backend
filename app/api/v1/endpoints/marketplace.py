@@ -289,12 +289,16 @@ async def import_marketplace_workflow(
     마켓플레이스 아이템의 워크플로우를 내 스튜디오로 가져옵니다.
 
     - 워크플로우를 복제하여 새로운 봇과 draft 버전으로 생성합니다.
+    - 참조하는 라이브러리 에이전트들도 재귀적으로 복제합니다.
     - 다운로드 카운트가 자동으로 증가합니다.
     """
     from app.services.bot_service import get_bot_service, generate_bot_id
     from app.schemas.bot import CreateBotRequest
     from app.schemas.workflow import Workflow
     import uuid as uuid_module
+    import logging
+
+    logger = logging.getLogger(__name__)
 
     # 마켓플레이스 아이템 조회
     stmt = select(MarketplaceItem).where(MarketplaceItem.id == item_id)
@@ -326,9 +330,136 @@ async def import_marketplace_workflow(
     if not workflow_dict:
         raise HTTPException(status_code=400, detail="워크플로우 데이터가 없습니다.")
 
+    # 참조되는 라이브러리 에이전트들을 재귀적으로 복제
+    # UUID 매핑: 원본 라이브러리 에이전트 ID → 복제된 라이브러리 에이전트 ID
+    library_id_mapping = {}
+
+    async def clone_library_agents_recursively(graph: dict):
+        """워크플로우 그래프에서 참조하는 모든 라이브러리 에이전트를 재귀적으로 복제"""
+        nodes = graph.get("nodes", [])
+
+        for node in nodes:
+            data = node.get("data", {}) or {}
+            config = data.get("config", {}) or {}
+            node_type = data.get("type") or node.get("type")
+
+            if node_type == "imported-workflow":
+                # source_version_id 추출
+                source_version_id = config.get("source_version_id") or config.get("template_id")
+
+                if not source_version_id:
+                    logger.warning(f"Imported 노드 {node.get('id')}에 source_version_id가 없습니다.")
+                    continue
+
+                # 이미 복제된 경우 스킵
+                if source_version_id in library_id_mapping:
+                    logger.info(f"라이브러리 에이전트 {source_version_id}는 이미 복제되었습니다.")
+                    continue
+
+                try:
+                    # 원본 라이브러리 에이전트 조회
+                    source_version_uuid = uuid_module.UUID(source_version_id)
+                    stmt = select(BotWorkflowVersion).where(BotWorkflowVersion.id == source_version_uuid)
+                    result = await db.execute(stmt)
+                    source_library = result.scalar_one_or_none()
+
+                    if not source_library:
+                        logger.warning(f"라이브러리 에이전트 {source_version_id}를 찾을 수 없습니다.")
+                        continue
+
+                    # 중첩된 라이브러리가 있는지 재귀적으로 복제
+                    if source_library.graph:
+                        await clone_library_agents_recursively(source_library.graph)
+
+                    # 라이브러리 에이전트 복제
+                    new_library_id = uuid_module.uuid4()
+                    new_library = BotWorkflowVersion(
+                        id=new_library_id,
+                        bot_id=None,  # 라이브러리는 봇에 속하지 않음
+                        version=source_library.version,
+                        status="draft",
+                        graph=source_library.graph,
+                        environment_variables=source_library.environment_variables or {},
+                        conversation_variables=source_library.conversation_variables or {},
+                        features=source_library.features or {},
+                        created_by=current_user.uuid,
+                        library_name=source_library.library_name,
+                        library_description=source_library.library_description,
+                        library_category=source_library.library_category,
+                        library_tags=source_library.library_tags,
+                        library_visibility=source_library.library_visibility,
+                        is_in_library=True,
+                        input_schema=source_library.input_schema,
+                        output_schema=source_library.output_schema,
+                        node_count=source_library.node_count,
+                        edge_count=source_library.edge_count,
+                        port_definitions=source_library.port_definitions,
+                    )
+
+                    db.add(new_library)
+                    await db.flush()
+
+                    # UUID 매핑 저장
+                    library_id_mapping[source_version_id] = str(new_library_id)
+                    logger.info(f"라이브러리 에이전트 복제: {source_version_id} → {new_library_id}")
+
+                except Exception as e:
+                    logger.error(f"라이브러리 에이전트 {source_version_id} 복제 실패: {e}")
+                    raise HTTPException(status_code=500, detail=f"라이브러리 복제 실패: {str(e)}")
+
+    # 라이브러리 에이전트 복제 실행
+    await clone_library_agents_recursively(workflow_dict)
+
+    # 워크플로우 그래프에서 source_version_id를 새로운 ID로 업데이트하고 포트 스키마 동기화
+    async def update_library_references(graph: dict):
+        """워크플로우 그래프의 라이브러리 참조 ID를 복제된 ID로 업데이트하고 포트 스키마 동기화"""
+        nodes = graph.get("nodes", [])
+
+        for node in nodes:
+            data = node.get("data", {})
+            if not data:
+                node["data"] = data = {}
+
+            config = data.get("config", {})
+            if not config:
+                data["config"] = config = {}
+
+            node_type = data.get("type") or node.get("type")
+
+            if node_type == "imported-workflow":
+                old_id = config.get("source_version_id") or config.get("template_id")
+
+                if old_id and old_id in library_id_mapping:
+                    new_id = library_id_mapping[old_id]
+                    config["source_version_id"] = new_id
+                    logger.info(f"노드 {node.get('id')}의 source_version_id 업데이트: {old_id} → {new_id}")
+
+                    # 복제된 라이브러리의 포트 스키마로 노드 업데이트
+                    try:
+                        library_uuid = uuid_module.UUID(new_id)
+                        stmt = select(BotWorkflowVersion).where(BotWorkflowVersion.id == library_uuid)
+                        result = await db.execute(stmt)
+                        library_version = result.scalar_one_or_none()
+
+                        if library_version:
+                            # 포트 스키마 동기화
+                            if library_version.input_schema or library_version.output_schema:
+                                ports = {
+                                    "inputs": library_version.input_schema or [],
+                                    "outputs": library_version.output_schema or []
+                                }
+                                config["ports"] = ports
+                                config["input_schema"] = library_version.input_schema or []
+                                config["output_schema"] = library_version.output_schema or []
+                                logger.info(f"노드 {node.get('id')}의 포트 스키마 동기화 완료")
+                    except Exception as e:
+                        logger.warning(f"노드 {node.get('id')}의 포트 스키마 동기화 실패: {e}")
+
+    await update_library_references(workflow_dict)
+
     # 새 봇 생성 (workflow 없이 - Bot 테이블에만 메타데이터 저장)
     create_request = CreateBotRequest(
-        name=f"{item.display_name} (Imported)",
+        name=item.display_name,
         goal=original_bot.goal,
         personality=original_bot.personality,
         workflow=None,  # workflow는 나중에 BotWorkflowVersion으로 생성
@@ -356,7 +487,7 @@ async def import_marketplace_workflow(
             bot_id=new_bot.bot_id,
             version="v0.1",
             status="draft",
-            graph=workflow_dict,  # 마켓플레이스 워크플로우 전체 복제
+            graph=workflow_dict,  # 마켓플레이스 워크플로우 전체 복제 (라이브러리 참조 업데이트됨)
             environment_variables=workflow_version.environment_variables or {},
             conversation_variables=workflow_version.conversation_variables or {},
             features=workflow_version.features or {},
@@ -376,11 +507,14 @@ async def import_marketplace_workflow(
     item.download_count += 1
     await db.commit()
 
+    logger.info(f"마켓플레이스 워크플로우 가져오기 완료: {len(library_id_mapping)}개 라이브러리 복제됨")
+
     return {
         "message": "워크플로우를 성공적으로 가져왔습니다.",
         "bot_id": new_bot.bot_id,
         "bot_name": new_bot.name,
-        "workflow_version_id": str(draft_version.id)
+        "workflow_version_id": str(draft_version.id),
+        "cloned_libraries_count": len(library_id_mapping)
     }
 
 
