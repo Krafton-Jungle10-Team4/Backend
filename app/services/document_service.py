@@ -41,7 +41,7 @@ class DocumentService:
     async def process_and_store_document(
         self,
         file: UploadFile,
-        bot_id: str,
+        bot_id: Optional[str],
         user_uuid: str,
         db = None
     ) -> DocumentUploadResponse:
@@ -50,7 +50,7 @@ class DocumentService:
 
         Args:
             file: 업로드 파일
-            bot_id: 봇 ID (봇별 임베딩 분리용)
+            bot_id: 봇 ID (선택 사항, 지정되지 않으면 사용자 전역 지식으로 저장)
             user_uuid: 문서를 업로드한 사용자 UUID (유저 간 공유 기준)
             db: 데이터베이스 세션 (AsyncSession)
         """

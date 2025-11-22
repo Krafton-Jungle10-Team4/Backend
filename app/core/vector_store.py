@@ -94,17 +94,22 @@ class VectorStore:
         db = self._get_session()
 
         try:
-            # bot_id가 유효한지 확인 (실제 봇이 존재해야 함)
-            result = await db.execute(
-                select(Bot).where(Bot.bot_id == self.bot_id)
-            )
-            existing_bot = result.scalar_one_or_none()
+            # bot_id가 주어진 경우에만 봇 존재 여부 확인
+            if self.bot_id:
+                result = await db.execute(
+                    select(Bot).where(Bot.bot_id == self.bot_id)
+                )
+                existing_bot = result.scalar_one_or_none()
 
-            if not existing_bot:
-                logger.error(f"bot_id={self.bot_id}에 해당하는 봇이 없습니다")
-                raise VectorStoreDocumentError(
-                    message=f"봇이 존재하지 않습니다: {self.bot_id}",
-                    details={"bot_id": self.bot_id}
+                if not existing_bot:
+                    logger.error(f"bot_id={self.bot_id}에 해당하는 봇이 없습니다")
+                    raise VectorStoreDocumentError(
+                        message=f"봇이 존재하지 않습니다: {self.bot_id}",
+                        details={"bot_id": self.bot_id}
+                    )
+            else:
+                logger.info(
+                    "[VectorStore] bot_id가 지정되지 않아 사용자 전역 지식 베이스에 문서를 저장합니다."
                 )
 
             # 첫 번째 metadata 확인 (디버깅)
@@ -178,12 +183,26 @@ class VectorStore:
                 distance_expr.label('distance')
             )
 
-            # user_uuid 기반 필터링 (bot_id 필터링 제거 - 같은 유저의 모든 문서 검색)
-            query = self._apply_user_filter(query)
-
-            # document_id 필터링 (특정 문서만 검색)
+            # document_id 필터링과 user_uuid 필터링 처리
             if document_ids:
-                query = query.where(DocumentEmbedding.document_id.in_(document_ids))
+                # document_ids가 제공된 경우: Documents 테이블과 조인하여 user_uuid 확인
+                from app.models.document import Document
+                if self.user_uuid:
+                    # Documents 테이블과 직접 조인하여 user_uuid와 document_ids를 모두 만족하는 문서만 검색
+                    # ✅ bot_id는 검색 조건에서 제외, document_id만으로 검색
+                    query = query.join(
+                        Document,
+                        DocumentEmbedding.document_id == Document.document_id
+                    ).where(
+                        Document.user_uuid == self.user_uuid,
+                        Document.document_id.in_(document_ids)
+                    )
+                else:
+                    # user_uuid가 없으면 document_ids만 필터링
+                    query = query.where(DocumentEmbedding.document_id.in_(document_ids))
+            else:
+                # document_ids가 없으면 기존 user_uuid 필터 적용
+                query = self._apply_user_filter(query)
 
             # 메타데이터 필터 적용
             if filter_dict:
@@ -258,7 +277,17 @@ class VectorStore:
                 metadatas.append(result.doc_metadata)
                 distances.append(float(distance))
 
-            logger.info(f"벡터 검색 완료: user_uuid={self.user_uuid}, {len(results)}개 결과")
+            # 유사도 점수 로깅 (거리 값을 유사도로 변환하여 출력)
+            if len(results) > 0:
+                similarity_scores = [round(1.0 / (1.0 + d), 3) for d in distances]
+                distance_str = ", ".join([f"{d:.4f}" for d in distances[:5]])  # 최대 5개만 표시
+                similarity_str = ", ".join([f"{s:.3f}" for s in similarity_scores[:5]])
+                logger.info(
+                    f"벡터 검색 완료: user_uuid={self.user_uuid}, {len(results)}개 결과 | "
+                    f"거리(distance): [{distance_str}], 유사도(similarity): [{similarity_str}]"
+                )
+            else:
+                logger.info(f"벡터 검색 완료: user_uuid={self.user_uuid}, {len(results)}개 결과")
 
             return {
                 "ids": [ids],

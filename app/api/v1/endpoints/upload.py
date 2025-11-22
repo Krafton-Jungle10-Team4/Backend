@@ -36,7 +36,7 @@ router = APIRouter()
 async def upload_document(
     request: Request,
     file: UploadFile = File(..., description="업로드할 문서 파일"),
-    bot_id: str = Query(..., description="봇 ID (필수, 형식: bot_{timestamp}_{random})"),
+    bot_id: Optional[str] = Query(None, description="봇 ID (선택, 없으면 사용자 전역 지식 베이스에 저장)"),
     user: User = Depends(get_current_user_from_jwt_only),
     doc_service: DocumentService = Depends(get_document_service),
     db: AsyncSession = Depends(get_db)
@@ -50,9 +50,12 @@ async def upload_document(
         Authorization: Bearer <token>
 
     Query Parameters:
-        bot_id: 문서를 저장할 봇 ID
+        bot_id: 문서를 저장할 봇 ID (선택, 미지정 시 사용자 전역 지식 베이스에 저장)
     """
-    logger.info(f"파일 업로드 요청: {file.filename} (User: {user.email}, UUID: {user.uuid}, Bot ID: {bot_id})")
+    logger.info(
+        f"파일 업로드 요청: {file.filename} "
+        f"(User: {user.email}, UUID: {user.uuid}, Bot ID: {bot_id or 'user-library'})"
+    )
 
     # 파일 크기 검증
     file.file.seek(0, 2)
@@ -294,7 +297,7 @@ async def delete_document(
 async def upload_document_async(
     request: Request,
     file: UploadFile = File(..., description="업로드할 문서 파일"),
-    bot_id: str = Query(..., description="봇 ID (필수, 형식: bot_{timestamp}_{random})"),
+    bot_id: Optional[str] = Query(None, description="봇 ID (선택, 없으면 사용자 전역 지식 베이스에 저장)"),
     user: User = Depends(get_current_user_from_jwt_only),
     db: AsyncSession = Depends(get_db)
 ):
@@ -310,7 +313,7 @@ async def upload_document_async(
         Authorization: Bearer <token>
 
     Query Parameters:
-        bot_id: 문서를 저장할 봇 ID
+        bot_id: 문서를 저장할 봇 ID (선택, 미지정 시 사용자 전역 지식 베이스에 저장)
 
     Returns:
         job_id: 문서 ID (상태 조회에 사용)
@@ -318,7 +321,8 @@ async def upload_document_async(
         message: 안내 메시지
         estimated_time: 예상 처리 시간 (초)
     """
-    logger.info(f"[비동기] 파일 업로드 요청: {file.filename} (User: {user.email}, Bot ID: {bot_id})")
+    effective_bot_id = bot_id or f"user_library_{user.uuid}"
+    logger.info(f"[비동기] 파일 업로드 요청: {file.filename} (User: {user.email}, Bot ID: {effective_bot_id})")
 
     # 1. 파일 검증 (크기)
     file.file.seek(0, 2)
@@ -349,7 +353,7 @@ async def upload_document_async(
         # 4. S3에 파일 업로드
         s3_client = get_s3_client()
         file_content = await file.read()
-        s3_key = s3_client.generate_s3_key(bot_id, document_id, file.filename)
+        s3_key = s3_client.generate_s3_key(effective_bot_id, document_id, file.filename)
         s3_uri = await s3_client.upload_file(
             file_content=file_content,
             key=s3_key,
@@ -360,7 +364,7 @@ async def upload_document_async(
         now = datetime.utcnow()
         document = Document(
             document_id=document_id,
-            bot_id=bot_id,
+            bot_id=effective_bot_id,
             user_uuid=user.uuid,
             original_filename=file.filename,
             file_extension=file_extension,
@@ -377,7 +381,7 @@ async def upload_document_async(
         sqs_client = get_sqs_client()
         message_body = {
             "document_id": document_id,
-            "bot_id": bot_id,
+            "bot_id": effective_bot_id,
             "user_uuid": user.uuid,
             "s3_uri": s3_uri,
             "original_filename": file.filename,

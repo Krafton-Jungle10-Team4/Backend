@@ -78,15 +78,30 @@ class VectorService:
             distances = search_results.get("distances", [[]])[0]
 
             for i, (doc, meta) in enumerate(zip(documents, metadatas)):
-                similarity = 1.0 / (1.0 + distances[i]) if i < len(distances) else 0.0
+                distance = distances[i] if i < len(distances) else 2.0
+                similarity = 1.0 / (1.0 + distance)
 
                 results.append({
                     "content": doc,
                     "metadata": meta,
-                    "similarity": round(similarity, 3)
+                    "similarity": round(similarity, 3),
+                    "distance": round(distance, 4)  # 거리 값도 포함
                 })
 
-        logger.info(f"[VectorService] 검색 완료: {len(results)}개 문서")
+            # 유사도 점수 상세 로깅
+            if len(results) > 0:
+                similarity_scores = [r["similarity"] for r in results]
+                distance_scores = [r["distance"] for r in results]
+                avg_similarity = sum(similarity_scores) / len(similarity_scores)
+                min_similarity = min(similarity_scores)
+                max_similarity = max(similarity_scores)
+                logger.info(
+                    f"[VectorService] 검색 완료: {len(results)}개 문서 | "
+                    f"유사도 범위: {min_similarity:.3f} ~ {max_similarity:.3f} (평균: {avg_similarity:.3f}) | "
+                    f"거리 범위: {min(distance_scores):.4f} ~ {max(distance_scores):.4f}"
+                )
+            else:
+                logger.info(f"[VectorService] 검색 완료: {len(results)}개 문서")
         return results
 
     async def search(

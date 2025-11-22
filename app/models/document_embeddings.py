@@ -15,8 +15,8 @@ class DocumentEmbedding(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # 봇 연결 (bot_id 문자열로 변경: "bot_xxx" 또는 "session_xxx" 형식 지원)
-    bot_id = Column(String(100), ForeignKey("bots.bot_id", ondelete="CASCADE"), nullable=False, index=True)
+    # 봇 연결 (지식 문서 업로드 시에는 비어 있을 수 있음)
+    bot_id = Column(String(100), ForeignKey("bots.bot_id", ondelete="CASCADE"), nullable=True, index=True)
 
     # 원본 문서 연결 (Phase 0 - Setup에서 업로드된 문서 추적)
     document_id = Column(String(36), index=True, nullable=True, comment="documents 테이블의 document_id")

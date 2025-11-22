@@ -119,6 +119,13 @@ class LLMNodeV2(BaseNodeV2):
         if not context_text:
             logger.warning(f"[LLMNodeV2] Context is empty for node {self.node_id}. "
                           f"Variable mappings: {self.variable_mappings}")
+        
+        # 검색 결과 없음 메시지 감지 (KnowledgeNodeV2에서 반환한 메시지)
+        is_no_result = (
+            context_text and 
+            ("검색 결과가 없습니다" in context_text or 
+             "RAG 문서에 등록되지 않았습니다" in context_text)
+        )
 
         # 서비스 조회
         llm_service = context.get_service("llm_service")
@@ -231,12 +238,26 @@ class LLMNodeV2(BaseNodeV2):
                 )
             else:
                 logger.info(f"[LLMNodeV2] 기본 프롬프트 템플릿 사용 (prompt_template이 설정되지 않음)")
-                prompt = self._render_prompt(
-                    template="{context}\n\nQuestion: {query}\nAnswer:",
-                    query=query,
-                    context=context_text,
-                    system_prompt=system_prompt
-                )
+                # 검색 결과가 없는 경우 특별한 프롬프트 사용
+                if is_no_result:
+                    prompt = self._render_prompt(
+                        template=(
+                            "사용자 질문: {query}\n\n"
+                            "{context}\n\n"
+                            "위 메시지를 사용자에게 친절하게 전달하세요. "
+                            "기본 인사말이나 일반적인 응답을 하지 말고, 검색 결과가 없다는 것을 명확히 알려주세요."
+                        ),
+                        query=query,
+                        context=context_text,
+                        system_prompt=system_prompt
+                    )
+                else:
+                    prompt = self._render_prompt(
+                        template="{context}\n\nQuestion: {query}\nAnswer:",
+                        query=query,
+                        context=context_text,
+                        system_prompt=system_prompt
+                    )
             
             # 프롬프트 로깅 (처음 500자만)
             logger.info(f"[LLMNodeV2] 프롬프트 생성 완료: {len(prompt)} chars")
@@ -257,12 +278,23 @@ class LLMNodeV2(BaseNodeV2):
         try:
             # 기본 시스템 프롬프트: 한국어 응답 강제
             default_system_prompt = "당신은 유능한 AI 어시스턴트입니다. 사용자에게 친절하고 명확하게 답변해야 합니다. **항상 한국어로 응답하세요.**"
+            
+            # 검색 결과가 없는 경우 추가 지시사항
+            if is_no_result:
+                default_system_prompt += (
+                    "\n\n**중요: 검색 결과가 없는 경우, 사용자에게 '해당 지식은 RAG 문서에 등록되지 않았습니다' "
+                    "또는 유사한 메시지를 명확하게 전달하세요. 기본 인사말이나 일반적인 응답을 하지 마세요.**"
+                )
 
             # 사용자가 제공한 system_prompt가 있으면 결합, 없으면 기본 시스템 프롬프트만 사용
             final_system_prompt = system_prompt if system_prompt else default_system_prompt
             if system_prompt and system_prompt != default_system_prompt:
                 # 사용자 시스템 프롬프트 + 한국어 강제
                 final_system_prompt = f"{system_prompt}\n\n**중요: 반드시 한국어로 응답하세요.**"
+                if is_no_result:
+                    final_system_prompt += (
+                        "\n\n**검색 결과가 없는 경우, 사용자에게 명확하게 알려주세요.**"
+                    )
 
             # stream_handler가 있으면 스트리밍 사용, 없으면 일반 생성 사용
             if stream_handler:

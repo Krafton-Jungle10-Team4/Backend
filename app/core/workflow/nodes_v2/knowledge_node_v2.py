@@ -120,8 +120,14 @@ class KnowledgeNodeV2(BaseNodeV2):
             # 결과 처리
             if not results:
                 logger.warning("No documents found")
+                # 검색 결과가 없을 때 명시적인 메시지 반환
+                no_result_message = (
+                    "검색 결과가 없습니다. "
+                    "해당 질문에 대한 정보가 RAG 문서에 등록되지 않았습니다. "
+                    "다른 질문을 시도해주시거나, 필요한 문서를 업로드해주세요."
+                )
                 return {
-                    "context": "",
+                    "context": no_result_message,
                     "documents": [],
                     "doc_count": 0
                 }
