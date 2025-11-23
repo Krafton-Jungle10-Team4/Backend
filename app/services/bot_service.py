@@ -361,8 +361,8 @@ class BotService:
             if not personality and goal_enum:
                 personality = self._get_default_personality(goal_enum.value)
 
-            # 4. description 생성 (goal이 있으면 사용, 없으면 name 기반)
-            description = goal_str if goal_str else f"{request.name} 봇"
+            # 4. description 생성 (goal이 있으면 사용, 없으면 name 사용)
+            description = goal_str if goal_str else request.name
 
             # 5. workflow 처리: 없거나 기본 노드만 있으면 자동 생성
             workflow_dict = None
@@ -844,7 +844,7 @@ class BotService:
                 setattr(bot, field, goal_value)
 
                 # 사용자가 별도로 설명을 입력하지 않았다면 goal과 동기화
-                if previous_description in (None, previous_goal, f"{bot.name} 봇"):
+                if previous_description in (None, previous_goal, bot.name):
                     bot.description = goal_value
             elif field == "workflow" and value is not None:
                 # Pydantic Workflow 객체 → dict 변환
