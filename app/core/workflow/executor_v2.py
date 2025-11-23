@@ -192,7 +192,7 @@ class WorkflowExecutorV2:
             )
 
             # 노드 실행
-            final_response = await self._execute_v2_nodes(stream_handler, text_normalizer)
+            final_response = await self._execute_v2_nodes(stream_handler, text_normalizer, db)
 
             # 대화 변수 저장
             try:
@@ -275,7 +275,8 @@ class WorkflowExecutorV2:
     async def _execute_v2_nodes(
         self,
         stream_handler: Optional[Any] = None,
-        text_normalizer: Optional[Callable[[str], str]] = None
+        text_normalizer: Optional[Callable[[str], str]] = None,
+        db: Any = None
     ) -> str:
         """
         V2 노드들을 순서대로 실행
@@ -325,12 +326,19 @@ class WorkflowExecutorV2:
                 raise asyncio.CancelledError()
 
             node_id = ready_queue.popleft()
+            
+            # 중복 실행 방지 강화: 실행 전에 체크하고 즉시 추가 (낙관적 잠금)
             if node_id in executed_nodes:
+                logger.warning(f"노드 {node_id}는 이미 실행되었습니다. 스킵합니다.")
                 continue
+            
+            # 실행 시작 전 executed_nodes에 추가 (중복 실행 방지)
+            executed_nodes.add(node_id)
 
             node = self.nodes.get(node_id)
             if not node:
                 logger.warning(f"V2 노드 {node_id}를 찾을 수 없습니다")
+                executed_nodes.discard(node_id)  # 실행 실패 시 제거 (재시도 가능하도록)
                 continue
 
             node_start_time = datetime.utcnow()
@@ -392,7 +400,7 @@ class WorkflowExecutorV2:
                     answer_meta = context.metadata.get("answer")
                     if isinstance(answer_meta, dict):
                         execution_metadata = answer_meta.get(node_id)
-                self._create_node_execution(
+                await self._create_node_execution(
                     node_id=node_id,
                     node_type=node.__class__.__name__,
                     execution_order=self.execution_order.index(node_id),
@@ -402,6 +410,7 @@ class WorkflowExecutorV2:
                     error_message=result.error,
                     started_at=node_start_time,
                     finished_at=node_end_time,
+                    db=db,
                     execution_metadata=execution_metadata,
                     process_data=process_data
                 )
@@ -410,8 +419,6 @@ class WorkflowExecutorV2:
 
                 if result.status == NodeStatus.FAILED:
                     raise RuntimeError(result.error or f"V2 Node {node_id} failed")
-
-                executed_nodes.add(node_id)
                 all_edges_for_node = edges_by_source.get(node_id, [])
                 outgoing_edges = self._select_outgoing_edges(
                     all_edges_for_node,
@@ -511,7 +518,7 @@ class WorkflowExecutorV2:
                     if isinstance(answer_meta, dict):
                         execution_metadata = answer_meta.get(node_id)
                     process_data = self._extract_process_data(context, node_id)
-                self._create_node_execution(
+                await self._create_node_execution(
                     node_id=node_id,
                     node_type=node.__class__.__name__,
                     execution_order=self.execution_order.index(node_id),
@@ -521,9 +528,13 @@ class WorkflowExecutorV2:
                     error_message=str(e),
                     started_at=node_start_time,
                     finished_at=node_end_time,
+                    db=db,
                     execution_metadata=execution_metadata,
                     process_data=process_data
                 )
+                
+                # 실패 시 executed_nodes에서 제거하지 않음 (이미 실행된 것으로 간주)
+                # 하지만 예외를 다시 발생시켜 워크플로우 실행 중단
 
                 if stream_handler:
                     await stream_handler.emit_node_event(
@@ -1064,12 +1075,9 @@ class WorkflowExecutorV2:
             if error_message:
                 self.execution_run.error_message = error_message
 
-            # 캐시된 노드 실행 기록들을 DB에 저장
-            # node_executions 관계에 접근하지 않고 db.add()만 사용 (비동기 컨텍스트 문제 방지)
-            if self._node_executions_cache:
-                for node_exec in self._node_executions_cache:
-                    # workflow_run_id는 이미 설정되어 있으므로 관계 접근 불필요
-                    db.add(node_exec)
+            # 노드 실행 기록들은 이미 _create_node_execution에서 flush()로 저장됨
+            # 여기서는 추가 저장 없이 토큰 합계만 계산
+            # (이미 저장된 객체를 다시 add()하면 중복 저장될 수 있음)
 
             # 토큰 합계 계산 (노드 실행 기록에서)
             total_tokens = sum(
@@ -1088,7 +1096,7 @@ class WorkflowExecutorV2:
             logger.error(f"실행 기록 완료 처리 실패: {str(e)}")
             await db.rollback()
 
-    def _create_node_execution(
+    async def _create_node_execution(
         self,
         node_id: str,
         node_type: str,
@@ -1099,11 +1107,12 @@ class WorkflowExecutorV2:
         error_message: Optional[str],
         started_at: datetime,
         finished_at: datetime,
+        db: Any,
         execution_metadata: Optional[Dict[str, Any]] = None,
         process_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
-        노드 실행 기록 생성
+        노드 실행 기록 생성 및 즉시 저장
 
         Args:
             node_id: 노드 ID
@@ -1115,9 +1124,10 @@ class WorkflowExecutorV2:
             error_message: 에러 메시지
             started_at: 시작 시간
             finished_at: 종료 시간
+            db: 데이터베이스 세션
             execution_metadata: 실행 메타데이터 (Answer 노드 렌더링 정보 등)
         """
-        if not self.execution_run:
+        if not self.execution_run or not db:
             return
 
         try:
@@ -1125,8 +1135,11 @@ class WorkflowExecutorV2:
 
             # 토큰 사용량 추출 (LLM 노드의 경우)
             tokens_used = 0
+            model_used = None
             if node_type == "LLMNodeV2" and outputs:
                 tokens_used = outputs.get("tokens", 0)
+                model_used = outputs.get("model")
+                logger.info(f"[WorkflowExecutorV2] LLM 노드 실행 기록: node_id={node_id}, model={model_used}, tokens={tokens_used}")
 
             # 출력 데이터에 실행 메타데이터 병합
             final_outputs = outputs.copy() if outputs else {}
@@ -1150,14 +1163,19 @@ class WorkflowExecutorV2:
                 tokens_used=tokens_used
             )
 
-            # 메모리 캐시에 추가 (비동기 컨텍스트 문제 방지)
-            # 나중에 _finalize_execution_run에서 한 번에 DB에 저장
+            # 즉시 DB에 저장 (flush 사용하여 트랜잭션 유지)
+            db.add(node_execution)
+            await db.flush()  # commit 대신 flush 사용 (트랜잭션 유지, ID 생성 보장)
+            
+            # 메모리 캐시에도 추가 (최종 커밋 시 토큰 합계 계산용)
             self._node_executions_cache.append(node_execution)
 
-            logger.debug(
-                f"노드 실행 기록 생성: node_id={node_id}, "
-                f"status={status}, elapsed={elapsed_ms}ms"
+            logger.info(
+                f"[WorkflowExecutorV2] 노드 실행 기록 저장: node_id={node_id}, "
+                f"node_type={node_type}, status={status}, elapsed={elapsed_ms}ms, "
+                f"tokens={tokens_used}, model={model_used if node_type == 'LLMNodeV2' else 'N/A'}"
             )
 
         except Exception as e:
-            logger.error(f"노드 실행 기록 생성 실패: {str(e)}")
+            logger.error(f"노드 실행 기록 저장 실패: {str(e)}")
+            # 실패해도 워크플로우 실행은 계속 진행
