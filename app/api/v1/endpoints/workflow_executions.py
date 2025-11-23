@@ -405,6 +405,11 @@ async def get_node_execution_detail(
                 detail="노드 실행 기록을 찾을 수 없습니다"
             )
 
+        # LLM 노드인 경우 outputs에서 모델 정보 추출
+        model = None
+        if (node_execution.node_type.lower() == "llm" or node_execution.node_type == "LLMNodeV2") and node_execution.outputs:
+            model = node_execution.outputs.get("model")
+        
         return NodeExecutionDetail(
             id=str(node_execution.id),
             workflow_run_id=str(node_execution.workflow_run_id),
@@ -417,6 +422,7 @@ async def get_node_execution_detail(
             finished_at=node_execution.finished_at,
             elapsed_time=node_execution.elapsed_time,
             tokens_used=node_execution.tokens_used,
+            model=model,
             is_truncated=node_execution.is_truncated,
             created_at=node_execution.created_at,
             inputs=node_execution.inputs,
