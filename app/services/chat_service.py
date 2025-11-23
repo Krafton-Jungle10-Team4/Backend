@@ -223,7 +223,8 @@ class ChatService:
         self,
         request: ChatRequest,
         user_uuid: str,
-        db: Optional[AsyncSession] = None
+        db: Optional[AsyncSession] = None,
+        cancel_event: Optional[asyncio.Event] = None
     ) -> AsyncGenerator[str, None]:
         """워크플로우/일반 RAG 공통 스트리밍 응답 생성"""
         logger.info(f"[ChatService] 스트리밍 요청: '{request.message[:50]}...' (bot_id={request.bot_id})")
@@ -251,7 +252,15 @@ class ChatService:
             if bot.workflow or getattr(bot, "use_workflow_v2", False):
                 if not bot.workflow and getattr(bot, "use_workflow_v2", False):
                     logger.info(f"[ChatService] Bot {request.bot_id}는 V2 워크플로우를 사용합니다 (published graph 로드)")
-                async for payload in self._stream_workflow_response(bot, request, db):
+                async for payload in self._stream_workflow_response(
+                    bot,
+                    request,
+                    db,
+                    cancel_event=cancel_event
+                ):
+                    if cancel_event and cancel_event.is_set():
+                        logger.info("[ChatService] Cancel event detected - stop emitting workflow payloads")
+                        break
                     yield payload
                 return
 
@@ -299,17 +308,28 @@ class ChatService:
                 max_tokens=max_tokens,
                 model=resolved_model
             ):
+                if cancel_event and cancel_event.is_set():
+                    logger.info("[ChatService] Streaming cancelled during RAG pipeline generation")
+                    return
                 normalized_chunk = strip_markdown_preserve_whitespace(chunk)
                 if not normalized_chunk:
                     continue
                 content_event = ContentEvent(data=normalized_chunk)
                 yield json.dumps(content_event.model_dump(), ensure_ascii=False)
 
+            if cancel_event and cancel_event.is_set():
+                logger.info("[ChatService] Cancellation requested before sending sources")
+                return
+
             if request.include_sources:
                 sources = self._build_sources(retrieved_chunks, search_results)
                 if sources:
                     sources_event = SourcesEvent(data=sources)
                     yield json.dumps(sources_event.model_dump(), ensure_ascii=False)
+
+            if cancel_event and cancel_event.is_set():
+                logger.info("[ChatService] Cancellation requested before tracking usage")
+                return
 
             await self._track_usage_from_client(
                 db=db,
@@ -358,7 +378,8 @@ class ChatService:
         self,
         bot,
         request: ChatRequest,
-        db: AsyncSession
+        db: AsyncSession,
+        cancel_event: Optional[asyncio.Event] = None
     ) -> AsyncGenerator[str, None]:
         """워크플로우 실행 결과를 실시간으로 전송"""
         from app.services.vector_service import VectorService
@@ -408,12 +429,17 @@ class ChatService:
                     vector_service=vector_service,
                     llm_service=llm_service,
                     stream_handler=stream_handler,
-                    text_normalizer=strip_markdown_preserve_whitespace
+                    text_normalizer=strip_markdown_preserve_whitespace,
+                    cancel_event=cancel_event
                 )
 
                 # 최종 응답은 이미 LLM 노드에서 스트리밍되었으므로 재전송하지 않음
                 # 중복 출력 방지를 위해 final_response 전송 코드 제거
                 logger.info(f"[ChatService] 워크플로우 스트리밍 완료: {len(final_response) if final_response else 0}자")
+
+            except asyncio.CancelledError:
+                logger.info("[ChatService] 워크플로우 실행이 취소되었습니다.")
+                raise
 
             except Exception as exc:
                 logger.error(f"[ChatService] 워크플로우 스트리밍 실패: {exc}")
@@ -430,12 +456,23 @@ class ChatService:
 
         try:
             while True:
+                if cancel_event and cancel_event.is_set():
+                    logger.info("[ChatService] Cancel 이벤트 감지 - 워크플로우 스트림을 중단합니다.")
+                    if not task.done():
+                        task.cancel()
+                    break
+
                 payload = await queue.get()
                 if payload is None:
                     break
                 yield payload
         finally:
-            await task
+            if cancel_event and cancel_event.is_set() and not task.done():
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                logger.info("[ChatService] 워크플로우 태스크가 취소되었습니다.")
 
     async def _execute_rag_pipeline(
         self,

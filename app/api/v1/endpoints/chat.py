@@ -1,6 +1,8 @@
 """
 챗봇 API 엔드포인트
 """
+import asyncio
+import contextlib
 import logging
 import json
 from typing import AsyncGenerator
@@ -132,6 +134,20 @@ async def chat_stream(
         f"(session: {chat_request.session_id}, user: {user.uuid}, bot_id: {chat_request.bot_id})"
     )
 
+    cancel_event = asyncio.Event()
+
+    async def monitor_disconnect():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    if not cancel_event.is_set():
+                        logger.info("[ChatStream] 클라이언트 연결 해제 감지 - 취소 이벤트 설정")
+                        cancel_event.set()
+                    break
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            return
+
     async def event_generator() -> AsyncGenerator[str, None]:
         """SSE 이벤트 스트림 생성기"""
         def is_error_event(event_json: str) -> bool:
@@ -142,13 +158,16 @@ async def chat_stream(
             return payload.get("type") == "error"
 
         error_sent = False
+        client_disconnected = False
+        disconnect_task = asyncio.create_task(monitor_disconnect())
 
         try:
             # 스트리밍 응답 생성
             async for event_json in chat_service.generate_response_stream(
                 request=chat_request,
                 user_uuid=str(user.uuid),
-                db=db
+                db=db,
+                cancel_event=cancel_event
             ):
                 # SSE 형식: "data: {json}\n\n"
                 yield f"data: {event_json}\n\n"
@@ -157,9 +176,21 @@ async def chat_stream(
                     error_sent = True
                     break
 
+                if await request.is_disconnected():
+                    client_disconnected = True
+                    cancel_event.set()
+                    break
+
+        except asyncio.CancelledError:
+            client_disconnected = True
+            cancel_event.set()
+            logger.info("[ChatStream] 클라이언트 연결이 중단되어 스트리밍을 취소합니다.")
+            raise
+
         except Exception as e:
             # 예상치 못한 에러 (ChatService에서 처리하지 못한 경우)
             logger.error(f"[ChatStream] 스트리밍 실패: {e}", exc_info=True)
+            cancel_event.set()
 
             from app.models.chat import ErrorEvent, ErrorCode
             error_event = ErrorEvent(
@@ -169,7 +200,12 @@ async def chat_stream(
             yield f"data: {json.dumps(error_event.model_dump(), ensure_ascii=False)}\n\n"
             error_sent = True
 
-        if not error_sent:
+        finally:
+            disconnect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await disconnect_task
+
+        if not error_sent and not client_disconnected:
             # 완료 이벤트 (문자열 리터럴)
             yield "data: [DONE]\n\n"
             logger.info("[ChatStream] 스트리밍 완료")

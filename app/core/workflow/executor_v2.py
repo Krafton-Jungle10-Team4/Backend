@@ -4,6 +4,7 @@
 포트 기반 데이터 흐름과 변수 풀을 사용하는 V2 실행 엔진입니다.
 """
 
+import asyncio
 from typing import Dict, List, Any, Optional, Callable
 from collections import deque, defaultdict
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
@@ -45,6 +46,7 @@ class WorkflowExecutorV2:
         # 노드 실행 기록을 메모리에 저장 (비동기 컨텍스트 문제 방지)
         self._node_executions_cache: List[WorkflowNodeExecution] = []
         self._virtual_node_aliases = {"conv", "conversation", "env", "environment", "sys", "system"}
+        self.cancel_event: Optional[asyncio.Event] = None
 
     def _is_virtual_node(self, node_id: Optional[str]) -> bool:
         if not node_id:
@@ -66,7 +68,8 @@ class WorkflowExecutorV2:
         initial_node_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
         api_key_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        api_request_id: Optional[str] = None
+        api_request_id: Optional[str] = None,
+        cancel_event: Optional[asyncio.Event] = None
     ) -> str:
         """
         V2 워크플로우 실행
@@ -85,6 +88,7 @@ class WorkflowExecutorV2:
             api_key_id: API 키 ID (RESTful API 호출 시)
             user_id: 최종 사용자 ID (RESTful API 호출 시)
             api_request_id: API 요청 ID (추적용)
+            cancel_event: 실행 중단 신호
 
         Returns:
             str: 최종 응답
@@ -108,6 +112,7 @@ class WorkflowExecutorV2:
                     logger.warning(f"V2 워크플로우 경고: {warning}")
 
             self.workflow_version_id = workflow_data.get("workflow_version_id")
+            self.cancel_event = cancel_event
 
             # 변수 풀 초기화
             environment_vars = workflow_data.get("environment_variables", {})
@@ -211,6 +216,16 @@ class WorkflowExecutorV2:
 
             return final_response
 
+        except asyncio.CancelledError:
+            logger.info("V2 워크플로우 실행이 취소되었습니다.")
+            if self.execution_run:
+                await self._finalize_execution_run(
+                    status="failed",
+                    error_message="Cancelled by client",
+                    db=db
+                )
+            raise
+
         except Exception as e:
             logger.error(f"V2 워크플로우 실행 실패: {str(e)}")
 
@@ -305,6 +320,10 @@ class WorkflowExecutorV2:
         logger.info(f"📊 Initial ready_queue: {list(ready_queue)} (size={len(ready_queue)})")
 
         while ready_queue:
+            if self.cancel_event and self.cancel_event.is_set():
+                logger.info("🛑 Cancellation requested before processing next node.")
+                raise asyncio.CancelledError()
+
             node_id = ready_queue.popleft()
             if node_id in executed_nodes:
                 continue
@@ -474,6 +493,10 @@ class WorkflowExecutorV2:
                     len(executed_nodes),
                     len(self.nodes)
                 )
+
+            except asyncio.CancelledError:
+                logger.info(f"🛑 Node execution cancelled: {node_id}")
+                raise
 
             except Exception as e:
                 logger.error(f"V2 노드 {node_id} 실행 실패: {str(e)}")
