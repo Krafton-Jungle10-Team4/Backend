@@ -16,6 +16,7 @@ from app.core.exceptions import (
     LLMAPIError,
     LLMRateLimitError,
 )
+from app.core.llm_rate_limiter import LLMRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,7 @@ class BedrockClient(BaseLLMClient):
                 body["system"] = system_message
 
             # 동시성 제한: Semaphore로 동시 요청 수 제어
+            await LLMRateLimiter.acquire("bedrock")
             async with BedrockClient._semaphore:
                 # Bedrock API 호출 (동기 방식 - boto3는 async 미지원)
                 # ThreadPoolExecutor를 사용하여 논블로킹 처리
@@ -214,6 +216,33 @@ class BedrockClient(BaseLLMClient):
                         "requires_provisioned_throughput": True
                     }
                 )
+            elif error_code == "INVALID_PAYMENT_INSTRUMENT" or "payment instrument" in error_message.lower():
+                # 결제수단/모델 구독 미완료 → 기본 모델로 자동 폴백 시도
+                if model_id != self.model:
+                    logger.warning(
+                        "Bedrock 모델 %s 접근 거부(INVALID_PAYMENT_INSTRUMENT). 기본 모델(%s)로 폴백 시도.",
+                        model_id,
+                        self.model
+                    )
+                    return await self.generate(
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        **kwargs
+                    )
+
+                logger.error(
+                    "Bedrock 모델 접근 거부(INVALID_PAYMENT_INSTRUMENT): %s. "
+                    "결제 수단/모델 액세스 승인 필요.",
+                    error_message
+                )
+                raise LLMAPIError(
+                    message=(
+                        "Bedrock 모델 결제/접근이 활성화되어 있지 않습니다. "
+                        "AWS 콘솔에서 결제 수단 등록 또는 해당 모델 액세스 승인이 필요합니다."
+                    ),
+                    details={"model": model_id, "error_code": error_code, "error": error_message}
+                )
             else:
                 logger.error(f"Bedrock API 오류: {error_message}")
                 raise LLMAPIError(
@@ -262,6 +291,7 @@ class BedrockClient(BaseLLMClient):
                 body["system"] = system_message
 
             # 동시성 제한: Semaphore로 동시 요청 수 제어
+            await LLMRateLimiter.acquire("bedrock")
             async with BedrockClient._semaphore:
                 # Bedrock 스트리밍 호출 (동기 방식 - boto3는 async 미지원)
                 # ThreadPoolExecutor를 사용하여 논블로킹 처리
@@ -345,6 +375,35 @@ class BedrockClient(BaseLLMClient):
                         "error": error_message,
                         "requires_provisioned_throughput": True
                     }
+                )
+            elif error_code == "INVALID_PAYMENT_INSTRUMENT" or "payment instrument" in error_message.lower():
+                if model_id != self.model:
+                    logger.warning(
+                        "Bedrock 모델 %s 접근 거부(INVALID_PAYMENT_INSTRUMENT). 기본 모델(%s)로 스트리밍 폴백 시도.",
+                        model_id,
+                        self.model
+                    )
+                    async for chunk in self.generate_stream(
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        model=self.model,
+                        **kwargs
+                    ):
+                        yield chunk
+                    return
+
+                logger.error(
+                    "Bedrock 모델 접근 거부(INVALID_PAYMENT_INSTRUMENT): %s. "
+                    "결제 수단/모델 액세스 승인 필요.",
+                    error_message
+                )
+                raise LLMAPIError(
+                    message=(
+                        "Bedrock 모델 결제/접근이 활성화되어 있지 않습니다. "
+                        "AWS 콘솔에서 결제 수단 등록 또는 해당 모델 액세스 승인이 필요합니다."
+                    ),
+                    details={"model": model_id, "error_code": error_code, "error": error_message}
                 )
             else:
                 logger.error(f"Bedrock API 오류: {error_message}")

@@ -114,7 +114,10 @@ class DocumentService:
                 ids=chunk_ids,
                 embeddings=embeddings,
                 documents=chunks,
-                metadatas=chunk_metadatas
+                metadatas=chunk_metadatas,
+                # documents 테이블의 document_id를 명시적으로 전달하여
+                # Knowledge 노드의 document_ids 필터가 정상 동작하도록 보장
+                source_document_id=document_id
             )
             
             # 8. 임시 파일 삭제

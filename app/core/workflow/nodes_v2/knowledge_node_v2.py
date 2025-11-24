@@ -103,25 +103,44 @@ class KnowledgeNodeV2(BaseNodeV2):
         document_ids = self.config.get("document_ids", [])
         # 유사도 임계값: 0.4 미만인 결과는 제외 (낮은 관련성 필터링)
         similarity_threshold = self.config.get("similarity_threshold", 0.4)
+        persist_to_conversation = bool(self.config.get("persist_to_conversation", False))
+        conversation_context_key = self.config.get("conversation_context_key", "knowledge_context")
+        conversation_documents_key = self.config.get("conversation_documents_key", "knowledge_documents")
+        conversation_doc_count_key = self.config.get("conversation_doc_count_key", "knowledge_doc_count")
 
-        logger.info(f"KnowledgeNodeV2: Searching with query='{query[:50]}...', top_k={top_k}, similarity_threshold={similarity_threshold}, user_uuid={user_uuid}")
+        logger.info(f"KnowledgeNodeV2: Searching with query='{query[:50]}...', top_k={top_k}, similarity_threshold={similarity_threshold}, user_uuid={user_uuid}, document_ids={document_ids if document_ids else '전체 문서'}")
 
         if not user_uuid:
             raise ValueError("user_uuid를 찾을 수 없습니다")
 
         # 벡터 검색 수행 (user_uuid 기반, 같은 유저의 모든 문서 검색)
         try:
+            # document_ids가 설정되어 있으면 먼저 해당 문서에서만 검색 시도
             results = await vector_service.search_similar_chunks(
                 user_uuid=user_uuid,
                 query=query,
                 top_k=top_k,
                 db=db_session,
-                document_ids=document_ids or None
+                document_ids=document_ids if document_ids else None
             )
+
+            # document_ids 필터로 검색했는데 결과가 없으면, 전체 문서에서 재검색 (Fallback)
+            if not results and document_ids:
+                logger.warning(
+                    f"document_ids={document_ids}로 검색했지만 결과가 없습니다. "
+                    "전체 문서에서 재검색합니다."
+                )
+                results = await vector_service.search_similar_chunks(
+                    user_uuid=user_uuid,
+                    query=query,
+                    top_k=top_k,
+                    db=db_session,
+                    document_ids=None  # 전체 문서에서 검색
+                )
 
             # 결과 처리
             if not results:
-                logger.warning("No documents found")
+                logger.warning("No documents found (전체 문서 검색 후에도 결과 없음)")
                 # 검색 결과가 없을 때 명시적인 메시지 반환
                 no_result_message = (
                     "검색 결과가 없습니다. "
@@ -136,26 +155,21 @@ class KnowledgeNodeV2(BaseNodeV2):
 
             # 유사도 임계값으로 필터링 (낮은 관련성 결과 제외)
             filtered_results = [
-                doc for doc in results 
+                doc for doc in results
                 if doc.get("similarity", 0.0) >= similarity_threshold
             ]
 
-            # 필터링된 결과가 없으면 관련 없는 결과로 판단
+            low_similarity_warning = False
+
+            # 필터링된 결과가 없으면 관련 없는 결과로 판단하되,
+            # 검색 문서를 그대로 전달하고 유사도가 낮다는 경고 문구를 추가
             if not filtered_results:
                 logger.warning(
                     f"검색 결과 {len(results)}개 중 유사도 임계값({similarity_threshold}) 이상인 결과가 없습니다. "
                     f"최고 유사도: {max([doc.get('similarity', 0.0) for doc in results]):.3f}"
                 )
-                no_result_message = (
-                    "검색 결과가 없습니다. "
-                    "해당 질문에 대한 정보가 RAG 문서에 등록되지 않았습니다. "
-                    "다른 질문을 시도해주시거나, 필요한 문서를 업로드해주세요."
-                )
-                return {
-                    "context": no_result_message,
-                    "documents": [],
-                    "doc_count": 0
-                }
+                filtered_results = results
+                low_similarity_warning = True
 
             # 필터링 전후 로그
             if len(filtered_results) < len(results):
@@ -166,6 +180,26 @@ class KnowledgeNodeV2(BaseNodeV2):
 
             # 문서 텍스트 병합
             context_text = "\n\n".join([doc.get("content", "") for doc in filtered_results])
+
+            if low_similarity_warning:
+                warning_message = "질문과 문서의 유사도 점수가 낮습니다."
+                context_text = f"{context_text}\n\n{warning_message}" if context_text else warning_message
+
+            # 선택적으로 대화 변수에 저장하여 이후 노드가 엣지 없이도 참조할 수 있도록 함
+            if persist_to_conversation and context.variable_pool:
+                try:
+                    context.variable_pool.set_conversation_variable(conversation_context_key, context_text)
+                    context.variable_pool.set_conversation_variable(conversation_documents_key, filtered_results)
+                    context.variable_pool.set_conversation_variable(conversation_doc_count_key, len(filtered_results))
+                    logger.info(
+                        "KnowledgeNodeV2: persisted context to conversation variables "
+                        "(keys: %s, %s, %s)",
+                        conversation_context_key,
+                        conversation_documents_key,
+                        conversation_doc_count_key
+                    )
+                except Exception as persist_error:
+                    logger.warning(f"KnowledgeNodeV2: failed to persist conversation variables: {persist_error}")
 
             logger.info(f"KnowledgeNodeV2: Retrieved {len(filtered_results)} documents (filtered from {len(results)})")
 

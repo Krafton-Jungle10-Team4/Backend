@@ -21,6 +21,7 @@ class RegisterRequest(BaseModel):
 class UserResponse(BaseModel):
     """사용자 정보 응답"""
     id: int
+    uuid: str
     email: EmailStr
     name: Optional[str]
     profile_image: Optional[str]

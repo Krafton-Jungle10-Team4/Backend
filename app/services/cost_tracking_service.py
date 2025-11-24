@@ -4,10 +4,14 @@ LLM 비용 추적 서비스
 import logging
 from typing import Optional, Dict, Any
 from datetime import datetime
+from uuid import uuid4
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from app.config import settings
 from app.models.llm_usage import LLMUsageLog, ModelPricing
+from app.services.event_publisher import WorkflowEventPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +21,7 @@ class CostTrackingService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.event_publisher = WorkflowEventPublisher()
 
     async def get_model_pricing(
         self, provider: str, model_name: str
@@ -73,7 +78,8 @@ class CostTrackingService:
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
         request_id: Optional[str] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        workflow_run_id: Optional[str] = None
     ) -> Optional[LLMUsageLog]:
         """LLM 사용량 로깅"""
         try:
@@ -103,6 +109,37 @@ class CostTrackingService:
                 total_cost = costs['total_cost']
 
             # 사용 로그 생성
+            usage_payload = {
+                "event_type": "llm.usage",
+                "timestamp": datetime.utcnow().isoformat(),
+                "bot_id": bot_id,
+                "user_id": user_id,
+                "workflow_run_id": workflow_run_id,
+                "provider": provider,
+                "model_name": model_name,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+                "cache_read_tokens": cache_read_tokens,
+                "cache_write_tokens": cache_write_tokens,
+                "input_cost": input_cost,
+                "output_cost": output_cost,
+                "total_cost": total_cost,
+                "cost": {
+                    "input_cost": input_cost,
+                    "output_cost": output_cost,
+                    "total_cost": total_cost
+                },
+                "request_id": request_id,
+                "session_id": session_id,
+                "idempotency_key": request_id or f"{bot_id}-{user_id}-{model_name}-{uuid4()}",
+            }
+
+            if settings.usage_queue_url:
+                await self.event_publisher.publish_usage_event(usage_payload)
+                logger.debug("사용량 이벤트를 SQS에 발행했습니다. bot_id=%s", bot_id)
+                return None
+
             usage_log = LLMUsageLog(
                 bot_id=bot_id,
                 user_id=user_id,

@@ -639,19 +639,24 @@ class ChatService:
 
         override_model = self._resolve_model_name(request.model)
 
-        if override_model and workflow_data["nodes"]:
-            logger.info(f"[ChatService] 런타임 모델 오버라이드: {override_model}")
+        if workflow_data["nodes"]:
             for node in workflow_data["nodes"]:
-                if node.get("type") == "llm" and node.get("data"):
-                    original_model = node["data"].get("model")
+                if node.get("type") != "llm" or not node.get("data"):
+                    continue
+
+                node_model = node["data"].get("model")
+
+                if override_model and not node_model:
+                    # 노드에 모델이 비어 있을 때만 런타임 오버라이드를 적용
                     node["data"]["model"] = override_model
                     logger.info(
-                        f"[ChatService] LLM 노드 모델 변경: {original_model} → {override_model}"
+                        "[ChatService] LLM 노드 모델이 비어 있어 런타임 오버라이드를 적용합니다: %s",
+                        override_model
                     )
-        elif workflow_data["nodes"]:
-            for node in workflow_data["nodes"]:
-                if node.get("type") == "llm" and node.get("data"):
-                    node["data"]["model"] = self._resolve_model_name(node["data"].get("model"))
+                else:
+                    # 노드에 설정된 모델을 유지하되 별칭만 정규화
+                    resolved = self._resolve_model_name(node_model)
+                    node["data"]["model"] = resolved
 
         return workflow_data
 

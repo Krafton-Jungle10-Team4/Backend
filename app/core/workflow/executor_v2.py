@@ -17,6 +17,8 @@ from app.services.vector_service import VectorService
 from app.services.llm_service import LLMService
 from app.models.workflow_version import WorkflowExecutionRun, WorkflowNodeExecution
 from app.models.conversation_variable import ConversationVariable
+from app.config import settings
+from app.services.event_publisher import WorkflowEventPublisher
 import logging
 from datetime import datetime
 import uuid
@@ -47,6 +49,8 @@ class WorkflowExecutorV2:
         self._node_executions_cache: List[WorkflowNodeExecution] = []
         self._virtual_node_aliases = {"conv", "conversation", "env", "environment", "sys", "system"}
         self.cancel_event: Optional[asyncio.Event] = None
+        self._event_publisher = WorkflowEventPublisher()
+        self._use_async_logs = bool(settings.log_queue_url)
 
     def _is_virtual_node(self, node_id: Optional[str]) -> bool:
         if not node_id:
@@ -1007,6 +1011,7 @@ class WorkflowExecutorV2:
             return
 
         try:
+            generated_id = uuid.uuid4()
             version_uuid = None
             if workflow_version_id:
                 try:
@@ -1015,7 +1020,7 @@ class WorkflowExecutorV2:
                     logger.warning("Invalid workflow_version_id provided: %s", workflow_version_id)
 
             self.execution_run = WorkflowExecutionRun(
-                id=uuid.uuid4(),
+                id=generated_id,
                 bot_id=bot_id,
                 workflow_version_id=version_uuid,
                 session_id=session_id,
@@ -1030,6 +1035,12 @@ class WorkflowExecutorV2:
                 user_id=user_id,
                 api_request_id=api_request_id
             )
+
+            if self._use_async_logs:
+                logger.info(
+                    "Async log mode enabled. Execution run staged for SQS publishing: run_id=%s",
+                    self.execution_run.id
+                )
 
             db.add(self.execution_run)
             await db.commit()
@@ -1058,43 +1069,116 @@ class WorkflowExecutorV2:
             error_message: 에러 메시지
             db: 데이터베이스 세션
         """
-        if not self.execution_run or not db:
+        if not self.execution_run:
+            return
+
+        finished_at = datetime.utcnow()
+        elapsed_ms = int((finished_at - self.run_start_time).total_seconds() * 1000)
+
+        self.execution_run.status = status
+        self.execution_run.finished_at = finished_at
+        self.execution_run.elapsed_time = elapsed_ms
+
+        if final_response:
+            self.execution_run.outputs = {"final_response": final_response}
+
+        if error_message:
+            self.execution_run.error_message = error_message
+
+        # 토큰 합계 계산 (노드 실행 기록에서)
+        total_tokens = sum(
+            node_exec.tokens_used or 0
+            for node_exec in self._node_executions_cache
+        )
+        self.execution_run.total_tokens = total_tokens
+
+        if not db:
+            if self._use_async_logs:
+                await self._publish_log_event()
             return
 
         try:
-            finished_at = datetime.utcnow()
-            elapsed_ms = int((finished_at - self.run_start_time).total_seconds() * 1000)
-
-            self.execution_run.status = status
-            self.execution_run.finished_at = finished_at
-            self.execution_run.elapsed_time = elapsed_ms
-
-            if final_response:
-                self.execution_run.outputs = {"final_response": final_response}
-
-            if error_message:
-                self.execution_run.error_message = error_message
-
-            # 노드 실행 기록들은 이미 _create_node_execution에서 flush()로 저장됨
-            # 여기서는 추가 저장 없이 토큰 합계만 계산
-            # (이미 저장된 객체를 다시 add()하면 중복 저장될 수 있음)
-
-            # 토큰 합계 계산 (노드 실행 기록에서)
-            total_tokens = sum(
-                node_exec.tokens_used or 0
-                for node_exec in self._node_executions_cache
-            )
-            self.execution_run.total_tokens = total_tokens
-
+            # 노드 실행 기록들은 _create_node_execution에서 add/flush 되므로
+            # 여기서는 추가 add 없이 커밋만 수행
             await db.commit()
             logger.info(
                 f"V2 워크플로우 실행 완료: run_id={self.execution_run.id}, "
                 f"status={status}, elapsed={elapsed_ms}ms"
             )
 
+            if self._use_async_logs:
+                await self._publish_log_event()
+
         except Exception as e:
             logger.error(f"실행 기록 완료 처리 실패: {str(e)}")
             await db.rollback()
+
+    async def _publish_log_event(self) -> None:
+        """SQS로 실행 로그 이벤트 발행"""
+        if not settings.log_queue_url:
+            return
+
+        run = self.execution_run
+        if not run:
+            return
+
+        run_payload = {
+            "id": str(run.id),
+            "bot_id": run.bot_id,
+            "workflow_version_id": str(run.workflow_version_id) if run.workflow_version_id else None,
+            "session_id": run.session_id,
+            "graph_snapshot": run.graph_snapshot,
+            "inputs": run.inputs,
+            "outputs": run.outputs,
+            "status": run.status,
+            "error_message": run.error_message,
+            "started_at": self._datetime_to_iso(run.started_at or self.run_start_time),
+            "finished_at": self._datetime_to_iso(run.finished_at),
+            "elapsed_time": run.elapsed_time,
+            "total_tokens": run.total_tokens,
+            "total_steps": run.total_steps,
+            "api_key_id": str(run.api_key_id) if getattr(run, "api_key_id", None) else None,
+            "user_id": getattr(run, "user_id", None),
+            "api_request_id": getattr(run, "api_request_id", None)
+        }
+
+        nodes_payload = [
+            {
+                "id": str(node_exec.id),
+                "node_id": node_exec.node_id,
+                "node_type": node_exec.node_type,
+                "execution_order": node_exec.execution_order,
+                "inputs": node_exec.inputs,
+                "outputs": node_exec.outputs,
+                "process_data": node_exec.process_data,
+                "status": node_exec.status,
+                "error_message": node_exec.error_message,
+                "started_at": self._datetime_to_iso(node_exec.started_at),
+                "finished_at": self._datetime_to_iso(node_exec.finished_at),
+                "elapsed_time": node_exec.elapsed_time,
+                "tokens_used": node_exec.tokens_used,
+            }
+            for node_exec in self._node_executions_cache
+        ]
+
+        payload = {
+            "event_type": "workflow.log",
+            "timestamp": datetime.utcnow().isoformat(),
+            "run": run_payload,
+            "nodes": nodes_payload
+        }
+
+        try:
+            await self._event_publisher.publish_log_event(payload)
+            logger.info("워크플로우 실행 로그를 SQS에 발행했습니다. run_id=%s", run_payload["id"])
+        except Exception as exc:
+            logger.error("워크플로우 로그 이벤트 발행 실패: %s", exc)
+
+    @staticmethod
+    def _datetime_to_iso(value: Optional[datetime]) -> Optional[str]:
+        if not value:
+            return None
+        return value.isoformat()
 
     async def _create_node_execution(
         self,

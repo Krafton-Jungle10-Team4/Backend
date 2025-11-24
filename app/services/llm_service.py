@@ -1,8 +1,10 @@
 """
 LLM 서비스
 """
+import hashlib
+import json
 import logging
-from typing import Optional, Callable, Awaitable, List
+from typing import Optional, Callable, Awaitable, List, Dict, Tuple
 
 from app.config import settings
 from app.core.llm_registry import LLMProviderRegistry
@@ -15,6 +17,7 @@ from app.core.providers.config import (
     ProviderConfig,
 )
 from app.core.exceptions import LLMServiceError
+from app.core.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +28,13 @@ class LLMService:
     def __init__(self, config: Optional[LLMConfig] = None):
         self.registry = LLMProviderRegistry
         self.config = config or self._build_config_from_settings()
+        self._last_used_model: Optional[str] = None
         self._initialize_providers()
+
+    @property
+    def last_used_model(self) -> Optional[str]:
+        """가장 최근 호출에 사용된 모델명 (스트리밍 강제 교체 포함)"""
+        return self._last_used_model
 
     async def generate(
         self,
@@ -38,23 +47,50 @@ class LLMService:
         """단일 응답 생성"""
         provider_key = self._resolve_provider(provider, model)
         client = self._get_client(provider_key)
+        resolved_model = model or getattr(client, "model", None)
 
         logger.info(
             "[LLMService] generate 호출: provider=%s model=%s temp=%.2f",
             provider_key,
-            model or "default",
+            resolved_model or "default",
             temperature,
         )
 
         messages = [{"role": "user", "content": prompt}]
+
+        cache_key = await self._build_cache_key(
+            tag="prompt",
+            payload={
+                "provider": provider_key,
+                "model": resolved_model or "default",
+                "prompt": prompt,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+        )
+        cached = await self._try_get_cached(cache_key)
+        if cached is not None:
+            self._record_last_used_model(resolved_model)
+            return cached.get("response", "")
+
         response = await client.generate(
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
-            model=model
+            model=resolved_model
         )
 
         logger.info("[LLMService] LLM 응답 생성 완료 (%d chars)", len(response))
+        self._record_last_used_model(resolved_model)
+        await self._store_cache(
+            cache_key,
+            response,
+            meta={
+                "provider": provider_key,
+                "model": resolved_model or "default",
+                "type": "generate",
+            },
+        )
         return response
 
     async def generate_stream(
@@ -71,11 +107,50 @@ class LLMService:
         provider_key = self._resolve_provider(provider, model)
         client = self._get_client(provider_key)
 
+        requested_model = model or getattr(client, "model", None)
+        model_to_use = requested_model
+        if provider_key == "openai":
+            streaming_model, replaced_from = self.get_streaming_safe_model(
+                provider_key,
+                requested_model
+            )
+            if streaming_model:
+                model_to_use = streaming_model
+            if replaced_from and replaced_from != streaming_model:
+                logger.warning(
+                    "[LLMService] Streaming requested with non-SSE model '%s'; using '%s' instead.",
+                    replaced_from,
+                    streaming_model
+                )
+
         # 시스템 프롬프트 추가 (제공된 경우)
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
+
+        # 캐시 조회: 이미 동일 질의가 캐싱되어 있으면 스트리밍 없이 즉시 반환
+        cache_key = None
+        if self._cache_enabled():
+            cache_key = await self._build_cache_key(
+                tag="prompt",
+                payload={
+                    "provider": provider_key,
+                    "model": model_to_use or "default",
+                    "prompt": prompt,
+                    "system_prompt": system_prompt,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                },
+            )
+            cached = await self._try_get_cached(cache_key)
+            if cached is not None:
+                cached_response = cached.get("response", "")
+                self._record_last_used_model(model_to_use)
+                if on_chunk and cached_response:
+                    processed = await on_chunk(cached_response)
+                    return processed if processed is not None else cached_response
+                return cached_response
 
         buffer: List[str] = []
 
@@ -83,7 +158,7 @@ class LLMService:
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
-            model=model
+            model=model_to_use
         ):
             processed = chunk
             if on_chunk:
@@ -91,7 +166,22 @@ class LLMService:
             if processed:
                 buffer.append(processed)
 
-        return "".join(buffer)
+        self._record_last_used_model(model_to_use)
+        full_response = "".join(buffer)
+
+        # 스트리밍 완료 후 캐시 저장 (스트리밍 시에도 동일 키 재사용)
+        if cache_key:
+            await self._store_cache(
+                cache_key,
+                full_response,
+                meta={
+                    "provider": provider_key,
+                    "model": model_to_use or "default",
+                    "type": "generate_stream",
+                },
+            )
+
+        return full_response
 
     async def generate_response(
         self,
@@ -105,11 +195,12 @@ class LLMService:
         """RAG 파이프라인용 응답 생성"""
         provider_key = self._resolve_provider(provider, model)
         client = self._get_client(provider_key)
+        resolved_model = model or getattr(client, "model", None)
 
         logger.info(
             "[LLMService] RAG 응답 생성: provider=%s model=%s",
             provider_key,
-            model or "default",
+            resolved_model or "default",
         )
 
         system_message = (
@@ -131,6 +222,22 @@ class LLMService:
             {"role": "user", "content": user_message}
         ]
 
+        cache_key = await self._build_cache_key(
+            tag="rag",
+            payload={
+                "provider": provider_key,
+                "model": resolved_model or "default",
+                "query": query,
+                "context": context,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+        )
+        cached = await self._try_get_cached(cache_key)
+        if cached is not None:
+            self._record_last_used_model(resolved_model)
+            return cached.get("response", "")
+
         response = await client.generate(
             messages=messages,
             temperature=temperature,
@@ -139,7 +246,107 @@ class LLMService:
         )
 
         logger.info("[LLMService] RAG 응답 생성 완료 (%d chars)", len(response))
+        self._record_last_used_model(resolved_model)
+        await self._store_cache(
+            cache_key,
+            response,
+            meta={
+                "provider": provider_key,
+                "model": model or "default",
+                "type": "rag_generate",
+            },
+        )
         return response
+
+    async def _build_cache_key(self, tag: str, payload: Dict) -> str:
+        """프롬프트/컨텍스트를 해시하여 캐시 키 생성"""
+        try:
+            raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        except Exception:
+            raw = str(payload)
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        prefix = settings.llm_cache_prefix or "llm:cache"
+        return f"{prefix}:{tag}:{digest}"
+
+    def _cache_enabled(self) -> bool:
+        """Redis 및 설정이 활성화되었는지 여부"""
+        return settings.llm_cache_enabled and bool(redis_client.redis)
+
+    def get_streaming_safe_model(
+        self,
+        provider_key: str,
+        requested_model: Optional[str]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        SSE 스트리밍이 가능한 모델을 반환. 지원하지 않는 모델이면 안전한 공식 모델로 교체.
+
+        Returns:
+            (선택된 모델, 교체 이전 모델명)
+        """
+        normalized_provider = (provider_key or "").lower()
+        if normalized_provider != "openai":
+            return requested_model, None
+
+        target_model = requested_model or self.config.get_provider_config("openai").default_model
+        if self._is_openai_streaming_model(target_model):
+            return target_model, None
+
+        # SSE 지원 공식 모델 우선순위
+        candidates = [
+            settings.openai_model,
+            "gpt-4o",
+            "gpt-4.1",
+            "gpt-4o-mini",
+            "gpt-4.1-mini",
+            "gpt-3.5-turbo",
+        ]
+        for candidate in candidates:
+            if candidate and self._is_openai_streaming_model(candidate):
+                return candidate, target_model
+
+        return target_model, target_model
+
+    @staticmethod
+    def _is_openai_streaming_model(model_name: Optional[str]) -> bool:
+        """OpenAI chat/completions SSE가 가능한 모델인지 간단히 판별"""
+        lowered = (model_name or "").lower()
+        if not lowered:
+            return False
+
+        blocked_prefixes = ("gpt-5", "o1-", "o3-")
+        blocked_fragments = ("codex", "instruct")
+        if any(lowered.startswith(prefix) for prefix in blocked_prefixes):
+            return False
+        if any(fragment in lowered for fragment in blocked_fragments):
+            return False
+        return True
+
+    async def _try_get_cached(self, cache_key: str) -> Optional[Dict]:
+        """캐시 조회 + 로깅 (히트/미스)"""
+        if not self._cache_enabled():
+            return None
+        cached = await redis_client.get(cache_key)
+        if not cached:
+            logger.info("[LLMService] cache_miss key=%s", cache_key)
+            return None
+
+        if isinstance(cached, dict) and cached.get("response") is not None:
+            logger.info("[LLMService] cache_hit key=%s", cache_key)
+            return cached
+
+        logger.info("[LLMService] cache_miss key=%s reason=invalid_payload", cache_key)
+        return None
+
+    async def _store_cache(self, cache_key: str, response: str, meta: Optional[Dict] = None) -> None:
+        """캐시 저장 + 로깅"""
+        if not self._cache_enabled():
+            return
+        payload: Dict = {"response": response}
+        if meta:
+            payload["meta"] = meta
+        ttl = settings.llm_cache_ttl_sec or 0
+        await redis_client.set(cache_key, payload, expire=ttl)
+        logger.info("[LLMService] cache_store key=%s ttl=%s", cache_key, ttl)
 
     def _build_config_from_settings(self) -> LLMConfig:
         """환경 설정으로부터 LLMConfig 구성"""
@@ -250,6 +457,10 @@ class LLMService:
     def _get_client(self, provider: str):
         config = self._get_provider_config(provider)
         return self.registry.get_client(provider, config=config)
+
+    def _record_last_used_model(self, model_name: Optional[str]) -> None:
+        """최근에 실제 호출에 사용된 모델명을 기록"""
+        self._last_used_model = model_name
 
 
 def get_llm_service() -> LLMService:

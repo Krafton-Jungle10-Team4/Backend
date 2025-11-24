@@ -111,25 +111,46 @@ class LLMNode(BaseNode[LLMNodeConfig]):
                 text_normalizer=text_normalizer
             )
 
+            model_used = getattr(llm_service, "last_used_model", None) or self.config.model
+            if model_used != self.config.model:
+                logger.info(
+                    "[LLMNode] Streaming-safe model override: requested=%s, used=%s",
+                    self.config.model,
+                    model_used
+                )
+                override_msg = (
+                    f"모델 '{self.config.model}'은(는) SSE 스트리밍을 지원하지 않아 "
+                    f"'{model_used}'로 대체되었습니다."
+                )
+
             result = NodeExecutionResult(
                 status=NodeStatus.COMPLETED,
                 output={
                     "llm_response": llm_response,
-                    "model": self.config.model,
+                    "model": model_used,
                     "prompt": prompt,
                     "context_used": bool(combined_context)
                 },
                 metadata={
                     "node_id": self.node_id,
                     "node_type": self.node_type.value,
-                    "model": self.config.model,
+                    "model": model_used,
                     "provider": provider,
-                    "temperature": self.config.temperature
+                    "temperature": self.config.temperature,
+                    "model_override": (
+                        {
+                            "requested_model": self.config.model,
+                            "used_model": model_used,
+                            "reason": "streaming_not_supported",
+                            "message": override_msg
+                        }
+                        if model_used != self.config.model else None
+                    )
                 }
             )
 
             self.set_status(NodeStatus.COMPLETED)
-            logger.info(f"LLM node {self.node_id} generated response using {self.config.model}")
+            logger.info(f"LLM node {self.node_id} generated response using {model_used}")
 
             return result
 

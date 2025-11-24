@@ -117,6 +117,7 @@ class LLMServiceWithCostTracking(LLMService):
             # Provider 확인
             provider_key = self._resolve_provider(provider, model)
             client = self._get_client(provider_key)
+            resolved_model = self.last_used_model or model or getattr(client, "model", None) or "unknown"
 
             # last_usage 속성이 있는지 확인 (Bedrock에서 설정됨)
             if hasattr(client, 'last_usage') and client.last_usage:
@@ -126,7 +127,7 @@ class LLMServiceWithCostTracking(LLMService):
                     bot_id=self.bot_id,
                     user_id=self.user_id,
                     provider=provider_key,
-                    model_name=usage.get('model', model or 'unknown'),
+                    model_name=usage.get('model', resolved_model),
                     input_tokens=usage.get('input_tokens', 0),
                     output_tokens=usage.get('output_tokens', 0),
                     cache_read_tokens=usage.get('cache_read_tokens', 0),

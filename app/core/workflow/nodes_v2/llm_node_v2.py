@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
 from app.schemas.workflow import NodePortSchema, PortDefinition, PortType
 from app.services.llm_service import LLMService
@@ -114,18 +114,49 @@ class LLMNodeV2(BaseNodeV2):
 
         context_text = context.get_input("context") or ""
         system_prompt = context.get_input("system_prompt") or ""
+        has_context_mapping = "context" in self.variable_mappings
+        allow_context_fallback = bool(self.config.get("allow_conversation_context_fallback", False))
+        conversation_context_key = self.config.get("conversation_context_key", "knowledge_context")
         
         # 컨텍스트가 비어있는 경우 경고 로깅
         if not context_text:
             logger.warning(f"[LLMNodeV2] Context is empty for node {self.node_id}. "
                           f"Variable mappings: {self.variable_mappings}")
+            
+            # 매핑이 없고 폴백이 허용된 경우 대화 변수에서 컨텍스트 자동 조회
+            if not has_context_mapping and allow_context_fallback:
+                try:
+                    fallback_context = context.variable_pool.get_conversation_variable(conversation_context_key)
+                    if fallback_context:
+                        context_text = fallback_context
+                        logger.info(
+                            f"[LLMNodeV2] Using conversation fallback '{conversation_context_key}' "
+                            f"for context (len={len(str(context_text))})"
+                        )
+                    else:
+                        logger.warning(
+                            f"[LLMNodeV2] Conversation fallback '{conversation_context_key}' is empty or missing"
+                        )
+                except Exception as fallback_error:
+                    logger.warning(f"[LLMNodeV2] Failed to resolve conversation fallback: {fallback_error}")
         
         # 검색 결과 없음 메시지 감지 (KnowledgeNodeV2에서 반환한 메시지)
-        is_no_result = (
-            context_text and 
-            ("검색 결과가 없습니다" in context_text or 
-             "RAG 문서에 등록되지 않았습니다" in context_text)
-        )
+        is_no_result = self._is_no_result_context(context_text)
+
+        # 컨텍스트가 지식 노드의 "검색 결과 없음" 메시지라면,
+        # 이미 실행된 다른 검색/뉴스 노드의 컨텍스트로 교체 시도
+        if is_no_result:
+            alternative_context, source_node = self._find_alternative_context(context)
+            if alternative_context:
+                logger.info(
+                    "[LLMNodeV2] No-result context replaced with output from node %s (len=%d)",
+                    source_node,
+                    len(str(alternative_context))
+                )
+                context_text = alternative_context
+                is_no_result = False
+            else:
+                logger.info("[LLMNodeV2] No-result context retained (no alternative context found)")
 
         # 서비스 조회
         llm_service = context.get_service("llm_service")
@@ -370,11 +401,29 @@ class LLMNodeV2(BaseNodeV2):
             except Exception as e:
                 logger.warning(f"[LLMNodeV2] 토큰 사용량 조회 실패: {e}")
 
+            model_used = getattr(llm_service, "last_used_model", None) or model
+            if model_used != model:
+                logger.info(
+                    "[LLMNodeV2] Streaming-safe model override: requested=%s, used=%s",
+                    model,
+                    model_used
+                )
+                # 로그/메타데이터용 대체 기록
+                override_msg = (
+                    f"모델 '{model}'은(는) SSE 스트리밍을 지원하지 않아 '{model_used}'로 대체되었습니다."
+                )
+                context.metadata.setdefault("model_override", {})[self.node_id] = {
+                    "requested_model": model,
+                    "used_model": model_used,
+                    "reason": "streaming_not_supported",
+                    "message": override_msg
+                }
+
             logger.info(f"LLMNodeV2: Generated response ({tokens_used} tokens)")
             
             # 응답이 비어있는 경우 경고
             if not response_text or len(response_text.strip()) == 0:
-                logger.warning(f"[LLMNodeV2] 응답이 비어있습니다! tokens={tokens_used}, provider={provider}, model={model}")
+                logger.warning(f"[LLMNodeV2] 응답이 비어있습니다! tokens={tokens_used}, provider={provider}, model={model_used}")
                 logger.warning(f"[LLMNodeV2] 프롬프트 길이: {len(prompt)}, context 길이: {len(context_text)}")
             else:
                 logger.info(f"[LLMNodeV2] 응답 생성 완료: {len(response_text)} chars")
@@ -385,7 +434,7 @@ class LLMNodeV2(BaseNodeV2):
                 "tokens": tokens_used,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
-                "model": model
+                "model": model_used
             }
 
         except Exception as e:
@@ -473,13 +522,30 @@ class LLMNodeV2(BaseNodeV2):
                         logger.warning(f"[LLMNodeV2] 토큰 사용량 조회 실패: {token_error}")
 
                     logger.info(f"LLMNodeV2: Generated response with fallback model ({tokens_used} tokens)")
+                    model_used = getattr(llm_service, "last_used_model", None) or fallback_model
+                    if model_used != fallback_model:
+                        logger.info(
+                            "[LLMNodeV2] Streaming-safe model override after fallback: requested=%s, used=%s",
+                            fallback_model,
+                            model_used
+                        )
+                        override_msg = (
+                            f"모델 '{fallback_model}'은(는) SSE 스트리밍을 지원하지 않아 "
+                            f"'{model_used}'로 대체되었습니다."
+                        )
+                        context.metadata.setdefault("model_override", {})[self.node_id] = {
+                            "requested_model": fallback_model,
+                            "used_model": model_used,
+                            "reason": "streaming_not_supported",
+                            "message": override_msg
+                        }
                     
                     return {
                         "response": response_text,
                         "tokens": tokens_used,
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": completion_tokens,
-                        "model": fallback_model  # 폴백 모델 ID 반환
+                        "model": model_used  # 실제 사용된 모델 ID 반환
                     }
                 except Exception as fallback_error:
                     logger.error(f"폴백 모델 '{fallback_model}' 호출도 실패: {str(fallback_error)}")
@@ -690,3 +756,78 @@ class LLMNodeV2(BaseNodeV2):
         logger.debug(f"[LLMNodeV2] 허용된 셀렉터 목록 (샘플): {allowed[:10]}...")
 
         return allowed
+
+    def _is_no_result_context(self, context_text: Any) -> bool:
+        """지식 노드의 '검색 결과 없음' 메시지인지 판별"""
+        if not context_text:
+            return False
+
+        text = context_text if isinstance(context_text, str) else str(context_text)
+        markers = [
+            "검색 결과가 없습니다",
+            "해당 질문에 대한 정보가 RAG 문서에 등록되지 않았습니다",
+        ]
+        return any(marker in text for marker in markers)
+
+    def _find_alternative_context(
+        self,
+        context: NodeExecutionContext
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        지식 노드가 '검색 결과 없음'을 반환했을 때 사용할 대체 컨텍스트를 찾는다.
+
+        이미 실행된 노드 중에서 유효한 context/retrieved_documents/results 출력이 있는
+        최신 노드를 우선적으로 사용한다.
+        """
+        if not context or not getattr(context, "variable_pool", None):
+            return None, None
+
+        executed_nodes = getattr(context, "executed_nodes", []) or []
+        pool = context.variable_pool
+
+        for node_id in reversed(executed_nodes):
+            if not node_id or node_id == self.node_id:
+                continue
+
+            node_outputs = pool.get_all_node_outputs(node_id)
+            if not node_outputs:
+                continue
+
+            # 1) 문자열 context가 있으면 우선 사용
+            ctx_value = node_outputs.get("context")
+            if isinstance(ctx_value, str) and ctx_value.strip() and not self._is_no_result_context(ctx_value):
+                return ctx_value, node_id
+
+            # 2) retrieved_documents 배열을 병합
+            docs = node_outputs.get("retrieved_documents")
+            if isinstance(docs, list) and docs:
+                doc_texts = []
+                for doc in docs:
+                    if isinstance(doc, dict):
+                        content = doc.get("content") or doc.get("text")
+                        if content:
+                            doc_texts.append(str(content))
+                    elif isinstance(doc, str):
+                        doc_texts.append(doc)
+
+                merged_docs = "\n\n".join([d for d in doc_texts if d])
+                if merged_docs and not self._is_no_result_context(merged_docs):
+                    return merged_docs, node_id
+
+            # 3) 검색 결과 배열(results)을 단순 병합
+            results = node_outputs.get("results")
+            if isinstance(results, list) and results:
+                parts = []
+                for item in results:
+                    if isinstance(item, dict):
+                        snippet = item.get("content") or item.get("title")
+                        if snippet:
+                            parts.append(str(snippet))
+                    elif isinstance(item, str):
+                        parts.append(item)
+
+                merged_results = "\n\n".join([p for p in parts if p])
+                if merged_results and not self._is_no_result_context(merged_results):
+                    return merged_results, node_id
+
+        return None, None

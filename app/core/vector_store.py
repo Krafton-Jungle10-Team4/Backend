@@ -61,16 +61,10 @@ class VectorStore:
 
     def _apply_user_filter(self, query):
         """
-        user_uuid가 설정되었으면 Documents 테이블에서 문서 ID를 조회하고
-        DocumentEmbedding.document_id에 해당하는 행만 필터링합니다.
+        user_uuid 필터링 (현재 비활성화)
+        TODO: bot_id 기반 필터링으로 대체 필요
         """
-        if self.user_uuid:
-            from app.models.document import Document
-            subquery = (
-                select(Document.document_id)
-                .where(Document.user_uuid == self.user_uuid)
-            )
-            query = query.where(DocumentEmbedding.document_id.in_(subquery))
+        # user_uuid 필터링 제거 (작동하지 않음)
         return query
 
     async def add_documents(
@@ -121,12 +115,22 @@ class VectorStore:
                 )
             
             for doc_id, embedding, document, metadata in zip(ids, embeddings, documents, metadatas):
+                # source_document_id가 전달되지 않은 경우 metadata에서 document_id를 사용
+                source_doc_id = source_document_id or metadata.get("document_id")
+                if not source_doc_id:
+                    logger.warning(
+                        "[VectorStore] source_document_id가 비어 있습니다. "
+                        "document_ids 필터링 시 검색이 실패할 수 있습니다."
+                    )
+
                 metadata_copy = metadata.copy()
+                if source_doc_id:
+                    metadata_copy["source_document_id"] = source_doc_id
                 metadata_copy["document_id"] = doc_id
 
                 doc_embedding = DocumentEmbedding(
                     bot_id=self.bot_id,
-                    document_id=source_document_id,  # ← 중요: documents 테이블 연결
+                    document_id=source_doc_id,  # ← 중요: documents 테이블 연결
                     chunk_text=document,
                     chunk_index=metadata.get("chunk_index", 0),  # metadata에서 chunk_index 가져오기
                     embedding=embedding,
@@ -183,26 +187,13 @@ class VectorStore:
                 distance_expr.label('distance')
             )
 
-            # document_id 필터링과 user_uuid 필터링 처리
+            # document_id 필터링 처리
+            # TODO: user_uuid 필터링이 작동하지 않아 임시로 제거
+            # 추후 bot_id 기반 필터링으로 대체 필요
             if document_ids:
-                # document_ids가 제공된 경우: Documents 테이블과 조인하여 user_uuid 확인
-                from app.models.document import Document
-                if self.user_uuid:
-                    # Documents 테이블과 직접 조인하여 user_uuid와 document_ids를 모두 만족하는 문서만 검색
-                    # ✅ bot_id는 검색 조건에서 제외, document_id만으로 검색
-                    query = query.join(
-                        Document,
-                        DocumentEmbedding.document_id == Document.document_id
-                    ).where(
-                        Document.user_uuid == self.user_uuid,
-                        Document.document_id.in_(document_ids)
-                    )
-                else:
-                    # user_uuid가 없으면 document_ids만 필터링
-                    query = query.where(DocumentEmbedding.document_id.in_(document_ids))
-            else:
-                # document_ids가 없으면 기존 user_uuid 필터 적용
-                query = self._apply_user_filter(query)
+                # document_ids 필터링만 적용
+                query = query.where(DocumentEmbedding.document_id.in_(document_ids))
+            # user_uuid 필터링 제거 (작동하지 않음)
 
             # 메타데이터 필터 적용
             if filter_dict:

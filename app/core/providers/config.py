@@ -61,8 +61,8 @@ class BedrockConfig(ProviderConfig):
         description="AWS 리전 (서울)"
     )
     default_model: str = Field(
-        default="anthropic.claude-haiku-4-5-20251001-v1:0",
-        description="기본 모델 ID (Haiku 4.5 최신, 저렴)"
+        default="anthropic.claude-3-5-sonnet-20240620-v1:0",
+        description="기본 모델 ID (Claude 3.5 Sonnet ON_DEMAND)"
     )
     system_prompt: Optional[str] = Field(
         default=None,

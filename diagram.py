@@ -81,7 +81,7 @@ with Diagram("나만무 Backend 아키텍처 (실제 AWS 인프라)", filename="
         with Cluster("AWS Managed Services"):
             s3 = S3("S3 문서 저장소\nDocument Storage")
             sqs = SQS("SQS 문서 큐\nDocument Queue\n+ DLQ")
-            bedrock = Cloudwatch("AWS Bedrock\nTitan Embedding\nClaude Haiku 4.5")
+            bedrock = Cloudwatch("AWS Bedrock\nTitan Embedding\nClaude 3.5 Sonnet")
             cost_monitoring = Cloudwatch("CloudWatch Logs\n/ecs/rag-backend\nCost Monitoring")
         
         # 네트워크 플로우

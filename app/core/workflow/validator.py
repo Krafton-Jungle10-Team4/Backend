@@ -618,8 +618,18 @@ class WorkflowValidator:
                 if meta.get("required", True)
             }
             variable_mappings: Dict[str, Any] = node.get("variable_mappings") or {}
+            node_type = node.get("data", {}).get("type")
+            allow_context_fallback = bool(node.get("data", {}).get("allow_conversation_context_fallback", False))
 
             for port_name, meta in required_inputs.items():
+                # LLM 노드의 context 포트는 대화 변수 폴백을 허용할 수 있음
+                if (
+                    port_name == "context"
+                    and node_type == "llm"
+                    and allow_context_fallback
+                ):
+                    continue
+
                 if port_name not in variable_mappings:
                     self.errors.append(
                         f"노드 {node_id}의 필수 입력 포트 '{port_name}'가 variable_mappings에 정의되지 않았습니다"

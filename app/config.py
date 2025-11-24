@@ -2,7 +2,7 @@
 애플리케이션 설정 관리
 """
 from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 from typing import List, Optional, Dict
 import os
 
@@ -36,11 +36,17 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     s3_bucket_name: str = ""
 
-    # AWS SQS (비동기 문서 처리)
-    sqs_queue_url: str = ""  # 메인 큐 URL
-    sqs_queue_arn: str = ""  # 메인 큐 ARN
-    sqs_dlq_url: str = ""    # DLQ URL
-    sqs_dlq_arn: str = ""    # DLQ ARN
+    # AWS SQS (비동기 처리 - 기존 문서/신규 usage/log)
+    sqs_queue_url: str = ""  # legacy 문서 처리 큐
+    sqs_queue_arn: str = ""
+    sqs_dlq_url: str = ""
+    sqs_dlq_arn: str = ""
+
+    # 신규 Usage/Log 큐
+    usage_queue_url: str = ""
+    usage_dlq_url: str = ""
+    log_queue_url: str = ""
+    log_dlq_url: str = ""
     
     # Database
     database_url: str = ""
@@ -63,6 +69,10 @@ class Settings(BaseSettings):
     redis_db: int = 0
     redis_url: str = ""
     redis_use_ssl: bool = False
+    # LLM 캐시
+    llm_cache_enabled: bool = True
+    llm_cache_ttl_sec: int = 3600
+    llm_cache_prefix: str = "llm:cache"
 
     # 연결 문자열 생성 규칙을 한 곳에 모아 일관성 있게 관리하려는 목적
     # 비밀번호 포함/미포함, 기본값 처리 등을 캡슐화
@@ -149,6 +159,11 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_per_minute: int = 100
     rate_limit_public_per_hour: int = 1000
+    bedrock_qps_limit: float = 10.0  # LLM Rate Limit 보호 (초당 호출)
+    bedrock_rate_limit_burst: float = 15.0  # 짧은 버스트 허용치
+    mcp_rate_limit_per_minute: int = 60  # MCP 커넥터 기본 60RPM
+    mcp_rate_limit_burst: int = 80  # MCP 커넥터 버스트 허용치
+    mcp_connector_rate_limits: Dict[str, int] = Field(default_factory=dict)  # 커넥터별 오버라이드
 
     # 임베딩 설정
     use_mock_embeddings: bool = False  # 로컬 개발용 Mock 임베딩 사용 여부
@@ -210,7 +225,7 @@ class Settings(BaseSettings):
 
     # AWS Bedrock (Claude via AWS) - 서울 리전
     bedrock_region: str = "ap-northeast-2"
-    bedrock_model: str = "anthropic.claude-3-haiku-20240307-v1:0"  # Haiku 3 (ON_DEMAND 지원)
+    bedrock_model: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"  # Claude 3.5 Sonnet (ON_DEMAND)
     
     # 프로비저닝된 용량 설정 (Model Units)
     # 1 MU = 약 15개 동시 요청 처리 가능 (안전한 기준)
