@@ -110,7 +110,10 @@ class DeploymentService:
         """
 
         api_url = settings.backend_url
-        frontend_url = settings.frontend_url
+
+        # 프론트엔드 URL 리스트에서 첫 번째 URL 사용 (프로덕션 URL)
+        frontend_urls = settings.get_frontend_urls()
+        frontend_url = frontend_urls[0] if frontend_urls else settings.frontend_url
 
         return (
             f'<script '
