@@ -93,6 +93,18 @@ V2_NODE_METADATA = {
         "is_required": True,
         "supports_file_var": True
     },
+    "http": {
+        "label": "HTTP Request",
+        "icon": "globe",
+        "category": "Tools",
+        "description": "HTTP 요청을 전송하는 노드",
+    },
+    "template-transform": {
+        "label": "Template Transform",
+        "icon": "file-text",
+        "category": "Data",
+        "description": "Jinja2 템플릿으로 데이터 변환",
+    },
 }
 
 

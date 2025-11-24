@@ -3,6 +3,7 @@ FastAPI RAG Backend - 메인 애플리케이션
 """
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from slowapi.errors import RateLimitExceeded
@@ -97,6 +98,13 @@ app.add_middleware(AuditLoggingMiddleware)
 # RESTful API Rate Limiting 미들웨어
 from app.core.rate_limiter import rate_limit_middleware
 app.middleware("http")(rate_limit_middleware)
+
+# Static 파일 마운트 (위젯 inject.js 제공)
+import os
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/widget", StaticFiles(directory=os.path.join(static_dir, "widget")), name="widget")
+    logger.info(f"✅ Static 파일 마운트 완료: /widget -> {os.path.join(static_dir, 'widget')}")
 
 # API 라우터 등록
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["인증"])

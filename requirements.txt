@@ -34,6 +34,7 @@ aiofiles==23.2.1
 tenacity==8.2.3
 itsdangerous==2.1.2  # SessionMiddleware 필수
 slowapi==0.1.9  # Rate limiting
+Jinja2==3.1.4  # Template Transform Node용 템플릿 엔진
 
 # Redis
 redis==5.0.1

@@ -50,7 +50,7 @@ class LLMNodeV2(BaseNodeV2):
                 PortDefinition(
                     name="query",
                     type=PortType.STRING,
-                    required=True,
+                    required=False,
                     description="사용자 질문",
                     display_name="질문"
                 ),
@@ -107,10 +107,8 @@ class LLMNodeV2(BaseNodeV2):
         Raises:
             ValueError: 필수 입력이 없거나 서비스를 찾을 수 없을 때
         """
-        # 입력 조회
-        query = context.get_input("query")
-        if not query:
-            raise ValueError("query input is required")
+        # 입력 조회 (query는 optional, 프롬프트에서 다른 변수 참조 가능)
+        query = context.get_input("query") or ""
 
         context_text = context.get_input("context") or ""
         system_prompt = context.get_input("system_prompt") or ""

@@ -402,6 +402,7 @@ class WorkflowRunResponse(BaseModel):
     total_tokens: int = Field(0, description="총 사용 토큰 수")
     total_cost: Optional[float] = Field(None, description="총 비용 (USD)")
     total_steps: int = Field(0, description="총 실행 단계 수")
+    inputs: Optional[Dict[str, Any]] = Field(None, description="입력 데이터")
     created_at: datetime = Field(..., description="생성 시간")
 
 

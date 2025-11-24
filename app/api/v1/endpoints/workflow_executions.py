@@ -122,6 +122,7 @@ async def list_execution_runs(
                     total_tokens=run.total_tokens,
                     total_cost=total_cost,
                     total_steps=run.total_steps,
+                    inputs=run.inputs,
                     created_at=run.created_at
                 )
             )

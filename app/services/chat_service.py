@@ -120,7 +120,8 @@ class ChatService:
         self,
         request: ChatRequest,
         user_uuid: str,
-        db: Optional[AsyncSession] = None
+        db: Optional[AsyncSession] = None,
+        jwt_token: Optional[str] = None
     ) -> ChatResponse:
         """챗봇 응답 생성 (RAG 파이프라인 또는 Workflow 실행)"""
 
@@ -135,13 +136,14 @@ class ChatService:
             raise ValueError("데이터베이스 세션이 필요합니다. 봇 정보 및 문서 조회를 위해 db 세션이 필요합니다.")
 
         # Workflow 실행
-        return await self._execute_workflow(request, user_uuid, db)
+        return await self._execute_workflow(request, user_uuid, db, jwt_token=jwt_token)
 
     async def _execute_workflow(
         self,
         request: ChatRequest,
         user_uuid: str,
-        db: AsyncSession
+        db: AsyncSession,
+        jwt_token: Optional[str] = None
     ) -> ChatResponse:
         """Workflow 기반 응답 생성"""
         from app.services.bot_service import get_bot_service
@@ -207,7 +209,8 @@ class ChatService:
             # API 전용 파라미터는 None (일반 챗봇 사용)
             api_key_id=None,
             user_id=None,
-            api_request_id=None
+            api_request_id=None,
+            jwt_token=jwt_token
         )
 
         # ChatResponse 형식으로 변환
@@ -224,7 +227,8 @@ class ChatService:
         request: ChatRequest,
         user_uuid: str,
         db: Optional[AsyncSession] = None,
-        cancel_event: Optional[asyncio.Event] = None
+        cancel_event: Optional[asyncio.Event] = None,
+        jwt_token: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """워크플로우/일반 RAG 공통 스트리밍 응답 생성"""
         logger.info(f"[ChatService] 스트리밍 요청: '{request.message[:50]}...' (bot_id={request.bot_id})")
@@ -256,7 +260,8 @@ class ChatService:
                     bot,
                     request,
                     db,
-                    cancel_event=cancel_event
+                    cancel_event=cancel_event,
+                    jwt_token=jwt_token
                 ):
                     if cancel_event and cancel_event.is_set():
                         logger.info("[ChatService] Cancel event detected - stop emitting workflow payloads")
@@ -379,7 +384,8 @@ class ChatService:
         bot,
         request: ChatRequest,
         db: AsyncSession,
-        cancel_event: Optional[asyncio.Event] = None
+        cancel_event: Optional[asyncio.Event] = None,
+        jwt_token: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """워크플로우 실행 결과를 실시간으로 전송"""
         from app.services.vector_service import VectorService
@@ -430,7 +436,8 @@ class ChatService:
                     llm_service=llm_service,
                     stream_handler=stream_handler,
                     text_normalizer=strip_markdown_preserve_whitespace,
-                    cancel_event=cancel_event
+                    cancel_event=cancel_event,
+                    jwt_token=jwt_token
                 )
 
                 # 최종 응답은 이미 LLM 노드에서 스트리밍되었으므로 재전송하지 않음

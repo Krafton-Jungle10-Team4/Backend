@@ -54,8 +54,14 @@ async def chat(
     """
     logger.info(f"[Chat] 요청: '{chat_request.message[:50]}...' (session: {chat_request.session_id}, user: {user.uuid}, bot_id: {chat_request.bot_id})")
 
+    # JWT 토큰 추출 (Authorization 헤더에서)
+    jwt_token = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        jwt_token = auth_header[7:]  # "Bearer " 제거
+
     try:
-        response = await chat_service.generate_response(chat_request, user_uuid=str(user.uuid), db=db)
+        response = await chat_service.generate_response(chat_request, user_uuid=str(user.uuid), db=db, jwt_token=jwt_token)
 
         logger.info(
             f"[Chat] 응답 생성 완료: {response.retrieved_chunks}개 청크 참조, "
@@ -134,6 +140,12 @@ async def chat_stream(
         f"(session: {chat_request.session_id}, user: {user.uuid}, bot_id: {chat_request.bot_id})"
     )
 
+    # JWT 토큰 추출 (Authorization 헤더에서)
+    jwt_token = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        jwt_token = auth_header[7:]  # "Bearer " 제거
+
     cancel_event = asyncio.Event()
 
     async def monitor_disconnect():
@@ -167,7 +179,8 @@ async def chat_stream(
                 request=chat_request,
                 user_uuid=str(user.uuid),
                 db=db,
-                cancel_event=cancel_event
+                cancel_event=cancel_event,
+                jwt_token=jwt_token
             ):
                 # SSE 형식: "data: {json}\n\n"
                 yield f"data: {event_json}\n\n"

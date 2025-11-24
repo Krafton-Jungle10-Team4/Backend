@@ -108,15 +108,16 @@ class DeploymentService:
         Returns:
             임베드 스크립트 HTML
         """
-        
-        widget_url = settings.frontend_url.split(",")[0]  # 첫 번째 프론트엔드 URL
+
         api_url = settings.backend_url
+        frontend_url = settings.frontend_url
 
         return (
             f'<script '
-            f'src="{widget_url}/widget/inject.js" '
+            f'src="{api_url}/widget/inject.js" '
             f'data-widget-key="{widget_key}" '
-            f'data-api-base="{api_url}"'
+            f'data-api-base="{api_url}" '
+            f'data-frontend-url="{frontend_url}"'
             f'></script>'
         )
 

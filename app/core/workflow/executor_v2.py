@@ -73,7 +73,8 @@ class WorkflowExecutorV2:
         api_key_id: Optional[str] = None,
         user_id: Optional[str] = None,
         api_request_id: Optional[str] = None,
-        cancel_event: Optional[asyncio.Event] = None
+        cancel_event: Optional[asyncio.Event] = None,
+        jwt_token: Optional[str] = None
     ) -> str:
         """
         V2 워크플로우 실행
@@ -146,6 +147,11 @@ class WorkflowExecutorV2:
             self.variable_pool.set_system_variable("user_message", user_message)
             self.variable_pool.set_system_variable("session_id", session_id)
             self.variable_pool.set_system_variable("bot_id", bot_id)
+
+            # JWT 토큰 설정 (HTTP 노드에서 자동 주입용)
+            if jwt_token:
+                self.variable_pool.set_system_variable("jwt_token", jwt_token)
+                logger.info("[WorkflowExecutorV2] JWT 토큰이 시스템 변수에 저장되었습니다")
 
             # 서비스 컨테이너 초기화
             self.service_container = ServiceContainer()
@@ -259,6 +265,12 @@ class WorkflowExecutorV2:
             node_type = node_data.get("type")
             config_data = node_data.get("data", {})
             variable_mappings = node_data.get("variable_mappings", {})
+
+            # ports와 port_bindings를 config에 병합 (START 노드 등에서 필요)
+            if "ports" in node_data:
+                config_data["ports"] = node_data["ports"]
+            if "port_bindings" in node_data:
+                config_data["port_bindings"] = node_data["port_bindings"]
 
             try:
                 # V2 노드 인스턴스 생성

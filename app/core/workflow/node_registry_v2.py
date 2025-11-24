@@ -229,6 +229,8 @@ def _register_default_nodes():
     from app.core.workflow.nodes_v2.answer_node_v2 import AnswerNodeV2
     from app.core.workflow.nodes_v2.imported_workflow_node import ImportedWorkflowNode
     from app.core.workflow.nodes_v2.slack_node_v2 import SlackNodeV2
+    from app.core.workflow.nodes_v2.http_node_v2 import HTTPNodeV2
+    from app.core.workflow.nodes_v2.template_transform_node_v2 import TemplateTransformNodeV2
 
     node_registry_v2.register("start", StartNodeV2)
     node_registry_v2.register("knowledge-retrieval", KnowledgeNodeV2)
@@ -241,6 +243,8 @@ def _register_default_nodes():
     node_registry_v2.register("answer", AnswerNodeV2)
     node_registry_v2.register("imported-workflow", ImportedWorkflowNode)
     node_registry_v2.register("slack", SlackNodeV2)
+    node_registry_v2.register("http", HTTPNodeV2)
+    node_registry_v2.register("template-transform", TemplateTransformNodeV2)
 
 # 기본 노드 등록
 _register_default_nodes()

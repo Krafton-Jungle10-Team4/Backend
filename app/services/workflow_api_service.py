@@ -15,6 +15,7 @@ import copy
 from app.models.workflow_version import BotWorkflowVersion, WorkflowExecutionRun, WorkflowNodeExecution
 from app.models.bot_api_key import BotAPIKey
 from app.core.workflow.executor_v2 import WorkflowExecutorV2
+from app.core.auth.jwt import create_access_token
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +270,14 @@ class WorkflowAPIService:
                     if field_key and field_key in inputs:
                         user_message = str(inputs[field_key])
                         break
-            
+
+            # JWT 토큰 생성 (워크플로우 내부 HTTP 요청용)
+            jwt_token = create_access_token({
+                "user_id": bot.user_id,
+                "email": user.email
+            })
+            logger.info(f"[WorkflowAPI] JWT 토큰 생성됨 (user_id={bot.user_id}, bot_id={workflow_version.bot_id})")
+
             result_text = await executor.execute(
                 workflow_data=workflow_data,
                 session_id=session_id or f"api_session_{uuid.uuid4().hex[:16]}",
@@ -284,7 +292,9 @@ class WorkflowAPIService:
                 # API 전용 파라미터 전달
                 api_key_id=api_key.id,
                 user_id=user_id,
-                api_request_id=metadata.get("request_id")
+                api_request_id=metadata.get("request_id"),
+                # JWT 토큰 전달 (HTTP 노드에서 자동 주입)
+                jwt_token=jwt_token
             )
             
             # 2. Executor가 생성한 execution_run 조회
