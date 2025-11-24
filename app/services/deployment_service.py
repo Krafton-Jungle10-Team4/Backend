@@ -114,10 +114,9 @@ class DeploymentService:
 
         return (
             f'<script '
-            f'src="{api_url}/widget/inject.js" '
+            f'src="{frontend_url}/widget/inject.js" '
             f'data-widget-key="{widget_key}" '
-            f'data-api-base="{api_url}" '
-            f'data-frontend-url="{frontend_url}"'
+            f'data-api-base="{api_url}"'
             f'></script>'
         )
 
