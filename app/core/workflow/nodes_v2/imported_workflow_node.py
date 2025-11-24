@@ -14,6 +14,31 @@ from app.core.workflow.variable_pool import VariablePool
 logger = logging.getLogger(__name__)
 
 
+class NestedStreamHandlerWrapper:
+    """
+    Nested workflow용 Stream Handler Wrapper
+
+    노드 상태 이벤트는 무시하고, 텍스트 스트리밍만 parent handler에 전달합니다.
+    이를 통해 nested workflow의 노드가 parent workflow의 같은 ID를 가진 노드를
+    업데이트하는 것을 방지합니다.
+    """
+
+    def __init__(self, parent_handler: Any):
+        """
+        Args:
+            parent_handler: Parent workflow의 stream handler
+        """
+        self.parent_handler = parent_handler
+
+    async def emit_node_event(self, **kwargs):
+        """노드 상태 이벤트는 무시"""
+        pass
+
+    def __getattr__(self, name: str):
+        """다른 모든 메서드(텍스트 스트리밍 등)는 parent handler에 위임"""
+        return getattr(self.parent_handler, name)
+
+
 class ImportedWorkflowNode(BaseNodeV2):
     """Imported Workflow 노드 - 라이브러리 에이전트를 실행
 
@@ -187,9 +212,16 @@ class ImportedWorkflowNode(BaseNodeV2):
             user_id_from_parent = context.service_container.get("user_id") if context.service_container else None
             api_request_id = context.service_container.get("api_request_id") if context.service_container else None
 
-            # 스트리밍 관련 서비스 조회 (부모로부터 전달받음)
-            stream_handler = context.service_container.get("stream_handler") if context.service_container else None
+            # 스트리밍 관련 서비스 조회
+            # Note: nested workflow의 노드 이벤트는 차단하되, 텍스트 스트리밍은 허용
+            parent_stream_handler = context.service_container.get("stream_handler") if context.service_container else None
             text_normalizer = context.service_container.get("text_normalizer") if context.service_container else None
+
+            # Nested workflow용 stream handler wrapper 생성
+            # 노드 상태 이벤트는 무시하고, 텍스트 스트리밍만 허용
+            stream_handler = None
+            if parent_stream_handler:
+                stream_handler = NestedStreamHandlerWrapper(parent_stream_handler)
 
             # user_uuid가 없으면 기본값 설정 (Widget 실행 등)
             if not user_uuid:
@@ -437,6 +469,45 @@ class ImportedWorkflowNode(BaseNodeV2):
                 if selector:
                     # 부모 컨텍스트에서 변수 가져오기
                     value = parent_pool.resolve_value_selector(selector)
+
+                    # 타입 검증: 브랜치 핸들(boolean)이 데이터 포트(string 등)로 전달되는 것을 방지
+                    expected_type = port_def.get("type", "").lower()
+
+                    if expected_type == "string" and isinstance(value, bool):
+                        logger.warning(
+                            f"타입 불일치 감지: 포트 '{port_name}'는 string을 기대하지만 "
+                            f"boolean 값이 '{selector}'에서 전달되었습니다."
+                        )
+
+                        # 자동 해결 시도: 같은 노드의 올바른 출력 변수를 찾아봄
+                        # 예: "classifier.class_1_branch" → "classifier.query"
+                        if '.' in selector:
+                            source_node = selector.split('.')[0]
+                            alternative_selector = f"{source_node}.{port_name}"
+
+                            try:
+                                alternative_value = parent_pool.resolve_value_selector(alternative_selector)
+
+                                if alternative_value is not None and not isinstance(alternative_value, bool):
+                                    logger.info(
+                                        f"✅ 타입 불일치 자동 해결: '{selector}' 대신 "
+                                        f"'{alternative_selector}'에서 올바른 값을 찾았습니다. "
+                                        f"(type: {type(alternative_value).__name__})"
+                                    )
+                                    internal_inputs[port_name] = alternative_value
+                                    continue
+                            except Exception as e:
+                                logger.debug(f"Alternative selector {alternative_selector} failed: {e}")
+
+                        # 자동 해결 실패: 기본값 사용
+                        logger.warning(
+                            f"자동 해결 실패: 같은 노드에서 올바른 '{port_name}' 변수를 찾을 수 없습니다. "
+                            f"기본값을 사용합니다."
+                        )
+                        if "default_value" in port_def:
+                            internal_inputs[port_name] = port_def["default_value"]
+                            logger.debug(f"Using default value for port {port_name} after type mismatch")
+                        continue
 
                     # 기본값 처리
                     if value is None and "default_value" in port_def:

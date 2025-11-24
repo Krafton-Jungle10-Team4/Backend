@@ -69,6 +69,13 @@ class QuestionClassifierNodeV2(BaseNodeV2):
                 display_name="Class Name",
             ),
             PortDefinition(
+                name="query",
+                type=PortType.STRING,
+                required=True,
+                description="입력된 원본 질문 (pass-through)",
+                display_name="질문",
+            ),
+            PortDefinition(
                 name="usage",
                 type=PortType.OBJECT,
                 required=False,
@@ -194,6 +201,7 @@ class QuestionClassifierNodeV2(BaseNodeV2):
 
         outputs: Dict[str, Any] = {
             "class_name": resolved_class,
+            "query": query,  # 원본 query를 pass-through
             "usage": {
                 "total_tokens": tokens_used,
             },
