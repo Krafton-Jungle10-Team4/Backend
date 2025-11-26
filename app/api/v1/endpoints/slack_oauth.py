@@ -73,6 +73,8 @@ class SlackIntegrationResponse(BaseModel):
     workspace_name: str
     workspace_icon: Optional[str]
     bot_user_id: Optional[str]
+    authed_user_id: Optional[str] = None
+    has_user_token: bool = False
     scopes: List[str]
     is_active: bool
     created_at: datetime
@@ -125,11 +127,15 @@ async def slack_oauth_connect(
         "groups:read",          # 프라이빗 채널 목록 조회
         "channels:history",     # 채널 메시지 읽기 (선택)
     ]
+    user_scopes = [
+        "chat:write",           # 사용자 계정으로 메시지 전송
+    ]
     
     oauth_url = (
         f"https://slack.com/oauth/v2/authorize?"
         f"client_id={slack_client_id}&"
         f"scope={','.join(scopes)}&"
+        f"user_scope={','.join(user_scopes)}&"
         f"state={state}&"
         f"redirect_uri={slack_redirect_uri}"
     )
@@ -201,10 +207,15 @@ async def slack_oauth_callback(
         workspace_id = response_data["team"]["id"]
         workspace_name = response_data["team"]["name"]
         bot_user_id = response_data.get("bot_user_id")
+        authed_user_data = response_data.get("authed_user", {}) or {}
+        user_access_token = authed_user_data.get("access_token")
+        authed_user_id = authed_user_data.get("id")
         
         # scopes는 공백으로 구분됨
         scopes_str = response_data.get("scope", "")
         scopes = scopes_str.split(",") if scopes_str else []
+        user_scopes_str = authed_user_data.get("scope", "")
+        user_scopes = user_scopes_str.split(",") if user_scopes_str else []
         
         # Workspace icon 조회 (선택)
         workspace_icon = None
@@ -216,10 +227,13 @@ async def slack_oauth_callback(
             user_id=user_id,
             bot_id=bot_id,
             access_token=access_token,
+            user_access_token=user_access_token,
             workspace_id=workspace_id,
             workspace_name=workspace_name,
             workspace_icon=workspace_icon,
             bot_user_id=bot_user_id,
+            authed_user_id=authed_user_id,
+            authed_user_scopes=user_scopes,
             scopes=scopes,
             db=db
         )
@@ -340,4 +354,3 @@ async def get_bot_slack_integration(
     """
     integration = await SlackService.get_integration(user.id, bot_id, db)
     return integration
-

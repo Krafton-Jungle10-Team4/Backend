@@ -348,6 +348,10 @@ class LLMNodeV2(BaseNodeV2):
                         "\n\n**검색 결과가 없는 경우, 사용자에게 명확하게 알려주세요.**"
                     )
 
+            # Provider client 미리 가져오기 (generate 호출 전)
+            provider_key = llm_service._resolve_provider(provider, model)
+            client = llm_service._get_client(provider_key)
+            
             # stream_handler가 있으면 스트리밍 사용, 없으면 일반 생성 사용
             if stream_handler:
                 result = await llm_service.generate_stream(
@@ -368,36 +372,45 @@ class LLMNodeV2(BaseNodeV2):
                     max_tokens=max_tokens
                 )
 
-            response_text: str
             tokens_used: int = 0
             prompt_tokens: int = 0
             completion_tokens: int = 0
+            
+            try:
+                usage = None
+                usage_consumer = getattr(llm_service, "consume_usage_snapshot", None)
+                if callable(usage_consumer):
+                    usage = usage_consumer(provider_key)
 
+                if not usage and hasattr(client, 'last_usage') and client.last_usage:
+                    usage = client.last_usage.copy() if isinstance(client.last_usage, dict) else client.last_usage
+
+                if isinstance(usage, dict):
+                    prompt_tokens = usage.get("input_tokens", 0)
+                    completion_tokens = usage.get("output_tokens", 0)
+                    tokens_used = usage.get("total_tokens", prompt_tokens + completion_tokens)
+                    logger.info(
+                        f"[LLMNodeV2] Token usage: prompt={prompt_tokens}, completion={completion_tokens}, total={tokens_used}"
+                    )
+                else:
+                    logger.warning(
+                        f"[LLMNodeV2] Provider client에서 토큰 사용량을 찾지 못했습니다. provider={provider_key}, model={model}"
+                    )
+            except Exception as e:
+                logger.warning(f"[LLMNodeV2] 토큰 사용량 조회 실패: {e}")
+
+            response_text: str
             if isinstance(result, dict):
                 response_text = (
                     result.get("response")
                     or result.get("text")
                     or ""
                 )
-                tokens_used = result.get("tokens", 0)
+                # result에 tokens가 있으면 우선 사용 (하지만 last_usage가 더 정확함)
+                if tokens_used == 0:
+                    tokens_used = result.get("tokens", 0)
             else:
                 response_text = str(result)
-
-            # Provider client에서 토큰 정보 가져오기
-            try:
-                provider_key = llm_service._resolve_provider(provider, model)
-                client = llm_service._get_client(provider_key)
-                
-                if hasattr(client, 'last_usage') and client.last_usage:
-                    usage = client.last_usage
-                    prompt_tokens = usage.get("input_tokens", 0)
-                    completion_tokens = usage.get("output_tokens", 0)
-                    tokens_used = usage.get("total_tokens", prompt_tokens + completion_tokens)
-                    logger.info(f"[LLMNodeV2] Token usage: prompt={prompt_tokens}, completion={completion_tokens}, total={tokens_used}")
-                else:
-                    logger.warning(f"[LLMNodeV2] Provider client에 last_usage 정보가 없습니다.")
-            except Exception as e:
-                logger.warning(f"[LLMNodeV2] 토큰 사용량 조회 실패: {e}")
 
             model_used = getattr(llm_service, "last_used_model", None) or model
             if model_used != model:
@@ -508,14 +521,23 @@ class LLMNodeV2(BaseNodeV2):
                     # Provider client에서 토큰 정보 가져오기
                     try:
                         provider_key = llm_service._resolve_provider(provider, fallback_model)
-                        client = llm_service._get_client(provider_key)
-                        
-                        if hasattr(client, 'last_usage') and client.last_usage:
-                            usage = client.last_usage
+                        usage = None
+                        usage_consumer = getattr(llm_service, "consume_usage_snapshot", None)
+                        if callable(usage_consumer):
+                            usage = usage_consumer(provider_key)
+
+                        if not usage:
+                            client = llm_service._get_client(provider_key)
+                            if hasattr(client, 'last_usage') and client.last_usage:
+                                usage = client.last_usage.copy() if isinstance(client.last_usage, dict) else client.last_usage
+
+                        if isinstance(usage, dict):
                             prompt_tokens = usage.get("input_tokens", 0)
                             completion_tokens = usage.get("output_tokens", 0)
                             tokens_used = usage.get("total_tokens", prompt_tokens + completion_tokens)
-                            logger.info(f"[LLMNodeV2] Token usage: prompt={prompt_tokens}, completion={completion_tokens}, total={tokens_used}")
+                            logger.info(
+                                f"[LLMNodeV2] Token usage: prompt={prompt_tokens}, completion={completion_tokens}, total={tokens_used}"
+                            )
                     except Exception as token_error:
                         logger.warning(f"[LLMNodeV2] 토큰 사용량 조회 실패: {token_error}")
 

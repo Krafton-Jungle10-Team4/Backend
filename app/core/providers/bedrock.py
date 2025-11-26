@@ -308,6 +308,37 @@ class BedrockClient(BaseLLMClient):
             stream = response.get('body')
             total_input_tokens = 0
             total_output_tokens = 0
+            cache_read_tokens = 0
+            cache_write_tokens = 0
+
+            def _update_cache_usage(usage_data: Optional[Dict[str, int]]) -> None:
+                """Bedrock 스트리밍 이벤트에서 캐시 토큰 수치를 추출"""
+                nonlocal cache_read_tokens, cache_write_tokens
+                if not usage_data:
+                    return
+
+                def _extract_value(*keys: str) -> int:
+                    for key in keys:
+                        if key in usage_data and usage_data[key] is not None:
+                            return int(usage_data[key])
+                    return 0
+
+                read_tokens = _extract_value(
+                    'cache_read_input_token_count',
+                    'cache_read_input_tokens',
+                    'cache_read_tokens'
+                )
+                write_tokens = _extract_value(
+                    'cache_creation_input_token_count',
+                    'cache_creation_input_tokens',
+                    'cache_write_tokens'
+                )
+
+                # Bedrock은 누적 수치를 보내므로 가장 큰 값을 유지
+                if read_tokens > cache_read_tokens:
+                    cache_read_tokens = read_tokens
+                if write_tokens > cache_write_tokens:
+                    cache_write_tokens = write_tokens
 
             if stream:
                 for event in stream:
@@ -326,20 +357,27 @@ class BedrockClient(BaseLLMClient):
                         # message_delta에서 토큰 사용량 추출
                         elif chunk_data.get('type') == 'message_delta':
                             usage = chunk_data.get('usage', {})
-                            total_output_tokens = usage.get('output_tokens', 0)
+                            total_output_tokens = usage.get('output_tokens', total_output_tokens)
+                            _update_cache_usage(usage)
 
                         # message_start에서 입력 토큰 추출
                         elif chunk_data.get('type') == 'message_start':
                             usage = chunk_data.get('message', {}).get('usage', {})
                             total_input_tokens = usage.get('input_tokens', 0)
+                            _update_cache_usage(usage)
+
+                        elif chunk_data.get('type') == 'message_stop':
+                            usage = chunk_data.get('usage', {})
+                            total_output_tokens = usage.get('output_tokens', total_output_tokens)
+                            _update_cache_usage(usage)
 
             # 스트리밍 완료 후 토큰 사용량 저장
             self.last_usage = {
                 'input_tokens': total_input_tokens,
                 'output_tokens': total_output_tokens,
                 'total_tokens': total_input_tokens + total_output_tokens,
-                'cache_read_tokens': 0,  # 스트리밍에서는 별도 필드 없음
-                'cache_write_tokens': 0,
+                'cache_read_tokens': cache_read_tokens,
+                'cache_write_tokens': cache_write_tokens,
                 'model': model_id
             }
 

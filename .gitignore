@@ -78,6 +78,10 @@ dmypy.json
 *.pid
 docker-compose.override.yml
 
+# AWS Lambda 빌드 아티팩트
+aws/lambda/*.zip
+aws/lambda/*_package/
+
 # Claude / AI 관련 메모, 로그, 설정
 claude.md
 claude_notes.md

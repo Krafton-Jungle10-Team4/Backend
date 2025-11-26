@@ -2,7 +2,8 @@
 LLM 비용 추적 래퍼
 """
 import logging
-from typing import Optional, Callable, Awaitable, List
+from collections import defaultdict, deque
+from typing import Optional, Callable, Awaitable, List, Dict, Deque, Any
 from functools import wraps
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +29,7 @@ class LLMServiceWithCostTracking(LLMService):
         self.bot_id = bot_id
         self.user_id = user_id
         self.cost_service = CostTrackingService(db)
+        self._usage_snapshots: Dict[str, Deque[Any]] = defaultdict(deque)
 
     async def generate(
         self,
@@ -121,31 +123,74 @@ class LLMServiceWithCostTracking(LLMService):
 
             # last_usage 속성이 있는지 확인 (Bedrock에서 설정됨)
             if hasattr(client, 'last_usage') and client.last_usage:
-                usage = client.last_usage
+                # last_usage를 읽은 후 복사본 사용
+                usage = client.last_usage.copy() if isinstance(client.last_usage, dict) else client.last_usage
+                self._store_usage_snapshot(provider_key, usage)
+                
+                # 모델 일치 확인 (추가 안전장치)
+                usage_model = usage.get('model') if isinstance(usage, dict) else None
+                if usage_model and usage_model != resolved_model:
+                    logger.warning(
+                        f"last_usage 모델 불일치 감지: usage_model={usage_model}, "
+                        f"resolved_model={resolved_model}. usage_model을 사용합니다."
+                    )
+                    # usage_model을 사용하되, resolved_model도 로깅
+                    final_model = usage_model
+                else:
+                    final_model = usage.get('model', resolved_model) if isinstance(usage, dict) else resolved_model
+                
+                # ⚠️ last_usage 초기화하지 않음 - llm_node_v2.py에서도 읽어야 함
+                # 초기화는 llm_node_v2.py에서 사용 후에 수행
 
                 await self.cost_service.log_usage(
                     bot_id=self.bot_id,
                     user_id=self.user_id,
                     provider=provider_key,
-                    model_name=usage.get('model', resolved_model),
-                    input_tokens=usage.get('input_tokens', 0),
-                    output_tokens=usage.get('output_tokens', 0),
-                    cache_read_tokens=usage.get('cache_read_tokens', 0),
-                    cache_write_tokens=usage.get('cache_write_tokens', 0)
+                    model_name=final_model,
+                    input_tokens=usage.get('input_tokens', 0) if isinstance(usage, dict) else 0,
+                    output_tokens=usage.get('output_tokens', 0) if isinstance(usage, dict) else 0,
+                    cache_read_tokens=usage.get('cache_read_tokens', 0) if isinstance(usage, dict) else 0,
+                    cache_write_tokens=usage.get('cache_write_tokens', 0) if isinstance(usage, dict) else 0
                 )
 
                 logger.info(
-                    f"비용 추적 완료 - bot_id: {self.bot_id}, "
-                    f"tokens: {usage.get('total_tokens', 0)}"
+                    f"비용 추적 완료 - bot_id: {self.bot_id}, model: {final_model}, "
+                    f"tokens: {usage.get('total_tokens', 0) if isinstance(usage, dict) else 0}"
                 )
             else:
-                logger.debug(
-                    f"Provider {provider_key}는 토큰 사용량 추적을 지원하지 않습니다."
+                logger.warning(
+                    f"토큰 사용량 추적 실패 - Provider {provider_key}의 last_usage가 없습니다. "
+                    f"bot_id={self.bot_id}, model={resolved_model}, "
+                    f"has_last_usage_attr={hasattr(client, 'last_usage')}, "
+                    f"last_usage_value={getattr(client, 'last_usage', None)}"
                 )
 
         except Exception as e:
             # 비용 추적 실패는 서비스 전체를 막지 않음
-            logger.error(f"비용 추적 중 오류 발생: {e}")
+            logger.error(f"비용 추적 중 오류 발생: {e}", exc_info=True)
+
+    def consume_usage_snapshot(self, provider_key: Optional[str]) -> Optional[Any]:
+        """워크플로우 노드가 사용할 수 있도록 토큰 사용량 스냅샷을 반환"""
+        if not provider_key:
+            return None
+
+        queue = self._usage_snapshots.get(provider_key)
+        if not queue:
+            return None
+
+        usage = queue.popleft()
+        if not queue:
+            self._usage_snapshots.pop(provider_key, None)
+
+        return usage.copy() if isinstance(usage, dict) else usage
+
+    def _store_usage_snapshot(self, provider_key: Optional[str], usage: Any) -> None:
+        """비동기 소비를 위해 토큰 사용량을 큐에 저장"""
+        if not provider_key or not usage:
+            return
+
+        snapshot = usage.copy() if isinstance(usage, dict) else usage
+        self._usage_snapshots[provider_key].append(snapshot)
 
 
 def get_llm_service_with_tracking(

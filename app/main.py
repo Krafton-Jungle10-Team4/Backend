@@ -53,6 +53,10 @@ setup_logging(
 )
 logger = get_logger(__name__)
 
+# V2 노드 레지스트리 초기화 (서버 시작 시 노드 등록 보장)
+from app.core.workflow.node_registry_v2 import node_registry_v2
+logger.info(f"V2 노드 레지스트리 초기화 완료: {len(node_registry_v2)}개 노드 타입 등록됨")
+
 # FastAPI 앱 생성
 app = FastAPI(
     title=settings.app_name,

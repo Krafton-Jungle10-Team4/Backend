@@ -66,10 +66,13 @@ class SlackService:
         user_id: int,
         bot_id: Optional[str],
         access_token: str,
+        user_access_token: Optional[str],
         workspace_id: str,
         workspace_name: str,
         workspace_icon: Optional[str],
         bot_user_id: Optional[str],
+        authed_user_id: Optional[str],
+        authed_user_scopes: Optional[List[str]],
         scopes: List[str],
         db: AsyncSession
     ) -> SlackIntegration:
@@ -79,11 +82,14 @@ class SlackService:
         Args:
             user_id: 사용자 ID
             bot_id: 봇 ID (선택)
-            access_token: Slack access token
+            access_token: Slack bot access token
+            user_access_token: Slack user access token (선택)
             workspace_id: Slack workspace ID
             workspace_name: Slack workspace name
             workspace_icon: Slack workspace icon URL
             bot_user_id: Slack bot user ID
+            authed_user_id: OAuth 승인한 Slack 사용자 ID
+            authed_user_scopes: 사용자 토큰 스코프
             scopes: OAuth scopes
             db: DB session
             
@@ -103,13 +109,24 @@ class SlackService:
         
         # 토큰 암호화
         encrypted_token = SlackService.encrypt_token(access_token)
+        encrypted_user_token = None
+        if user_access_token:
+            encrypted_user_token = SlackService.encrypt_token(user_access_token)
+        
+        authed_user_scopes = authed_user_scopes or []
         
         if existing:
             # 업데이트
             existing.access_token = encrypted_token
+            if encrypted_user_token:
+                existing.user_access_token = encrypted_user_token
             existing.workspace_name = workspace_name
             existing.workspace_icon = workspace_icon
             existing.bot_user_id = bot_user_id
+            if authed_user_id:
+                existing.authed_user_id = authed_user_id
+            if authed_user_scopes:
+                existing.authed_user_scopes = authed_user_scopes
             existing.scopes = scopes
             existing.is_active = True
             
@@ -124,10 +141,13 @@ class SlackService:
                 user_id=user_id,
                 bot_id=bot_id,
                 access_token=encrypted_token,
+                user_access_token=encrypted_user_token,
                 workspace_id=workspace_id,
                 workspace_name=workspace_name,
                 workspace_icon=workspace_icon,
                 bot_user_id=bot_user_id,
+                authed_user_id=authed_user_id,
+                authed_user_scopes=authed_user_scopes,
                 scopes=scopes,
                 is_active=True
             )
@@ -308,4 +328,3 @@ class SlackService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to get Slack channels"
             )
-

@@ -136,9 +136,29 @@ class CostTrackingService:
             }
 
             if settings.usage_queue_url:
-                await self.event_publisher.publish_usage_event(usage_payload)
-                logger.debug("사용량 이벤트를 SQS에 발행했습니다. bot_id=%s", bot_id)
-                return None
+                try:
+                    await self.event_publisher.publish_usage_event(usage_payload)
+                    logger.info(
+                        f"사용량 이벤트를 SQS에 발행했습니다. "
+                        f"bot_id={bot_id}, model={model_name}, "
+                        f"tokens={input_tokens + output_tokens}, cost=${total_cost:.6f}, "
+                        f"queue_url={settings.usage_queue_url}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"SQS 사용량 이벤트 발행 실패: {e}. "
+                        f"bot_id={bot_id}, queue_url={settings.usage_queue_url}",
+                        exc_info=True
+                    )
+                    # SQS 발행 실패 시 DB에 직접 저장 (폴백)
+                    logger.info("SQS 발행 실패로 DB에 직접 저장합니다.")
+                else:
+                    return None
+            else:
+                logger.warning(
+                    f"usage_queue_url이 설정되지 않아 DB에 직접 저장합니다. "
+                    f"bot_id={bot_id}, model={model_name}"
+                )
 
             usage_log = LLMUsageLog(
                 bot_id=bot_id,

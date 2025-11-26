@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     llm_cache_enabled: bool = True
     llm_cache_ttl_sec: int = 3600
     llm_cache_prefix: str = "llm:cache"
+    # LLM 시맨틱 캐시
+    semantic_cache_enabled: bool = False
+    semantic_cache_prefix: str = "llm:semantic"
+    semantic_cache_ttl_sec: int = 86400  # 24시간
+    semantic_cache_similarity_threshold: float = 0.92
+    semantic_cache_max_entries: int = 500
+    semantic_cache_min_chars: int = 32
 
     # 연결 문자열 생성 규칙을 한 곳에 모아 일관성 있게 관리하려는 목적
     # 비밀번호 포함/미포함, 기본값 처리 등을 캡슐화

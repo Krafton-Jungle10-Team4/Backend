@@ -83,13 +83,17 @@ async def list_execution_runs(
             offset=offset
         )
 
+        # 배치로 노드 실행 기록 가져오기 (N+1 쿼리 문제 해결)
+        run_ids = [str(run.id) for run in result["items"]]
+        node_executions_by_run = await service.get_node_executions_batch(run_ids)
+
         # 각 실행에 대해 비용 계산
         runs = []
         for run in result["items"]:
             # 비용 계산: LLM 노드의 비용 합산
             total_cost = None
             try:
-                node_executions = await service.get_node_executions(str(run.id))
+                node_executions = node_executions_by_run.get(str(run.id), [])
                 cost_sum = Decimal("0")
                 for ne in node_executions:
                     if ne.node_type.lower() == "llm" or ne.node_type == "LLMNodeV2":

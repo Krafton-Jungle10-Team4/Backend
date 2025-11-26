@@ -57,9 +57,24 @@ class WorkflowEventPublisher:
     async def publish_usage_event(self, payload: Dict[str, Any]) -> None:
         """LLM 사용량 이벤트 발행"""
         if not settings.usage_queue_url:
-            logger.debug("Usage queue URL not configured. Skip publishing.")
+            logger.warning(
+                f"Usage queue URL not configured. Skip publishing. "
+                f"payload: bot_id={payload.get('bot_id')}, model={payload.get('model_name')}"
+            )
             return
-        await self._send_message(settings.usage_queue_url, payload)
+        try:
+            await self._send_message(settings.usage_queue_url, payload)
+            logger.debug(
+                f"Usage event published successfully. "
+                f"bot_id={payload.get('bot_id')}, model={payload.get('model_name')}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to publish usage event to SQS: {e}. "
+                f"queue_url={settings.usage_queue_url}, payload={payload}",
+                exc_info=True
+            )
+            raise
 
     async def publish_log_event(self, payload: Dict[str, Any]) -> None:
         """워크플로우 실행 로그 이벤트 발행"""

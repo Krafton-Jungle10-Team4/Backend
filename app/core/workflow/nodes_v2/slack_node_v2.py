@@ -118,7 +118,9 @@ class SlackNodeV2(BaseNodeV2):
         
         # OAuth 방식: integration_id로 토큰 조회
         integration_id = self.config.get("integration_id")
+        use_user_token = self.config.get("use_user_token", True)
         slack_token = None
+        token_source = "integration"
         
         if integration_id:
             # DB에서 연동 정보 조회
@@ -138,9 +140,15 @@ class SlackNodeV2(BaseNodeV2):
                     integration = result.scalar_one_or_none()
                     
                     if integration:
-                        # 토큰 복호화
-                        slack_token = SlackService.decrypt_token(integration.access_token)
-                        logger.info(f"[SlackNodeV2] Using OAuth token from integration {integration_id}")
+                        # 토큰 복호화: 기본은 사용자 토큰 > 봇 토큰
+                        if use_user_token and integration.user_access_token:
+                            slack_token = SlackService.decrypt_token(integration.user_access_token)
+                            token_source = "user_integration"
+                            logger.info(f"[SlackNodeV2] Using user token from integration {integration_id}")
+                        elif integration.access_token:
+                            slack_token = SlackService.decrypt_token(integration.access_token)
+                            token_source = "bot_integration"
+                            logger.info(f"[SlackNodeV2] Using bot token from integration {integration_id}")
                     else:
                         logger.warning(f"[SlackNodeV2] Integration {integration_id} not found or inactive")
             except Exception as e:
@@ -150,6 +158,7 @@ class SlackNodeV2(BaseNodeV2):
         if not slack_token:
             slack_token = os.environ.get("SLACK_BOT_TOKEN")
             if slack_token:
+                token_source = "env_bot_token"
                 logger.info("[SlackNodeV2] Using SLACK_BOT_TOKEN from environment")
         
         if not slack_token:
@@ -196,7 +205,7 @@ class SlackNodeV2(BaseNodeV2):
                 blocks=blocks
             )
             
-            logger.info(f"[SlackNodeV2] Message sent to Slack channel: {response['channel']}")
+            logger.info(f"[SlackNodeV2] Message sent to Slack channel: {response['channel']} (token_source={token_source})")
             
             return {
                 "success": True,
@@ -239,4 +248,3 @@ class SlackNodeV2(BaseNodeV2):
             return False, "Channel configuration is required"
         
         return True, None
-

@@ -21,7 +21,8 @@ class SlackIntegration(Base):
     bot_id = Column(String, ForeignKey("bots.bot_id", ondelete="CASCADE"), nullable=True, index=True)
     
     # OAuth 정보 (암호화 저장)
-    access_token = Column(Text, nullable=False)  # 암호화된 토큰
+    access_token = Column(Text, nullable=False)  # 암호화된 Bot 토큰
+    user_access_token = Column(Text, nullable=True)  # 암호화된 User 토큰 (선택)
     
     # Workspace 정보
     workspace_id = Column(String, nullable=False)
@@ -30,6 +31,8 @@ class SlackIntegration(Base):
     
     # Bot 정보
     bot_user_id = Column(String, nullable=True)
+    authed_user_id = Column(String, nullable=True)  # OAuth 승인한 사용자 ID
+    authed_user_scopes = Column(JSON, nullable=True, default=list)
     
     # 권한 범위
     scopes = Column(JSON, nullable=False, default=list)
@@ -46,6 +49,10 @@ class SlackIntegration(Base):
     user = relationship("User", back_populates="slack_integrations")
     bot = relationship("Bot", back_populates="slack_integration")
     
+    @property
+    def has_user_token(self) -> bool:
+        """User 토큰 저장 여부"""
+        return bool(self.user_access_token)
+    
     def __repr__(self):
         return f"<SlackIntegration(id={self.id}, user_id={self.user_id}, workspace={self.workspace_name})>"
-

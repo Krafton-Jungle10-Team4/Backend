@@ -4,7 +4,7 @@ LLM 서비스
 import hashlib
 import json
 import logging
-from typing import Optional, Callable, Awaitable, List, Dict, Tuple
+from typing import Optional, Callable, Awaitable, List, Dict, Tuple, Any
 
 from app.config import settings
 from app.core.llm_registry import LLMProviderRegistry
@@ -18,6 +18,7 @@ from app.core.providers.config import (
 )
 from app.core.exceptions import LLMServiceError
 from app.core.redis_client import redis_client
+from app.services.semantic_cache_service import SemanticCacheService
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class LLMService:
         self.config = config or self._build_config_from_settings()
         self._last_used_model: Optional[str] = None
         self._initialize_providers()
+        self.semantic_cache = SemanticCacheService()
 
     @property
     def last_used_model(self) -> Optional[str]:
@@ -57,6 +59,13 @@ class LLMService:
         )
 
         messages = [{"role": "user", "content": prompt}]
+        semantic_meta = self._build_semantic_meta(
+            provider_key=provider_key,
+            model=resolved_model or "default",
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        semantic_embedding = None
 
         cache_key = await self._build_cache_key(
             tag="prompt",
@@ -72,6 +81,14 @@ class LLMService:
         if cached is not None:
             self._record_last_used_model(resolved_model)
             return cached.get("response", "")
+
+        semantic_response, semantic_embedding = await self.semantic_cache.lookup(
+            prompt,
+            semantic_meta
+        )
+        if semantic_response:
+            self._record_last_used_model(resolved_model)
+            return semantic_response
 
         response = await client.generate(
             messages=messages,
@@ -90,6 +107,12 @@ class LLMService:
                 "model": resolved_model or "default",
                 "type": "generate",
             },
+        )
+        await self.semantic_cache.store(
+            prompt=prompt,
+            response=response,
+            meta=semantic_meta,
+            embedding=semantic_embedding
         )
         return response
 
@@ -128,6 +151,14 @@ class LLMService:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
+        semantic_meta = self._build_semantic_meta(
+            provider_key=provider_key,
+            model=model_to_use or "default",
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt
+        )
+        semantic_embedding = None
 
         # 캐시 조회: 이미 동일 질의가 캐싱되어 있으면 스트리밍 없이 즉시 반환
         cache_key = None
@@ -151,6 +182,17 @@ class LLMService:
                     processed = await on_chunk(cached_response)
                     return processed if processed is not None else cached_response
                 return cached_response
+
+        semantic_response, semantic_embedding = await self.semantic_cache.lookup(
+            prompt,
+            semantic_meta
+        )
+        if semantic_response:
+            self._record_last_used_model(model_to_use)
+            if on_chunk and semantic_response:
+                processed = await on_chunk(semantic_response)
+                return processed if processed is not None else semantic_response
+            return semantic_response
 
         buffer: List[str] = []
 
@@ -180,6 +222,13 @@ class LLMService:
                     "type": "generate_stream",
                 },
             )
+
+        await self.semantic_cache.store(
+            prompt=prompt,
+            response=full_response,
+            meta=semantic_meta,
+            embedding=semantic_embedding
+        )
 
         return full_response
 
@@ -221,6 +270,15 @@ class LLMService:
             {"role": "system", "content": system_message},
             {"role": "user", "content": user_message}
         ]
+        semantic_meta = self._build_semantic_meta(
+            provider_key=provider_key,
+            model=resolved_model or "default",
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt=system_message,
+            extra={"context_hash": self._hash_text(context)}
+        )
+        semantic_embedding = None
 
         cache_key = await self._build_cache_key(
             tag="rag",
@@ -237,6 +295,14 @@ class LLMService:
         if cached is not None:
             self._record_last_used_model(resolved_model)
             return cached.get("response", "")
+
+        semantic_response, semantic_embedding = await self.semantic_cache.lookup(
+            user_message,
+            semantic_meta
+        )
+        if semantic_response:
+            self._record_last_used_model(resolved_model)
+            return semantic_response
 
         response = await client.generate(
             messages=messages,
@@ -256,6 +322,12 @@ class LLMService:
                 "type": "rag_generate",
             },
         )
+        await self.semantic_cache.store(
+            prompt=user_message,
+            response=response,
+            meta=semantic_meta,
+            embedding=semantic_embedding
+        )
         return response
 
     async def _build_cache_key(self, tag: str, payload: Dict) -> str:
@@ -271,6 +343,32 @@ class LLMService:
     def _cache_enabled(self) -> bool:
         """Redis 및 설정이 활성화되었는지 여부"""
         return settings.llm_cache_enabled and bool(redis_client.redis)
+
+    @staticmethod
+    def _hash_text(value: Optional[str]) -> str:
+        if not value:
+            return "none"
+        return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()
+
+    def _build_semantic_meta(
+        self,
+        provider_key: str,
+        model: Optional[str],
+        temperature: float,
+        max_tokens: int,
+        system_prompt: Optional[str] = None,
+        extra: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        meta: Dict[str, Any] = {
+            "provider": provider_key,
+            "model": model or "default",
+            "temperature": round(float(temperature), 4),
+            "max_tokens": int(max_tokens),
+            "system_prompt_hash": self._hash_text(system_prompt),
+        }
+        if extra:
+            meta.update(extra)
+        return meta
 
     def get_streaming_safe_model(
         self,

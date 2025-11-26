@@ -121,6 +121,50 @@ class WorkflowExecutionService:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_node_executions_batch(
+        self,
+        run_ids: List[str]
+    ) -> Dict[str, List[WorkflowNodeExecution]]:
+        """
+        여러 실행의 노드 실행 기록을 배치로 조회 (N+1 쿼리 문제 해결)
+
+        Args:
+            run_ids: 실행 기록 ID 목록
+
+        Returns:
+            Dict[str, List[WorkflowNodeExecution]]: {run_id: [노드 실행 기록들]}
+        """
+        if not run_ids:
+            return {}
+
+        # UUID 변환
+        from uuid import UUID
+        try:
+            run_uuids = [UUID(run_id) for run_id in run_ids]
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid run_ids: {run_ids}")
+            return {}
+
+        stmt = select(WorkflowNodeExecution).where(
+            WorkflowNodeExecution.workflow_run_id.in_(run_uuids)
+        ).order_by(
+            WorkflowNodeExecution.workflow_run_id,
+            WorkflowNodeExecution.execution_order
+        )
+
+        result = await self.db.execute(stmt)
+        node_executions = list(result.scalars().all())
+
+        # run_id별로 그룹화
+        grouped = {}
+        for ne in node_executions:
+            run_id_str = str(ne.workflow_run_id)
+            if run_id_str not in grouped:
+                grouped[run_id_str] = []
+            grouped[run_id_str].append(ne)
+
+        return grouped
+
     async def get_node_execution(
         self,
         node_execution_id: str
