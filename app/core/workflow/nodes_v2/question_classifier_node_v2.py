@@ -231,13 +231,33 @@ class QuestionClassifierNodeV2(BaseNodeV2):
         return outputs
 
     def _normalize_model_config(self) -> Dict[str, Any]:
+        """
+        프론트엔드에서 전달받은 모델 설정을 정규화
+        
+        프론트엔드에서 ModelConfig 객체 { provider, name, mode, completion_params } 형태로 전달됨
+        name 필드에는 실제 모델 ID가 저장되어 있음 (예: "anthropic.claude-3-5-sonnet-20240620-v1:0")
+        """
         raw_model = self.config.get("model") or {}
 
         if isinstance(raw_model, str):
+            # 문자열인 경우 (하위 호환성)
             raw_model = {"name": raw_model}
 
-        provider = (raw_model.get("provider") or "openai").lower()
-        name = raw_model.get("name") or "gpt-4o-mini"
+        # 프론트엔드에서 선택한 provider와 model을 그대로 사용
+        provider = (raw_model.get("provider") or "bedrock").lower()
+        name = raw_model.get("name") or "anthropic.claude-3-haiku-20240307-v1:0"
+        
+        # provider가 없으면 모델명으로부터 추론
+        if not raw_model.get("provider") and name:
+            model_str = name.lower()
+            if model_str.startswith("anthropic.claude") or "amazon.titan" in model_str:
+                provider = "bedrock"
+            elif model_str.startswith("gpt") or model_str.startswith("o1") or model_str.startswith("o3"):
+                provider = "openai"
+            elif model_str.startswith("claude"):
+                provider = "anthropic"
+            elif "gemini" in model_str:
+                provider = "google"
 
         completion = raw_model.get("completion_params") or {}
         temperature = completion.get("temperature")

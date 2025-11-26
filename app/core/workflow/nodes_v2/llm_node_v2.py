@@ -167,10 +167,29 @@ class LLMNodeV2(BaseNodeV2):
         from app.config import settings
         
         # Provider: 노드 설정에서 가져오거나, 환경 변수 또는 기본값 사용
+        # Model: 노드 설정에서 가져오거나 provider별 기본값 사용
+        model = self.config.get("model")
+        
+        # Provider: 노드 설정 > 모델명 기반 추론 > 환경 변수 > 기본값 순서로 결정
         node_provider = self.config.get("provider")
         if node_provider:
             # 노드 설정에 provider가 있으면 사용 (프론트에서 선택한 값)
             provider = node_provider.lower()
+        elif model:
+            # 모델명으로부터 provider 추론
+            model_str = (model or "").lower()
+            if model_str.startswith("anthropic.claude") or "amazon.titan" in model_str:
+                provider = "bedrock"
+            elif model_str.startswith("gpt") or model_str.startswith("o1") or model_str.startswith("o3"):
+                provider = "openai"
+            elif model_str.startswith("claude"):
+                provider = "anthropic"
+            elif "gemini" in model_str:
+                provider = "google"
+            elif settings.llm_provider:
+                provider = settings.llm_provider.lower()
+            else:
+                provider = "bedrock"  # 기본값
         elif settings.llm_provider:
             # 환경 변수에 provider가 있으면 사용
             provider = settings.llm_provider.lower()
@@ -178,10 +197,8 @@ class LLMNodeV2(BaseNodeV2):
             # 기본값: bedrock (프로덕션 환경)
             provider = "bedrock"
         
-        # Model: 노드 설정에서 가져오거나 provider별 기본값 사용
-        model = self.config.get("model")
+        # Model이 없으면 provider별 기본 모델 사용
         if not model:
-            # provider별 기본 모델
             if provider == "bedrock":
                 model = settings.bedrock_model or "anthropic.claude-3-haiku-20240307-v1:0"
             elif provider == "openai":
@@ -349,15 +366,24 @@ class LLMNodeV2(BaseNodeV2):
                     )
 
             # Provider client 미리 가져오기 (generate 호출 전)
+            # 프론트엔드에서 전달받은 모델 이름을 그대로 사용
             provider_key = llm_service._resolve_provider(provider, model)
             client = llm_service._get_client(provider_key)
             
+            logger.info(
+                "[LLMNodeV2] LLM 호출: provider=%s model=%s provider_key=%s",
+                provider,
+                model,
+                provider_key
+            )
+            
             # stream_handler가 있으면 스트리밍 사용, 없으면 일반 생성 사용
+            # 프론트엔드에서 선택한 모델 ID와 provider를 그대로 전달
             if stream_handler:
                 result = await llm_service.generate_stream(
                     prompt=prompt,
-                    model=model,
-                    provider=provider,
+                    model=model,  # 프론트엔드에서 선택한 모델 ID 그대로 사용
+                    provider=provider,  # 프론트엔드에서 선택한 provider 그대로 사용
                     temperature=temperature,
                     max_tokens=max_tokens,
                     on_chunk=stream_handler.emit_content_chunk,
@@ -366,8 +392,8 @@ class LLMNodeV2(BaseNodeV2):
             else:
                 result = await llm_service.generate(
                     prompt=prompt,
-                    model=model,
-                    provider=provider,
+                    model=model,  # 프론트엔드에서 선택한 모델 ID 그대로 사용
+                    provider=provider,  # 프론트엔드에서 선택한 provider 그대로 사용
                     temperature=temperature,
                     max_tokens=max_tokens
                 )

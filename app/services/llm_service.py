@@ -132,6 +132,8 @@ class LLMService:
 
         requested_model = model or getattr(client, "model", None)
         model_to_use = requested_model
+        
+        # 모든 provider가 SSE 스트리밍을 지원하지만, OpenAI의 일부 모델(o1, o3 등)은 특별 처리 필요
         if provider_key == "openai":
             streaming_model, replaced_from = self.get_streaming_safe_model(
                 provider_key,
@@ -145,6 +147,8 @@ class LLMService:
                     replaced_from,
                     streaming_model
                 )
+        # 다른 provider들(bedrock, anthropic, google)은 모두 SSE 스트리밍을 지원하므로
+        # 요청한 모델을 그대로 사용
 
         # 시스템 프롬프트 추가 (제공된 경우)
         messages = []
