@@ -204,6 +204,23 @@ class EmbeddingService:
         # Rate Limiting: 요청 간 최소 간격 보장
         self._enforce_rate_limit()
 
+        # 텍스트가 JSON 배열인 경우 처리
+        # Bedrock API는 문자열만 받으므로 JSON 배열을 문자열로 변환
+        if isinstance(text, (list, dict)):
+            text = json.dumps(text, ensure_ascii=False)
+        elif isinstance(text, str):
+            # 문자열이 JSON 배열로 시작하는 경우 파싱 후 재직렬화
+            text = text.strip()
+            if text.startswith('[') or text.startswith('{'):
+                try:
+                    parsed = json.loads(text)
+                    # 파싱 성공 시 문자열로 변환 (배열/객체인 경우)
+                    if isinstance(parsed, (list, dict)):
+                        text = json.dumps(parsed, ensure_ascii=False)
+                except (json.JSONDecodeError, ValueError):
+                    # JSON 파싱 실패 시 원본 텍스트 사용
+                    pass
+
         # Bedrock API 요청 본문 구성
         request_body = {
             "inputText": text,

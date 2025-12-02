@@ -80,6 +80,9 @@ class LLMService:
         cached = await self._try_get_cached(cache_key)
         if cached is not None:
             self._record_last_used_model(resolved_model)
+            # 일반 캐시 hit 시 last_usage 초기화 (비용이 0으로 계산되도록)
+            if hasattr(client, 'last_usage'):
+                client.last_usage = None
             return cached.get("response", "")
 
         semantic_response, semantic_embedding = await self.semantic_cache.lookup(
@@ -88,6 +91,9 @@ class LLMService:
         )
         if semantic_response:
             self._record_last_used_model(resolved_model)
+            # SemanticCache hit 시 last_usage 초기화 (비용이 0으로 계산되도록)
+            if hasattr(client, 'last_usage'):
+                client.last_usage = None
             return semantic_response
 
         response = await client.generate(
@@ -182,6 +188,9 @@ class LLMService:
             if cached is not None:
                 cached_response = cached.get("response", "")
                 self._record_last_used_model(model_to_use)
+                # 일반 캐시 hit 시 last_usage 초기화 (비용이 0으로 계산되도록)
+                if hasattr(client, 'last_usage'):
+                    client.last_usage = None
                 if on_chunk and cached_response:
                     processed = await on_chunk(cached_response)
                     return processed if processed is not None else cached_response
@@ -193,6 +202,9 @@ class LLMService:
         )
         if semantic_response:
             self._record_last_used_model(model_to_use)
+            # SemanticCache hit 시 last_usage 초기화 (비용이 0으로 계산되도록)
+            if hasattr(client, 'last_usage'):
+                client.last_usage = None
             if on_chunk and semantic_response:
                 processed = await on_chunk(semantic_response)
                 return processed if processed is not None else semantic_response
@@ -298,6 +310,9 @@ class LLMService:
         cached = await self._try_get_cached(cache_key)
         if cached is not None:
             self._record_last_used_model(resolved_model)
+            # 일반 캐시 hit 시 last_usage 초기화 (비용이 0으로 계산되도록)
+            if hasattr(client, 'last_usage'):
+                client.last_usage = None
             return cached.get("response", "")
 
         semantic_response, semantic_embedding = await self.semantic_cache.lookup(
@@ -306,6 +321,9 @@ class LLMService:
         )
         if semantic_response:
             self._record_last_used_model(resolved_model)
+            # SemanticCache hit 시 last_usage 초기화 (비용이 0으로 계산되도록)
+            if hasattr(client, 'last_usage'):
+                client.last_usage = None
             return semantic_response
 
         response = await client.generate(
@@ -394,8 +412,15 @@ class LLMService:
             return target_model, None
 
         # SSE 지원 공식 모델 우선순위
+        # codex-mini가 요청된 경우, 스트리밍 지원 버전인 codex-max로 우선 교체 시도
+        if "codex-mini" in (target_model or "").lower():
+            codex_max_variant = target_model.lower().replace("codex-mini", "codex-max")
+            if self._is_openai_streaming_model(codex_max_variant):
+                return codex_max_variant, target_model
+        
         candidates = [
             settings.openai_model,
+            "gpt-5.1-codex-max",  # codex-mini 대체용 스트리밍 지원 모델
             "gpt-4o",
             "gpt-4.1",
             "gpt-4o-mini",
@@ -415,12 +440,32 @@ class LLMService:
         if not lowered:
             return False
 
-        blocked_prefixes = ("gpt-5", "o1-", "o3-")
-        blocked_fragments = ("codex", "instruct")
+        # 스트리밍 미지원 모델 차단
+        blocked_prefixes = ("o1-", "o3-")
+        
+        # gpt-5로 시작하는 모델 중 특정 버전은 허용 (codex-max는 스트리밍 지원)
+        if lowered.startswith("gpt-5"):
+            # codex-mini는 스트리밍 미지원, 차단
+            if "codex-mini" in lowered:
+                return False
+            # codex-max는 스트리밍 지원, 허용
+            if "codex-max" in lowered:
+                return True
+            # 기타 gpt-5 모델은 차단
+            return False
+        
+        # codex-mini가 포함된 모델은 차단 (gpt-5가 아닌 경우도)
+        if "codex-mini" in lowered:
+            return False
+        
+        # instruct 모델 차단
+        if "instruct" in lowered:
+            return False
+            
+        # 기타 차단 접두사 확인
         if any(lowered.startswith(prefix) for prefix in blocked_prefixes):
             return False
-        if any(fragment in lowered for fragment in blocked_fragments):
-            return False
+            
         return True
 
     async def _try_get_cached(self, cache_key: str) -> Optional[Dict]:

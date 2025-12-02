@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import json
 from typing import Dict, List, Any, Optional, Callable
 from collections import deque, defaultdict
 from app.core.workflow.base_node_v2 import BaseNodeV2, NodeExecutionContext
@@ -1242,15 +1243,34 @@ class WorkflowExecutorV2:
             if execution_metadata:
                 final_outputs["_execution_metadata"] = execution_metadata
 
+            # JSONB 컬럼에 저장할 데이터 직렬화 보장
+            # SQLAlchemy가 자동으로 처리하지만, 명시적으로 직렬화하여 에러 방지
+            def ensure_json_serializable(data):
+                """데이터가 JSON 직렬화 가능한지 확인하고 변환"""
+                if data is None:
+                    return None
+                try:
+                    # 이미 직렬화 가능한 타입인지 확인
+                    json.dumps(data, ensure_ascii=False, default=str)
+                    return data
+                except (TypeError, ValueError):
+                    # 직렬화 불가능한 경우 문자열로 변환
+                    logger.warning(f"JSON 직렬화 불가능한 데이터 발견, 문자열로 변환: {type(data)}")
+                    return str(data)
+
+            safe_inputs = ensure_json_serializable(inputs)
+            safe_outputs = ensure_json_serializable(final_outputs)
+            safe_process_data = ensure_json_serializable(process_data)
+
             node_execution = WorkflowNodeExecution(
                 id=uuid.uuid4(),
                 workflow_run_id=self.execution_run.id,
                 node_id=node_id,
                 node_type=node_type,
                 execution_order=execution_order,
-                inputs=inputs,
-                outputs=final_outputs,
-                process_data=process_data,
+                inputs=safe_inputs,
+                outputs=safe_outputs,
+                process_data=safe_process_data,
                 status=status,
                 error_message=error_message,
                 started_at=started_at,

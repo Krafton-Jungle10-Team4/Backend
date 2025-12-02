@@ -71,12 +71,12 @@ class Settings(BaseSettings):
     redis_use_ssl: bool = False
     # LLM 캐시
     llm_cache_enabled: bool = True
-    llm_cache_ttl_sec: int = 3600
+    llm_cache_ttl_sec: int = 300  # 5분
     llm_cache_prefix: str = "llm:cache"
     # LLM 시맨틱 캐시
     semantic_cache_enabled: bool = False
     semantic_cache_prefix: str = "llm:semantic"
-    semantic_cache_ttl_sec: int = 86400  # 24시간
+    semantic_cache_ttl_sec: int = 300  # 5분
     semantic_cache_similarity_threshold: float = 0.92
     semantic_cache_max_entries: int = 500
     semantic_cache_min_chars: int = 32

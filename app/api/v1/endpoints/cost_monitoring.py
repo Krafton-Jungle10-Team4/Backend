@@ -14,6 +14,9 @@ from app.models.llm_usage import LLMUsageLog, ModelPricing
 from app.models.user import User
 from app.models.bot import Bot
 from app.core.auth.dependencies import get_current_user_from_jwt_only
+from app.services.semantic_cache_service import SemanticCacheService
+from app.core.redis_client import redis_client
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -592,3 +595,89 @@ async def get_user_daily_costs(
         )
         for row in rows
     ]
+
+
+class SemanticCacheStatsResponse(BaseModel):
+    """SemanticCache 통계 응답"""
+    enabled: bool
+    redis_connected: bool
+    cache_key: str
+    entry_count: int
+    max_entries: int
+    ttl_sec: int
+    threshold: float
+    min_chars: int
+    entries_preview: List[dict] = Field(default_factory=list)
+    provider_stats: dict = Field(default_factory=dict)
+    model_stats: dict = Field(default_factory=dict)
+
+
+@router.get("/semantic-cache/stats", response_model=SemanticCacheStatsResponse)
+async def get_semantic_cache_stats(
+    current_user: User = Depends(get_current_user_from_jwt_only)
+):
+    """
+    SemanticCache 상태 및 통계 조회
+    
+    Redis에 저장된 SemanticCache 엔트리를 확인합니다.
+    """
+    try:
+        # Redis 연결 확인
+        await redis_client.connect()
+        redis_connected = redis_client.redis is not None
+        
+        # SemanticCache 서비스 초기화
+        cache_service = SemanticCacheService()
+        
+        # 설정 정보
+        cache_key = cache_service.cache_key
+        
+        # 엔트리 로드
+        entries = await cache_service._load_entries()
+        entry_count = len(entries) if entries else 0
+        
+        # 엔트리 미리보기 (최대 5개)
+        entries_preview = []
+        if entries:
+            for entry in entries[:5]:
+                meta = entry.get("meta", {})
+                entries_preview.append({
+                    "prompt_preview": entry.get("prompt_preview", "")[:100],
+                    "provider": meta.get("provider", "unknown"),
+                    "model": meta.get("model", "unknown"),
+                    "created_at": entry.get("created_at", "unknown"),
+                    "response_length": len(entry.get("response", ""))
+                })
+        
+        # Provider별 통계
+        provider_stats = {}
+        model_stats = {}
+        if entries:
+            for entry in entries:
+                meta = entry.get("meta", {})
+                provider = meta.get("provider", "unknown")
+                model = meta.get("model", "unknown")
+                provider_stats[provider] = provider_stats.get(provider, 0) + 1
+                model_stats[model] = model_stats.get(model, 0) + 1
+        
+        await redis_client.close()
+        
+        return SemanticCacheStatsResponse(
+            enabled=settings.semantic_cache_enabled,
+            redis_connected=redis_connected,
+            cache_key=cache_key,
+            entry_count=entry_count,
+            max_entries=settings.semantic_cache_max_entries,
+            ttl_sec=settings.semantic_cache_ttl_sec,
+            threshold=settings.semantic_cache_similarity_threshold,
+            min_chars=settings.semantic_cache_min_chars,
+            entries_preview=entries_preview,
+            provider_stats=provider_stats,
+            model_stats=model_stats
+        )
+    except Exception as e:
+        logger.error(f"SemanticCache stats 조회 실패: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"SemanticCache 통계 조회 중 오류가 발생했습니다: {str(e)}"
+        )
