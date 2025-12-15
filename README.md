@@ -1,7 +1,14 @@
 # SnapAgent: 노코드 기반 워크플로우 자동화 플랫폼
 
-RAG(Retrieval-Augmented Generation) 기반의 AI 챗봇 생성 및 워크플로우 자동화 플랫폼입니다.
-사용자가 직관적인 인터페이스를 통해 AI 챗봇을 생성하고, 복잡한 워크플로우를 시각적으로 설계하여 자동화할 수 있습니다.
+RAG(Retrieval-Augmented Generation) 기반의 AI Agent 생성 및 워크플로우 자동화 플랫폼입니다.
+사용자가 직관적인 인터페이스를 통해 AI Agent를 생성하고, 복잡한 워크플로우를 시각적으로 설계하여 자동화할 수 있습니다.
+
+<img width="451" height="225" alt="image" src="https://github.com/user-attachments/assets/a6cb1b39-8cc6-49dd-acf3-91d61f0598c7" />
+<img width="919" height="571" alt="image" src="https://github.com/user-attachments/assets/7654c906-fe57-4f7b-85a1-750b49a39389" />
+<img width="1006" height="420" alt="image" src="https://github.com/user-attachments/assets/06a891cd-1781-4411-832c-57194709f763" />
+<img width="1285" height="668" alt="image" src="https://github.com/user-attachments/assets/e0ec112b-5c48-47f4-a0c0-a80a0b52a524" />
+
+https://www.youtube.com/watch?v=L-uchJcRnBQ&feature=youtu.be
 
 ## 📋 목차
 
